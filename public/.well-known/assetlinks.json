@@ -1,8 +1,16 @@
-[{
-    "relation": ["delegate_permission/common.handle_all_urls"],
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls",
+      "delegate_permission/common.get_login_creds"
+    ],
     "target": {
       "namespace": "android_app",
       "package_name": "hr.strukovnasamobor.rontomap",
-      "sha256_cert_fingerprints": ["63:52:E0:5D:98:AD:A9:1E:18:3A:1C:3D:77:DA:4B:59:31:93:BD:14:FF:3A:AC:E1:B9:2B:CE:B8:72:22:27:07"]
+      "sha256_cert_fingerprints": [
+        "63:52:E0:5D:98:AD:A9:1E:18:3A:1C:3D:77:DA:4B:59:31:93:BD:14:FF:3A:AC:E1:B9:2B:CE:B8:72:22:27:07",
+        "EE:22:D3:C5:BB:5E:3A:93:A1:AC:0A:F7:A7:6F:14:1F:84:40:FC:FE:59:01:F4:CA:A7:6A:26:DB:4F:F3:F6:42"
+      ]
     }
-}]
+  }
+]
