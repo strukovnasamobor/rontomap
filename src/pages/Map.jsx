@@ -47,7 +47,7 @@ export default function Map() {
 
             // Prevent duplicates
             if (el.innerHTML.includes("rontomap")) return;
-
+            el.innerHTML = el.innerHTML.replace("Improve this map", "");
             el.innerHTML +=
                 ` | <a href="https://github.com/strukovnasamobor/rontomap"
                 target="_blank"
@@ -591,7 +591,7 @@ export default function Map() {
                     zoom: zoom,
                     pitch: pitch,
                     bearing: bearing,
-                    duration: 500
+                    duration: 1000
                 }).once('moveend', () => {
                     locationControlRef.current.showStopTrackingBearingIcon();
                 });
@@ -603,7 +603,7 @@ export default function Map() {
                     center: [long, lat],
                     zoom: zoom,
                     pitch: pitch,
-                    duration: 500
+                    duration: 1000
                 }).once('moveend', () => {
                     locationControlRef.current.showTrackingBearingIcon();
                 });
@@ -753,18 +753,29 @@ export default function Map() {
                          "touch screen or by right-clicking and dragging the mouse. " + 
                          "Once location tracking is enabled, click again to track the " + 
                          "user’s movement direction. Click once more to stop tracking.\n\n " +
-                         "Web App:\nrontomap.web.app\n\n" +
-                         "Source Code:\ngithub.com/strukovnasamobor/rontomap"}
+                         "Web App:\nrontomap.web.app"}
                 buttons={[
                     {
-                      text: "OK",
-                      role: "cancel"
+                        text: "SOURCE",
+                        handler: () => {
+                            window.open("https://github.com/strukovnasamobor/rontomap", "_blank");
+                        }
                     },
                     {
-                      text: "DON'T SHOW AGAIN",
-                      handler: () => {
-                        localStorage.setItem("rontomap_dont_show_tips", "true");
-                      }
+                        text: "SUPPORT",
+                        handler: () => {
+                            window.open("https://www.paypal.com/ncp/payment/ZRBQZMWTCJYFE", "_blank");
+                        }
+                    },
+                    {
+                        text: "DON'T SHOW AGAIN",
+                        handler: () => {
+                            localStorage.setItem("rontomap_dont_show_tips", "true");
+                        }
+                    },                                       
+                    {
+                        text: "OK",
+                        role: "cancel"
                     }
                 ]}
               ></IonAlert>
