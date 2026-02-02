@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">RontoMap</string>
+    <string name="title_activity_main">RontoMap</string>
+    <string name="package_name">hr.strukovnasamobor.rontomap</string>
+    <string name="custom_url_scheme">hr.strukovnasamobor.rontomap</string>
+</resources>
