@@ -29,3 +29,4 @@ firebase.js
 
 # Google Play
 .google_play/*
+android/app/debug/output-metadata.json
