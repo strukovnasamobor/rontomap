@@ -3,6 +3,18 @@
     height: 100dvh;
 }
 
+.map .mapboxgl-ctrl-top-left,
+.map .mapboxgl-ctrl-top,
+.map .mapboxgl-ctrl-top-right {
+  top: env(safe-area-inset-top);
+}
+
+.map .mapboxgl-ctrl-bottom-left,
+.map .mapboxgl-ctrl-bottom,
+.map .mapboxgl-ctrl-bottom-right {
+  bottom: env(safe-area-inset-bottom);
+}
+
 .mapboxgl-ctrl-geocoder.mapboxgl-ctrl-geocoder--collapsed {
   width: 36px !important;
   min-width: 36px !important;
