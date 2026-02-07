@@ -6,6 +6,7 @@ import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import MapboxGeocoder from '@mapbox/mapbox-gl-geocoder';
 import '@mapbox/mapbox-gl-geocoder/dist/mapbox-gl-geocoder.css';
+import { Geolocation } from '@capacitor/geolocation';
 
 mapboxgl.accessToken = 'pk.eyJ1IjoiYXVyZWxpdXMtemQiLCJhIjoiY21rcXA3cXh2MHNpZDNjcXl1a3MzbW8zciJ9.JO4VSTN6-0vRtWW0YKjlAg';
 
@@ -228,18 +229,27 @@ export default function Map() {
                 this._pitchStart = this._map.getPitch();
 
                 // Override to prevent camera movement
-                this._geolocate._updateCamera = () => {
-                    if ("geolocation" in navigator) {
-                        navigator.geolocation.getCurrentPosition((e) => {
-                            const long = e.coords.longitude;
-                            const lat = e.coords.latitude;
-                            const bearing = e.coords.heading ? e.coords.heading : null;
-                            console.log("_updateCamera:", long, lat, bearing);
-                        }, (err) => {
-                            console.error("_updateCamera > Error getting user location:", err);
-                        });
-                    } else {
-                        console.log("_updateCamera > Geolocation is not supported by this browser.");
+                this._geolocate._updateCamera = async () => {
+                    try {
+                        // Check current permission status
+                        const permissionStatus = await Geolocation.checkPermissions();
+                        
+                        if (permissionStatus.location !== 'granted') {
+                            // Request if not granted
+                            const permissions = await Geolocation.requestPermissions();
+                            if (permissions.location !== 'granted' && permissions.location !== 'limited') {
+                                console.log("_updateCamera > Location permission denied");
+                                return;
+                            }
+                        }
+                        
+                        const position = await Geolocation.getCurrentPosition();
+                        const long = position.coords.longitude;
+                        const lat = position.coords.latitude;
+                        const bearing = position.coords.heading ? position.coords.heading : null;
+                        console.log("_updateCamera:", long, lat, bearing);
+                    } catch (err) {
+                        console.error("_updateCamera > Error getting user location:", err);
                     }
                 };
 
