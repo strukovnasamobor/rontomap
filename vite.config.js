@@ -27,12 +27,14 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
-          if (id.includes('node_modules')) {
-            if (id.includes('firebase')) return 'firebase';
-            if (id.includes('react')) return 'react-vendor';
-            if (id.includes('@ionic')) return 'ionic-core';
-            return 'vendor';
-          }
+          if (!id.includes('node_modules')) return;
+          if (
+            id.includes('react') ||
+            id.includes('react-dom') ||
+            id.includes('scheduler')
+          ) return 'react-vendor';
+          if (id.includes('firebase')) return 'firebase';
+          if (id.includes('@ionic')) return 'ionic-core';
         },
       },
     },
