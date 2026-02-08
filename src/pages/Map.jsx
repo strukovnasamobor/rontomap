@@ -115,16 +115,38 @@ export default function Map() {
         }
 
         let smoothedLat = null;
-        let smoothedLng = null;
+        let smoothedLong = null;
         let smoothedBearing = null;
+        
+        // Dynamic alpha for lat/long, 0.0005 = 55 meters
+        function getDynamicAlphaLatLong(prevLat, prevLng, nextLat, nextLng, threshold = 0.0005) {
+            // Manhattan distance for fast calculation
+            const distance = Math.abs(nextLat - prevLat) + Math.abs(nextLng - prevLng);
+            
+            if (distance > threshold) return 1;
+            return 0.2 + (distance / threshold) * 0.8;
+        }
 
-        function smooth(prev, next, alpha = 0.2) {
+        // Smooth for lat/lng
+        function smoothLatLong(prev, next, alpha = 0.4) {
             return prev + alpha * (next - prev);
         }
         
-        function smoothBearing(prev, next, alpha = 0.2) {
-            let diff = ((next - prev + 540) % 360) - 180;
-            return prev + alpha * diff;
+        // Smooth bearing that follows user's rotation direction
+        function smoothBearing(prev, next, alpha = 0.6) {
+            if (lastRawBearing !== null) {
+                let rawDelta = next - lastRawBearing;
+                while (rawDelta > 180) rawDelta -= 360;
+                while (rawDelta < -180) rawDelta += 360;
+                prev = prev + alpha * rawDelta;
+                while (prev >= 360) prev -= 360;
+                while (prev < 0) prev += 360;
+            } else {
+                prev = next;
+            }
+
+            lastRawBearing = next;
+            return prev;
         }
 
         mapRef.current = new mapboxgl.Map({
@@ -582,14 +604,15 @@ export default function Map() {
             // Initialize smoothing on first fix
             if (smoothedLat === null) {
                 smoothedLat = lat;
-                smoothedLng = long;
+                smoothedLong = long;
                 smoothedBearing = bearing;
             }
 
-            // Apply smoothing (alpha = 0.2)
-            smoothedLat = smooth(smoothedLat, lat, 0.2);
-            smoothedLng = smooth(smoothedLng, long, 0.2);
-            smoothedBearing = smoothBearing(smoothedBearing, bearing, 0.2);
+            // Apply smoothing
+            const alpha = getDynamicAlphaLatLong(smoothedLat, smoothedLong, long, lat);
+            smoothedLat = smoothLatLong(smoothedLat, lat, alpha);
+            smoothedLong = smoothLatLong(smoothedLong, long, alpha);
+            smoothedBearing = smoothBearing(smoothedBearing, bearing);
 
             if (locationControlRef.current.isTrackingBearing() && locationControlRef.current.getZoomStart() != null) {
                 zoom = locationControlRef.current.getZoomStart();
@@ -623,20 +646,20 @@ export default function Map() {
                     if (locationControlRef.current.isUserDragging())
                         return;
                     mapRef.current.jumpTo({
-                        center: [smoothedLng, smoothedLat],
+                        center: [smoothedLong, smoothedLat],
                         bearing: smoothedBearing
                     });
                 }
                 else if (locationControlRef.current.isTrackingLocation()) {
                     mapRef.current.jumpTo({
-                        center: [smoothedLng, smoothedLat]
+                        center: [smoothedLong, smoothedLat]
                     });
                 }
             }
 
             // Save last position
             locationControlRef.current._lastPostionLat = smoothedLat;
-            locationControlRef.current._lastPostionLong = smoothedLng;
+            locationControlRef.current._lastPostionLong = smoothedLong;
             locationControlRef.current._lastPositionBearing = smoothedBearing;
         });
 
