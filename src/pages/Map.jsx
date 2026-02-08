@@ -8,6 +8,7 @@ import MapboxGeocoder from '@mapbox/mapbox-gl-geocoder';
 import '@mapbox/mapbox-gl-geocoder/dist/mapbox-gl-geocoder.css';
 import { Geolocation } from '@capacitor/geolocation';
 
+// Set Mapbox access token
 mapboxgl.accessToken = 'pk.eyJ1IjoiYXVyZWxpdXMtemQiLCJhIjoiY21rcXA3cXh2MHNpZDNjcXl1a3MzbW8zciJ9.JO4VSTN6-0vRtWW0YKjlAg';
 
 export default function Map() {
@@ -17,7 +18,7 @@ export default function Map() {
     const locationControlRef = useRef(null);
     const [idMapStyle, setIdMapStyle] = useState(() => {
         const storedIdMapStyle = localStorage.getItem("rontomap_id_map_style");
-        return storedIdMapStyle ? storedIdMapStyle : "rontomap_satellite";
+        return storedIdMapStyle ? storedIdMapStyle : "rontomap_streets_light";
     });    
     const [mapStyle, setMapStyle] = useState('');
     const [defaultCenter, setDefaultCenter] = useState([0, 0]);
@@ -28,12 +29,15 @@ export default function Map() {
     const [savedZoom, setSavedZoom] = useState(defaultZoom);
     const [savedBearing, setSavedBearing] = useState(defaultBearing);
     const [savedPitch, setSavedPitch] = useState(defaultPitch);
+    const [showTips, setShowTips] = useState(true);
 
+    // Get query params from URL
     const getQueryParams = (param) => {
         const urlParams = new URLSearchParams(window.location.search);
         return urlParams.get(param);
     };
 
+    // Add source and support links to the map
     const addSourceAndSupportLink = () => {
         const tryAdd = () => {
             const el = mapRef.current
@@ -63,19 +67,16 @@ export default function Map() {
         tryAdd();
     };
 
+    // Resize map on view enter
     useIonViewWillEnter(() => {
         if (mapRef.current)
             mapRef.current.resize();
     }, [mapStyle]);
 
+    // Set map style URLs
     useEffect(() => {
         console.log("useEffect > idMapStyle:", idMapStyle);
-        if(idMapStyle == "rontomap_satellite") {
-            setMapStyle('mapbox://styles/aurelius-zd/cmefvgizo00ul01sc2rek321h');
-            document.querySelector('[data-control="change_map_style_rontomap_satellite"]')?.classList.add("hidden");
-            document.querySelector('[data-control="change_map_style_rontomap_streets_light"]')?.classList.remove("hidden");
-        }
-        else if(idMapStyle == "rontomap_streets_light") {
+        if(idMapStyle == "rontomap_streets_light") {
             setMapStyle('mapbox://styles/aurelius-zd/cmjmktkev00cc01sb0a6ff4i5');
             document.querySelector('[data-control="change_map_style_rontomap_streets_light"]')?.classList.add("hidden");
             document.querySelector('[data-control="change_map_style_rontomap_streets_dark"]')?.classList.remove("hidden");
@@ -85,8 +86,14 @@ export default function Map() {
             document.querySelector('[data-control="change_map_style_rontomap_streets_dark"]')?.classList.add("hidden");
             document.querySelector('[data-control="change_map_style_rontomap_satellite"]')?.classList.remove("hidden");
         }
+        else if(idMapStyle == "rontomap_satellite") {
+            setMapStyle('mapbox://styles/aurelius-zd/cmefvgizo00ul01sc2rek321h');
+            document.querySelector('[data-control="change_map_style_rontomap_satellite"]')?.classList.add("hidden");
+            document.querySelector('[data-control="change_map_style_rontomap_streets_light"]')?.classList.remove("hidden");
+        }
     }, [idMapStyle]);
 
+    // Initialize map and add controls
     useEffect(() => {
         if (mapRef.current)
             mapRef.current.resize();
@@ -112,41 +119,6 @@ export default function Map() {
                 });
             }
             return;
-        }
-
-        let smoothedLat = null;
-        let smoothedLong = null;
-        let smoothedBearing = null;
-        
-        // Dynamic alpha for lat/long, 0.0005 = 55 meters
-        function getDynamicAlphaLatLong(prevLat, prevLng, nextLat, nextLng, threshold = 0.0005) {
-            // Manhattan distance for fast calculation
-            const distance = Math.abs(nextLat - prevLat) + Math.abs(nextLng - prevLng);
-            
-            if (distance > threshold) return 1;
-            return 0.2 + (distance / threshold) * 0.8;
-        }
-
-        // Smooth for lat/lng
-        function smoothLatLong(prev, next, alpha = 0.4) {
-            return prev + alpha * (next - prev);
-        }
-        
-        // Smooth bearing that follows user's rotation direction
-        function smoothBearing(prev, next, alpha = 0.6) {
-            if (lastRawBearing !== null) {
-                let rawDelta = next - lastRawBearing;
-                while (rawDelta > 180) rawDelta -= 360;
-                while (rawDelta < -180) rawDelta += 360;
-                prev = prev + alpha * rawDelta;
-                while (prev >= 360) prev -= 360;
-                while (prev < 0) prev += 360;
-            } else {
-                prev = next;
-            }
-
-            lastRawBearing = next;
-            return prev;
         }
 
         mapRef.current = new mapboxgl.Map({
@@ -185,6 +157,13 @@ export default function Map() {
                 this._lastPostionLat = null;
                 this._lastPositionBearing = null;
                 this._handleClick = this._handleClick.bind(this);
+            }
+
+            hideTrackingIcons() {
+                console.log("hideTrackingIcons");
+                this._container.querySelector('[data-control="track_location"]')?.classList.add("hidden");
+                this._container.querySelector('[data-control="track_bearing"]')?.classList.add("hidden");
+                this._container.querySelector('[data-control="stop_tracking_bearing"]')?.classList.add("hidden");
             }
 
             showTrackingLocationIcon() {
@@ -226,12 +205,15 @@ export default function Map() {
                         await this._handleChangeMapStyle("rontomap_streets_dark");
                         break;
                     case 'track_location':
+                        this.hideTrackingIcons();
                         await this._handleTrackLocation();
                         break;
                     case 'track_bearing':
+                        this.hideTrackingIcons();
                         await this._handleTrackBearing();
                         break;
                     case 'stop_tracking_bearing':
+                        this.hideTrackingIcons();
                         await this._handleStopTrackingBearing();
                         break;
                 }
@@ -412,13 +394,11 @@ export default function Map() {
                         this.showTrackingBearingIcon();
                         this._trackingLocation = true;
                         this._releaseWakeLock();
-                        //mapRef.current.dragPan.enable();
                     });
                 }
                 else {
                     this._trackingLocation = true;
                     this._releaseWakeLock();
-                    //mapRef.current.dragPan.enable();
                 }
             }
 
@@ -486,15 +466,6 @@ export default function Map() {
                 this._container.innerHTML = `
                     <button
                         type="button"
-                        class="mapboxgl-ctrl-icon ${idMapStyle === "rontomap_streets_dark" ? "" : "hidden"}"
-                        title="Change Map Style"
-                        aria-label="Change Map Style"
-                        data-control="change_map_style_rontomap_satellite"
-                    >
-                        🌐
-                    </button>
-                    <button
-                        type="button"
                         class="mapboxgl-ctrl-icon ${idMapStyle === "rontomap_satellite" ? "" : "hidden"}"
                         title="Change Map Style"
                         aria-label="Change Map Style"
@@ -508,6 +479,15 @@ export default function Map() {
                         title="Change Map Style"
                         aria-label="Change Map Style"
                         data-control="change_map_style_rontomap_streets_dark"
+                    >
+                        🌐
+                    </button>
+                    <button
+                        type="button"
+                        class="mapboxgl-ctrl-icon ${idMapStyle === "rontomap_streets_dark" ? "" : "hidden"}"
+                        title="Change Map Style"
+                        aria-label="Change Map Style"
+                        data-control="change_map_style_rontomap_satellite"
                     >
                         🌐
                     </button>
@@ -601,19 +581,6 @@ export default function Map() {
             let zoom = mapRef.current.getZoom();
             let pitch = mapRef.current.getPitch();
 
-            // Initialize smoothing on first fix
-            if (smoothedLat === null) {
-                smoothedLat = lat;
-                smoothedLong = long;
-                smoothedBearing = bearing;
-            }
-
-            // Apply smoothing
-            const alpha = getDynamicAlphaLatLong(smoothedLat, smoothedLong, long, lat);
-            smoothedLat = smoothLatLong(smoothedLat, lat, alpha);
-            smoothedLong = smoothLatLong(smoothedLong, long, alpha);
-            smoothedBearing = smoothBearing(smoothedBearing, bearing);
-
             if (locationControlRef.current.isTrackingBearing() && locationControlRef.current.getZoomStart() != null) {
                 zoom = locationControlRef.current.getZoomStart();
                 pitch = locationControlRef.current.getPitchStart();
@@ -621,6 +588,7 @@ export default function Map() {
                 locationControlRef.current.resetPitchStart();
                 mapRef.current.flyTo({
                     center: [long, lat],
+                    offset: [0, 120],
                     zoom: zoom,
                     pitch: pitch,
                     bearing: bearing,
@@ -645,22 +613,27 @@ export default function Map() {
                 if (locationControlRef.current.isTrackingBearing()) {
                     if (locationControlRef.current.isUserDragging())
                         return;
-                    mapRef.current.jumpTo({
-                        center: [smoothedLong, smoothedLat],
-                        bearing: smoothedBearing
+                    mapRef.current.easeTo({
+                        center: [long, lat],
+                        offset: [0, 120],
+                        bearing: bearing,
+                        duration: 500,
+                        easing: (t) => t
                     });
                 }
                 else if (locationControlRef.current.isTrackingLocation()) {
-                    mapRef.current.jumpTo({
-                        center: [smoothedLong, smoothedLat]
+                    mapRef.current.easeTo({
+                        center: [long, lat],
+                        duration: 500,
+                        easing: (t) => t
                     });
                 }
             }
 
             // Save last position
-            locationControlRef.current._lastPostionLat = smoothedLat;
-            locationControlRef.current._lastPostionLong = smoothedLong;
-            locationControlRef.current._lastPositionBearing = smoothedBearing;
+            locationControlRef.current._lastPostionLat = lat;
+            locationControlRef.current._lastPostionLong = long;
+            locationControlRef.current._lastPositionBearing = bearing;
         });
 
         // On drag stop tracking location
@@ -733,31 +706,33 @@ export default function Map() {
         });
         mapRef.current.addControl(nav, 'top-right');
 
+        // Initialize custom location control
         locationControlRef.current = new LocationControl(geolocateRef.current, mapRef.current);
 
-        // Add custom reset view and user tracking controls
+        // Add custom location tracking controls to map
         mapRef.current.addControl(locationControlRef.current, 'top-right');
 
+        // Enable rotation gestures (right-click drag on desktop, two-finger rotate on mobile)
         mapRef.current.dragRotate.enable();
+
+        // Enable pinch-to-zoom and rotate gestures on touch devices
         mapRef.current.touchZoomRotate.enable();
+
+        // Listen for style changes
         mapRef.current.on('styledata', () => {
             addSourceAndSupportLink();
         });
     }, []);
 
+    // When changing map style preserve the current camera state
     useEffect(() => {
         if (!mapRef.current || !mapStyle) return;
-      
         const map = mapRef.current;
-      
-        // Save camera state
         const center = map.getCenter();
         const zoom = map.getZoom();
         const bearing = map.getBearing();
         const pitch = map.getPitch();
-      
         map.setStyle(mapStyle);
-      
         map.once('style.load', () => {
           map.jumpTo({
             center,
@@ -768,7 +743,7 @@ export default function Map() {
         });
     }, [mapStyle]);      
 
-    const [showTips, setShowTips] = useState(true);
+    // Show tips
     useEffect(() => {
         const dontShowTips = localStorage.getItem("rontomap_dont_show_tips");
         if (dontShowTips) {
