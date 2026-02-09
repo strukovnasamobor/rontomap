@@ -15,6 +15,33 @@
   bottom: env(safe-area-inset-bottom);
 }
 
+.mapboxgl-ctrl-group button+button {
+  border-top: none !important;
+}
+
+.ctrl-mapstyle-container {
+  position: absolute;
+  top: 0px;
+  right: 0px;
+}
+
+.ctrl-location-container {
+  position: absolute;
+  top: 46px;
+  right: 0px;
+}
+
+.ctrl-compass-container {
+  position: absolute;
+  top: 46px;
+  right: 0px;
+  box-shadow: none !important;
+}
+
+.ctrl-location-container .mapboxgl-ctrl-geolocate {
+  margin-top: 36px;
+}
+
 .mapboxgl-ctrl-group button {
   width: 36px !important;
   height: 36px !important;

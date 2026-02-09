@@ -465,63 +465,67 @@ export default function Map() {
 
             onAdd() {
                 this._container = document.createElement("div");
-                this._container.className = "mapboxgl-ctrl mapboxgl-ctrl-group";
+                this._container.className = "mapboxgl-control";
 
                 this._container.innerHTML = `
-                    <button
-                        type="button"
-                        class="mapboxgl-ctrl-icon ${idMapStyle === "rontomap_satellite" ? "" : "hidden"}"
-                        title="Change Map Style"
-                        aria-label="Change Map Style"
-                        data-control="change_map_style_rontomap_streets_light"
-                    >
-                        <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/map_style_change.svg');"></span>
-                    </button>
-                    <button
-                        type="button"
-                        class="mapboxgl-ctrl-icon ${idMapStyle === "rontomap_streets_light" ? "" : "hidden"}"
-                        title="Change Map Style"
-                        aria-label="Change Map Style"
-                        data-control="change_map_style_rontomap_streets_dark"
-                    >
-                        <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/map_style_change.svg');"></span>
-                    </button>
-                    <button
-                        type="button"
-                        class="mapboxgl-ctrl-icon ${idMapStyle === "rontomap_streets_dark" ? "" : "hidden"}"
-                        title="Change Map Style"
-                        aria-label="Change Map Style"
-                        data-control="change_map_style_rontomap_satellite"
-                    >
-                        <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/map_style_change.svg');"></span>
-                    </button>
-                    <button
-                        class="mapboxgl-ctrl-geolocate hidden"
-                        type="button"
-                        title="Track User Location"
-                        aria-label="Track User Location"
-                        data-control="track_location"
-                    >
-                        <span class="mapboxgl-ctrl-icon"></span>
-                    </button>
-                    <button
-                        class="mapboxgl-ctrl-geolocate hidden"
-                        type="button"
-                        title="Track User Bearing"
-                        aria-label="Track User Bearing"
-                        data-control="track_bearing"
-                    >
-                        <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/user_tracking_location.svg');"></span>
-                    </button>
-                    <button
-                        class="mapboxgl-ctrl-geolocate hidden"
-                        type="button"
-                        title="Stop Tracking User Bearing"
-                        aria-label="Tracking User Bearing"
-                        data-control="stop_tracking_bearing"
-                    >
-                        <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/user_tracking_bearing.svg');"></span>
-                    </button>
+                    <div class="ctrl-location-container mapboxgl-ctrl mapboxgl-ctrl-group">
+                        <button
+                            class="mapboxgl-ctrl-geolocate hidden"
+                            type="button"
+                            title="Track User Location"
+                            aria-label="Track User Location"
+                            data-control="track_location"
+                        >
+                            <span class="mapboxgl-ctrl-icon"></span>
+                        </button>
+                        <button
+                            class="mapboxgl-ctrl-geolocate hidden"
+                            type="button"
+                            title="Track User Bearing"
+                            aria-label="Track User Bearing"
+                            data-control="track_bearing"
+                        >
+                            <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/user_tracking_location.svg');"></span>
+                        </button>
+                        <button
+                            class="mapboxgl-ctrl-geolocate hidden"
+                            type="button"
+                            title="Stop Tracking User Bearing"
+                            aria-label="Tracking User Bearing"
+                            data-control="stop_tracking_bearing"
+                        >
+                            <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/user_tracking_bearing.svg');"></span>
+                        </button>
+                    </div>
+                    <div class="ctrl-mapstyle-container mapboxgl-ctrl mapboxgl-ctrl-group">
+                        <button
+                            type="button"
+                            class="mapboxgl-ctrl-icon ${idMapStyle === "rontomap_satellite" ? "" : "hidden"}"
+                            title="Change Map Style"
+                            aria-label="Change Map Style"
+                            data-control="change_map_style_rontomap_streets_light"
+                        >
+                            <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/map_style_change.svg');"></span>
+                        </button>
+                        <button
+                            type="button"
+                            class="mapboxgl-ctrl-icon ${idMapStyle === "rontomap_streets_light" ? "" : "hidden"}"
+                            title="Change Map Style"
+                            aria-label="Change Map Style"
+                            data-control="change_map_style_rontomap_streets_dark"
+                        >
+                            <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/map_style_change.svg');"></span>
+                        </button>
+                        <button
+                            type="button"
+                            class="mapboxgl-ctrl-icon ${idMapStyle === "rontomap_streets_dark" ? "" : "hidden"}"
+                            title="Change Map Style"
+                            aria-label="Change Map Style"
+                            data-control="change_map_style_rontomap_satellite"
+                        >
+                            <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/map_style_change.svg');"></span>
+                        </button>
+                    </div>
                 `;
 
                 this._container.addEventListener("click", this._handleClick);
@@ -726,18 +730,21 @@ export default function Map() {
             }
         });
 
-        // Add navigation control with compass icon
+        // Initialize custom location control
+        locationControlRef.current = new LocationControl(geolocateRef.current, mapRef.current);
+
+        // Add custom location tracking controls to map
+        mapRef.current.addControl(locationControlRef.current, 'top-right');
+
+        // Add compass icon
         const nav = new mapboxgl.NavigationControl({
             showZoom: false,
             visualizePitch: true
         });
         mapRef.current.addControl(nav, 'top-right');
 
-        // Initialize custom location control
-        locationControlRef.current = new LocationControl(geolocateRef.current, mapRef.current);
-
-        // Add custom location tracking controls to map
-        mapRef.current.addControl(locationControlRef.current, 'top-right');
+        // Add custom className to the compass container
+        nav._container.classList.add('ctrl-compass-container')
 
         // Enable rotation gestures (right-click drag on desktop, two-finger rotate on mobile)
         mapRef.current.dragRotate.enable();
