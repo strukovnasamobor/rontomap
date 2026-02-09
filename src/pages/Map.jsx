@@ -472,7 +472,7 @@ export default function Map() {
                         aria-label="Change Map Style"
                         data-control="change_map_style_rontomap_streets_light"
                     >
-                        <span class="mapboxgl-ctrl-icon" style="background-image: url('src/assets/map_style_change.svg');"></span>
+                        <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/map_style_change.svg');"></span>
                     </button>
                     <button
                         type="button"
@@ -481,7 +481,7 @@ export default function Map() {
                         aria-label="Change Map Style"
                         data-control="change_map_style_rontomap_streets_dark"
                     >
-                        <span class="mapboxgl-ctrl-icon" style="background-image: url('src/assets/map_style_change.svg');"></span>
+                        <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/map_style_change.svg');"></span>
                     </button>
                     <button
                         type="button"
@@ -490,7 +490,7 @@ export default function Map() {
                         aria-label="Change Map Style"
                         data-control="change_map_style_rontomap_satellite"
                     >
-                        <span class="mapboxgl-ctrl-icon" style="background-image: url('src/assets/map_style_change.svg');"></span>
+                        <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/map_style_change.svg');"></span>
                     </button>
                     <button
                         class="mapboxgl-ctrl-geolocate hidden"
@@ -508,7 +508,7 @@ export default function Map() {
                         aria-label="Track User Bearing"
                         data-control="track_bearing"
                     >
-                        <span class="mapboxgl-ctrl-icon" style="background-image: url('src/assets/user_tracking_location.svg');"></span>
+                        <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/user_tracking_location.svg');"></span>
                     </button>
                     <button
                         class="mapboxgl-ctrl-geolocate hidden"
@@ -517,7 +517,7 @@ export default function Map() {
                         aria-label="Tracking User Bearing"
                         data-control="stop_tracking_bearing"
                     >
-                        <span class="mapboxgl-ctrl-icon" style="background-image: url('src/assets/user_tracking_bearing.svg');"></span>
+                        <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/user_tracking_bearing.svg');"></span>
                     </button>
                 `;
 
