@@ -334,6 +334,7 @@ export default function Map() {
 
                     mapRef.current.flyTo({
                         center: [long, lat],
+                        offset: [0, 120],
                         zoom: zoom,
                         pitch: pitch,
                         bearing: bearing,
