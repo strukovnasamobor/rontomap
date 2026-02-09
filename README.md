@@ -1,7 +1,7 @@
 # RontoMap
 
 <a href="https://rontomap.web.app" target="_blank">
-  <img src="public/assets/header.png" height="120" alt="RontoMap"/>
+  <img src="public/assets/header.png" height="240" alt="RontoMap"/>
 </a>
 
 RontoMap Web App:<br>https://rontomap.web.app<br><br>
