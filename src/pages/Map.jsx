@@ -502,22 +502,22 @@ export default function Map() {
                         <span class="mapboxgl-ctrl-icon"></span>
                     </button>
                     <button
-                        class="mapboxgl-ctrl-shrink hidden"
+                        class="mapboxgl-ctrl-geolocate hidden"
                         type="button"
                         title="Track User Bearing"
                         aria-label="Track User Bearing"
                         data-control="track_bearing"
                     >
-                        <span class="mapboxgl-ctrl-icon"></span>
+                        <span class="mapboxgl-ctrl-icon" style="background-image: url('src/assets/user_tracking_location.svg');"></span>
                     </button>
                     <button
-                        class="mapboxgl-ctrl-fullscreen hidden"
+                        class="mapboxgl-ctrl-geolocate hidden"
                         type="button"
                         title="Stop Tracking User Bearing"
                         aria-label="Tracking User Bearing"
                         data-control="stop_tracking_bearing"
                     >
-                        <span class="mapboxgl-ctrl-icon"></span>
+                        <span class="mapboxgl-ctrl-icon" style="background-image: url('src/assets/user_tracking_bearing.svg');"></span>
                     </button>
                 `;
 
