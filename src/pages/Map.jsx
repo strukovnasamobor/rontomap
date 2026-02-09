@@ -472,7 +472,7 @@ export default function Map() {
                         aria-label="Change Map Style"
                         data-control="change_map_style_rontomap_streets_light"
                     >
-                        🌐
+                        <span class="mapboxgl-ctrl-icon" style="background-image: url('src/assets/map_style_change.svg');"></span>
                     </button>
                     <button
                         type="button"
@@ -481,7 +481,7 @@ export default function Map() {
                         aria-label="Change Map Style"
                         data-control="change_map_style_rontomap_streets_dark"
                     >
-                        🌐
+                        <span class="mapboxgl-ctrl-icon" style="background-image: url('src/assets/map_style_change.svg');"></span>
                     </button>
                     <button
                         type="button"
@@ -490,7 +490,7 @@ export default function Map() {
                         aria-label="Change Map Style"
                         data-control="change_map_style_rontomap_satellite"
                     >
-                        🌐
+                        <span class="mapboxgl-ctrl-icon" style="background-image: url('src/assets/map_style_change.svg');"></span>
                     </button>
                     <button
                         class="mapboxgl-ctrl-geolocate hidden"

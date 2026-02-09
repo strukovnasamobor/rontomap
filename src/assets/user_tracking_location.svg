@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <svg viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg" fill="#333">
   <path d="M10 4C9 4 9 5 9 5v.1A5 5 0 0 0 5.1 9H5s-1 0-1 1 1 1 1 1h.1A5 5 0 0 0 9 14.9v.1s0 1 1 1 1-1 1-1v-.1a5 5 0 0 0 3.9-3.9h.1s1 0 1-1-1-1-1-1h-.1A5 5 0 0 0 11 5.1V5s0-1-1-1zm0 2.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 1 1 0-7z"/>
-  <circle id="circle-1" cx="10" cy="10" r="3.5" style="stroke-width: 0; fill: rgb(0, 144, 255);"/>
+  <circle id="circle-1" cx="10" cy="10" r="3.5" style="stroke-width: 0; fill: rgba(0, 144, 255, 0.75);"/>
   <circle id="dot" cx="10" cy="10" r="2" style="fill: rgb(51, 51, 51); paint-order: fill;"/>
 </svg>
