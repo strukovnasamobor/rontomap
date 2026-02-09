@@ -22,11 +22,11 @@ export default function Map() {
     });    
     const [mapStyle, setMapStyle] = useState('');
     const [defaultCenter, setDefaultCenter] = useState([0, 0]);
-    const [defaultZoom, setDefaultZoom] = useState(1);
+    const [defaultZoom, setDefaultZoom] = useState(14);
     const [defaultBearing, setDefaultBearing] = useState(0);
     const [defaultPitch, setDefaultPitch] = useState(0);
     const [savedCenter, setSavedCenter] = useState(defaultCenter);
-    const [savedZoom, setSavedZoom] = useState(defaultZoom);
+    const [savedZoom, setSavedZoom] = useState(1);
     const [savedBearing, setSavedBearing] = useState(defaultBearing);
     const [savedPitch, setSavedPitch] = useState(defaultPitch);
     const [showTips, setShowTips] = useState(true);
@@ -231,6 +231,9 @@ export default function Map() {
                 // Set the starting zoom and pitch
                 this._zoomStart = this._map.getZoom();
                 this._pitchStart = this._map.getPitch();
+
+                if(this._zoomStart == 1)
+                    this._zoomStart = defaultZoom;
 
                 // Override to prevent camera movement
                 this._geolocate._updateCamera = async () => {
@@ -611,6 +614,29 @@ export default function Map() {
                 });
             }
             else {
+                // Adaptive duration based on distance moved
+                let duration = 500;
+                if (locationControlRef.current._lastPostionLat !== null && 
+                    locationControlRef.current._lastPostionLong !== null) {
+                    // Calculate Euclidean distance (rough approximation)
+                    const distance = Math.sqrt(
+                        Math.pow(long - locationControlRef.current._lastPostionLong, 2) + 
+                        Math.pow(lat - locationControlRef.current._lastPostionLat, 2)
+                    );
+                    if (distance < 0.00005) {
+                        // Very small movement (< ~5.5 meters) 
+                        duration = 500;
+                    } else if (distance < 0.0001) {
+                        // Small movement (~5.5-11 meters) 
+                        duration = 250;
+                    } else if (distance < 0.0005) {
+                        // Medium movement (~11-55 meters)
+                        duration = 125;
+                    } else {
+                        // Large jump (> ~55 meters)
+                        duration = 0;
+                    }
+                }
                 if (locationControlRef.current.isTrackingBearing()) {
                     if (locationControlRef.current.isUserDragging())
                         return;
@@ -618,14 +644,14 @@ export default function Map() {
                         center: [long, lat],
                         offset: [0, 120],
                         bearing: bearing,
-                        duration: 500,
+                        duration: duration,
                         easing: (t) => t
                     });
                 }
                 else if (locationControlRef.current.isTrackingLocation()) {
                     mapRef.current.easeTo({
                         center: [long, lat],
-                        duration: 500,
+                        duration: duration,
                         easing: (t) => t
                     });
                 }
