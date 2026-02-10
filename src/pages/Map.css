@@ -6,13 +6,13 @@
 .mapboxgl-ctrl-top-left,
 .mapboxgl-ctrl-top,
 .mapboxgl-ctrl-top-right {
-  top: env(safe-area-inset-top);
+  top: env(safe-area-inset-top) !important;
 }
 
 .mapboxgl-ctrl-bottom-left,
 .mapboxgl-ctrl-bottom,
 .mapboxgl-ctrl-bottom-right {
-  bottom: env(safe-area-inset-bottom);
+  bottom: env(safe-area-inset-bottom) !important;
 }
 
 .mapboxgl-ctrl-group button+button {
