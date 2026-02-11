@@ -2,6 +2,7 @@ import "./Map.css";
 import PageFixedLayout from "../components/PageFixedLayout";
 import { useIonViewWillEnter, IonAlert } from '@ionic/react';
 import { useEffect, useRef, useState } from 'react';
+import { useDoubleTap } from 'use-double-tap';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import MapboxGeocoder from '@mapbox/mapbox-gl-geocoder';
@@ -16,6 +17,7 @@ export default function Map() {
     const mapContainerRef = useRef(null);
     const geolocateRef = useRef(null);
     const locationControlRef = useRef(null);
+    const [fullscreen, setFullscreen] = useState(false);
     const [idMapStyle, setIdMapStyle] = useState(() => {
         const storedIdMapStyle = localStorage.getItem("rontomap_id_map_style");
         return storedIdMapStyle ? storedIdMapStyle : "rontomap_streets_light";
@@ -66,6 +68,66 @@ export default function Map() {
 
         tryAdd();
     };
+
+    // Double tap to toggle fullscreen
+    const bind = useDoubleTap(() => {
+        const controlsContainer = document.querySelector('.mapboxgl-control-container');
+        const mapContainer = document.querySelector('.map-container');
+
+        if (!fullscreen) {
+            if (controlsContainer && mapContainer) {
+                controlsContainer.style.display = 'none';
+                if (mapContainer.requestFullscreen) {
+                    mapContainer.requestFullscreen();
+                }
+                // @ts-ignore
+                else if (mapContainer.webkitRequestFullscreen) { /* Safari */
+                    // @ts-ignore
+                    mapContainer.webkitRequestFullscreen();
+                }
+                // @ts-ignore
+                else if (mapContainer.msRequestFullscreen) { /* IE11 */
+                    // @ts-ignore
+                    mapContainer.msRequestFullscreen();
+                }
+            }
+        }
+        else {
+            if (controlsContainer)
+                controlsContainer.style.display = 'block';
+            if (document.fullscreenElement) {
+                if (document.exitFullscreen) {
+                    document.exitFullscreen();
+                }
+            }
+            // @ts-ignore
+            else if (document.webkitFullscreenElement) { /* Safari */
+                // @ts-ignore
+                if (document.webkitExitFullscreen) {
+                    // @ts-ignore
+                    document.webkitExitFullscreen();
+                }
+            }
+            // @ts-ignore
+            else if (document.msFullscreenElement) { /* IE11 */
+                // @ts-ignore
+                if (document.msExitFullscreen) {
+                    // @ts-ignore
+                    document.msExitFullscreen();
+                }
+            }
+        }
+
+        // Toggle state
+        setFullscreen(prev => !prev);
+
+        // Resize map
+        setTimeout(() => {
+            if (mapRef.current) {
+                mapRef.current.resize();
+            }
+        }, 100);
+    }, 300);
 
     // Resize map on view enter
     useIonViewWillEnter(() => {
@@ -124,6 +186,7 @@ export default function Map() {
         mapRef.current = new mapboxgl.Map({
             container: mapContainerRef.current,
             style: mapStyle,
+            doubleClickZoom: false,
             // @ts-ignore
             center: center,
             zoom: zoom,
@@ -669,6 +732,7 @@ export default function Map() {
 
         // On drag stop tracking location
         mapRef.current.on('drag', (e) => {
+            console.log("drag");
             if (locationControlRef.current && locationControlRef.current.isTrackingLocation()) {
                 locationControlRef.current.stopTrackingLocation();
             }
@@ -676,6 +740,7 @@ export default function Map() {
 
         // On dragstart set isUserDragging to prevent camera to move to the user location
         mapRef.current.on('dragstart', () => {
+            console.log("dragstart");
             if (locationControlRef.current?.isTrackingBearing()) {
                 locationControlRef.current._isUserDragging = true;
             }
@@ -683,6 +748,7 @@ export default function Map() {
 
         // On dragend remove isUserDragging to enable camera to move to the user location
         mapRef.current.on('dragend', () => {
+            console.log("dragend");
             if (locationControlRef.current?.isTrackingBearing()) {
                 locationControlRef.current._isUserDragging = false;
             }
@@ -791,10 +857,9 @@ export default function Map() {
                 isOpen={showTips}
                 onDidDismiss={() => setShowTips(false)}
                 header="RontoMap"
-                message={"Adjust the map pitch using two parallel fingers on a " +
-                         "touch screen or by right-clicking and dragging the mouse. " + 
-                         "Once location tracking is enabled, click again to track the " + 
-                         "user’s movement direction. Click once more to stop tracking.\n\n " +
+                message={"Tilt the map: Use two fingers on touchscreen or right-click and drag with mouse.\n\n" + 
+                         "Location tracking: Click location icon to enable, once more to follow direction. \n\n" +
+                         "Full screen: Double-click to enter/exit.\n\n" +
                          "Web App:\nrontomap.web.app"}
                 buttons={[
                     {
@@ -821,7 +886,11 @@ export default function Map() {
                     }
                 ]}
               ></IonAlert>
-            <div ref={mapContainerRef} className="map-container" />
+            <div 
+                ref={mapContainerRef}
+                {...bind}
+                className="map-container"
+            />
         </PageFixedLayout>
     );
 }
