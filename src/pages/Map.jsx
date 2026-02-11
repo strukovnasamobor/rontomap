@@ -750,7 +750,20 @@ export default function Map() {
         mapRef.current.on('dragend', () => {
             console.log("dragend");
             if (locationControlRef.current?.isTrackingBearing()) {
-                locationControlRef.current._isUserDragging = false;
+                // Move map back to user's last known location
+                if (locationControlRef.current._lastPostionLat != null && locationControlRef.current._lastPostionLong != null) {
+                    mapRef.current.easeTo({
+                        center: [locationControlRef.current._lastPostionLong, locationControlRef.current._lastPostionLat],
+                        offset: [0, 120],
+                        duration: 500,
+                        easing: (t) => t
+                    }).once('moveend', () => {
+                        locationControlRef.current._isUserDragging = false;
+                    });
+                }
+                else {
+                    locationControlRef.current._isUserDragging = false;
+                }
             }
         });
 
