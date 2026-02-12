@@ -15,6 +15,11 @@
   bottom: env(safe-area-inset-bottom) !important;
 }
 
+.mapboxgl-ctrl-top-right,
+.mapboxgl-ctrl-bottom-right {
+  right: env(safe-area-inset-right) !important;
+}
+
 .mapboxgl-ctrl-group button+button {
   border-top: none !important;
 }
