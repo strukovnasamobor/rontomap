@@ -1,5 +1,6 @@
 import "./Map.css";
 import PageFixedLayout from "../components/PageFixedLayout";
+import Fullscreen from '../plugins/Fullscreen';
 import { useIonViewWillEnter, IonAlert } from '@ionic/react';
 import { useEffect, useRef, useState } from 'react';
 import { useDoubleTap } from 'use-double-tap';
@@ -85,7 +86,9 @@ export default function Map() {
                 controlsContainer.style.display = 'none';
                  // Android: Hide status bar using Capacitor
                 if (isAndroid()) {
+                    console.log('Android: Enter fullscreen.');
                     StatusBar.hide();
+                    Fullscreen.enter();
                 }
                 // Try native fullscreen
                 if (mapContainer.requestFullscreen) {
@@ -108,7 +111,9 @@ export default function Map() {
                 controlsContainer.style.display = 'block';
             // Android: Show status bar
             if (isAndroid()) {
+                console.log('Android: Exit fullscreen.');
                 StatusBar.show();
+                Fullscreen.exit();
             }
             // Exit native fullscreen
             if (document.fullscreenElement) {
