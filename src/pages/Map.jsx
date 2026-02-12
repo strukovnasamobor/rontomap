@@ -33,6 +33,11 @@ export default function Map() {
     const [savedPitch, setSavedPitch] = useState(defaultPitch);
     const [showTips, setShowTips] = useState(true);
 
+    // Detect Android
+    const isAndroid = () => {
+        return /android/i.test(navigator.userAgent);
+    };
+
     // Get query params from URL
     const getQueryParams = (param) => {
         const urlParams = new URLSearchParams(window.location.search);
@@ -77,6 +82,11 @@ export default function Map() {
         if (!fullscreen) {
             if (controlsContainer && mapContainer) {
                 controlsContainer.style.display = 'none';
+                 // Android: Hide status bar using Capacitor
+                if (isAndroid()) {
+                    StatusBar.hide();
+                }
+                // Try native fullscreen
                 if (mapContainer.requestFullscreen) {
                     mapContainer.requestFullscreen();
                 }
@@ -95,6 +105,11 @@ export default function Map() {
         else {
             if (controlsContainer)
                 controlsContainer.style.display = 'block';
+            // Android: Show status bar
+            if (isAndroid()) {
+                StatusBar.show();
+            }
+            // Exit native fullscreen
             if (document.fullscreenElement) {
                 if (document.exitFullscreen) {
                     document.exitFullscreen();
