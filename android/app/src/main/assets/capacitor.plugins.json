@@ -1,0 +1,14 @@
+[
+	{
+		"pkg": "@capacitor/geolocation",
+		"classpath": "com.capacitorjs.plugins.geolocation.GeolocationPlugin"
+	},
+	{
+		"pkg": "@capacitor/status-bar",
+		"classpath": "com.capacitorjs.plugins.statusbar.StatusBarPlugin"
+	},
+    {
+      "pkg": "fullscreen",
+      "classpath": "hr.strukovnasamobor.rontomap.FullscreenPlugin"
+    }
+]
