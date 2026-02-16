@@ -77,9 +77,14 @@ export default function Map() {
     };
 
     // Double tap to toggle fullscreen
-    const bind = useDoubleTap(() => {
+    const bind = useDoubleTap((e) => {
         const controlsContainer = document.querySelector('.mapboxgl-control-container');
         const mapContainer = document.querySelector('.map-container');
+
+        // Ignore clicks on Mapbox controls
+        if (e?.target?.closest("mapboxgl-control-container")) {
+          return;
+        }
 
         if (!fullscreen) {
             if (controlsContainer && mapContainer) {
