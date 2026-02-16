@@ -82,7 +82,7 @@ export default function Map() {
         const mapContainer = document.querySelector('.map-container');
 
         // Ignore clicks on Mapbox controls
-        if (e?.target?.closest("mapboxgl-control-container")) {
+        if (e?.target?.closest(".mapboxgl-control-container")) {
           return;
         }
 
