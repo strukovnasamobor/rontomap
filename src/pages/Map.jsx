@@ -327,15 +327,19 @@ export default function Map() {
         // If we don't have a last known position, try to get the current position
         if (lat == null || long == null) {
           try {
-            // Check current permission status
-            const permissionStatus = await Geolocation.checkPermissions();
-            if (permissionStatus.location !== "granted") {
-              const permissions = await Geolocation.requestPermissions();
-              if (permissions.location !== "granted" && permissions.location !== "limited") {
-                console.log("_handleTrackLocation > Location permission denied");
-                return;
+            // On native platforms, explicitly request permissions first
+            if (Capacitor.isNativePlatform()) {
+              const permissionStatus = await Geolocation.checkPermissions();
+              if (permissionStatus.location !== "granted") {
+                const permissions = await Geolocation.requestPermissions();
+                if (permissions.location !== "granted" && permissions.location !== "limited") {
+                  console.log("_handleTrackLocation > Location permission denied");
+                  this.showTrackingLocationIcon();
+                  return;
+                }
               }
             }
+            // On web, getCurrentPosition() itself triggers the browser permission prompt
             const position = await Geolocation.getCurrentPosition({
               enableHighAccuracy: true,
               timeout: 50000,
@@ -346,6 +350,7 @@ export default function Map() {
             zoom = defaultZoomOnUserTrackingLocation;
           } catch (err) {
             console.error("_handleTrackLocation > Error getting user location:", err);
+            this.showTrackingLocationIcon();
             return;
           }
         }
