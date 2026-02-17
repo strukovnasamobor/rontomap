@@ -12,8 +12,7 @@ import { StatusBar } from "@capacitor/status-bar";
 import { Geolocation } from "@capacitor/geolocation";
 
 // Set Mapbox access token
-mapboxgl.accessToken =
-  "pk.eyJ1IjoiYXVyZWxpdXMtemQiLCJhIjoiY21rcXA3cXh2MHNpZDNjcXl1a3MzbW8zciJ9.JO4VSTN6-0vRtWW0YKjlAg";
+mapboxgl.accessToken = "pk.eyJ1IjoiYXVyZWxpdXMtemQiLCJhIjoiY21rcXA3cXh2MHNpZDNjcXl1a3MzbW8zciJ9.JO4VSTN6-0vRtWW0YKjlAg";
 
 export default function Map() {
   const mapRef = useRef(null);
@@ -50,9 +49,7 @@ export default function Map() {
   // Add source and support links to the map
   const addSourceAndSupportLink = () => {
     const tryAdd = () => {
-      const el = mapRef.current
-        ?.getContainer()
-        ?.querySelector(".mapboxgl-ctrl-attrib-inner");
+      const el = mapRef.current?.getContainer()?.querySelector(".mapboxgl-ctrl-attrib-inner");
 
       if (!el) {
         // Retry on next animation frame
@@ -78,9 +75,7 @@ export default function Map() {
 
   // Double tap to toggle fullscreen
   const bind = useDoubleTap((e) => {
-    const controlsContainer = document.querySelector(
-      ".mapboxgl-control-container",
-    );
+    const controlsContainer = document.querySelector(".mapboxgl-control-container");
     const mapContainer = document.querySelector(".map-container");
 
     // Ignore clicks on Mapbox controls
@@ -169,36 +164,16 @@ export default function Map() {
     console.log("useEffect > idMapStyle:", idMapStyle);
     if (idMapStyle == "rontomap_streets_light") {
       setMapStyle("mapbox://styles/aurelius-zd/cmjmktkev00cc01sb0a6ff4i5");
-      document
-        .querySelector(
-          '[data-control="change_map_style_rontomap_streets_light"]',
-        )
-        ?.classList.add("hidden");
-      document
-        .querySelector(
-          '[data-control="change_map_style_rontomap_streets_dark"]',
-        )
-        ?.classList.remove("hidden");
+      document.querySelector('[data-control="change_map_style_rontomap_streets_light"]')?.classList.add("hidden");
+      document.querySelector('[data-control="change_map_style_rontomap_streets_dark"]')?.classList.remove("hidden");
     } else if (idMapStyle == "rontomap_streets_dark") {
       setMapStyle("mapbox://styles/aurelius-zd/cmjmqcp3b000101r2g5vb6bse");
-      document
-        .querySelector(
-          '[data-control="change_map_style_rontomap_streets_dark"]',
-        )
-        ?.classList.add("hidden");
-      document
-        .querySelector('[data-control="change_map_style_rontomap_satellite"]')
-        ?.classList.remove("hidden");
+      document.querySelector('[data-control="change_map_style_rontomap_streets_dark"]')?.classList.add("hidden");
+      document.querySelector('[data-control="change_map_style_rontomap_satellite"]')?.classList.remove("hidden");
     } else if (idMapStyle == "rontomap_satellite") {
       setMapStyle("mapbox://styles/aurelius-zd/cmefvgizo00ul01sc2rek321h");
-      document
-        .querySelector('[data-control="change_map_style_rontomap_satellite"]')
-        ?.classList.add("hidden");
-      document
-        .querySelector(
-          '[data-control="change_map_style_rontomap_streets_light"]',
-        )
-        ?.classList.remove("hidden");
+      document.querySelector('[data-control="change_map_style_rontomap_satellite"]')?.classList.add("hidden");
+      document.querySelector('[data-control="change_map_style_rontomap_streets_light"]')?.classList.remove("hidden");
     }
   }, [idMapStyle]);
 
@@ -270,59 +245,34 @@ export default function Map() {
 
       hideTrackingIcons() {
         console.log("hideTrackingIcons");
-        this._container
-          .querySelector('[data-control="track_location"]')
-          ?.classList.add("hidden");
-        this._container
-          .querySelector('[data-control="track_bearing"]')
-          ?.classList.add("hidden");
-        this._container
-          .querySelector('[data-control="stop_tracking_bearing"]')
-          ?.classList.add("hidden");
+        this._container.querySelector('[data-control="track_location"]')?.classList.add("hidden");
+        this._container.querySelector('[data-control="track_bearing"]')?.classList.add("hidden");
+        this._container.querySelector('[data-control="stop_tracking_bearing"]')?.classList.add("hidden");
       }
 
       showTrackingLocationIcon() {
         console.log("showTrackingLocationIcon");
-        this._container
-          .querySelector('[data-control="track_location"]')
-          ?.classList.remove("hidden");
-        this._container
-          .querySelector('[data-control="track_bearing"]')
-          ?.classList.add("hidden");
-        this._container
-          .querySelector('[data-control="stop_tracking_bearing"]')
-          ?.classList.add("hidden");
+        this._container.querySelector('[data-control="track_location"]')?.classList.remove("hidden");
+        this._container.querySelector('[data-control="track_bearing"]')?.classList.add("hidden");
+        this._container.querySelector('[data-control="stop_tracking_bearing"]')?.classList.add("hidden");
       }
 
       showTrackingBearingIcon() {
         console.log("showTrackingBearingIcon");
-        this._container
-          .querySelector('[data-control="track_location"]')
-          ?.classList.add("hidden");
-        this._container
-          .querySelector('[data-control="track_bearing"]')
-          ?.classList.remove("hidden");
-        this._container
-          .querySelector('[data-control="stop_tracking_bearing"]')
-          ?.classList.add("hidden");
+        this._container.querySelector('[data-control="track_location"]')?.classList.add("hidden");
+        this._container.querySelector('[data-control="track_bearing"]')?.classList.remove("hidden");
+        this._container.querySelector('[data-control="stop_tracking_bearing"]')?.classList.add("hidden");
       }
 
       showStopTrackingBearingIcon() {
         console.log("showStopTrackingBearingIcon");
-        this._container
-          .querySelector('[data-control="track_location"]')
-          ?.classList.add("hidden");
-        this._container
-          .querySelector('[data-control="track_bearing"]')
-          ?.classList.add("hidden");
-        this._container
-          .querySelector('[data-control="stop_tracking_bearing"]')
-          ?.classList.remove("hidden");
+        this._container.querySelector('[data-control="track_location"]')?.classList.add("hidden");
+        this._container.querySelector('[data-control="track_bearing"]')?.classList.add("hidden");
+        this._container.querySelector('[data-control="stop_tracking_bearing"]')?.classList.remove("hidden");
       }
 
       async _handleClick(e) {
-        const button =
-          e.target instanceof Element ? e.target.closest("button") : null;
+        const button = e.target instanceof Element ? e.target.closest("button") : null;
         if (!button) return;
 
         const control = button.dataset.control;
@@ -377,10 +327,7 @@ export default function Map() {
             if (permissionStatus.location !== "granted") {
               // Request if not granted
               const permissions = await Geolocation.requestPermissions();
-              if (
-                permissions.location !== "granted" &&
-                permissions.location !== "limited"
-              ) {
+              if (permissions.location !== "granted" && permissions.location !== "limited") {
                 console.log("_updateCamera > Location permission denied");
                 return;
               }
@@ -389,9 +336,7 @@ export default function Map() {
             const position = await Geolocation.getCurrentPosition();
             const long = position.coords.longitude;
             const lat = position.coords.latitude;
-            const bearing = position.coords.heading
-              ? position.coords.heading
-              : null;
+            const bearing = position.coords.heading ? position.coords.heading : null;
             console.log("_updateCamera:", long, lat, bearing);
           } catch (err) {
             console.error("_updateCamera > Error getting user location:", err);
@@ -458,9 +403,7 @@ export default function Map() {
           const long = this._lastPostionLong;
           let zoom = this._map.getZoom();
           let pitch = this._map.getPitch();
-          let bearing = this._lastPositionBearing
-            ? this._lastPositionBearing
-            : this._map.getBearing();
+          let bearing = this._lastPositionBearing ? this._lastPositionBearing : this._map.getBearing();
 
           if (this.getZoomStart() != null) {
             zoom = this.getZoomStart();
@@ -499,11 +442,9 @@ export default function Map() {
         this._pitchOnStopTrackingBearing = this._map.getPitch();
 
         // Set the starting zoom and pitch
-        if (this._zoomOnStartTrackingBearing == null)
-          this._zoomStart = defaultZoom;
+        if (this._zoomOnStartTrackingBearing == null) this._zoomStart = defaultZoom;
         else this._zoomStart = this._zoomOnStartTrackingBearing;
-        if (this._pitchOnStartTrackingBearing == null)
-          this._pitchStart = defaultPitch;
+        if (this._pitchOnStartTrackingBearing == null) this._pitchStart = defaultPitch;
         else this._pitchStart = this._pitchOnStartTrackingBearing;
 
         // Set map to last position
@@ -512,9 +453,7 @@ export default function Map() {
           const long = this._lastPostionLong;
           let zoom = this._map.getZoom();
           let pitch = this._map.getPitch();
-          let bearing = this._lastPositionBearing
-            ? this._lastPositionBearing
-            : this._map.getBearing();
+          let bearing = this._lastPositionBearing ? this._lastPositionBearing : this._map.getBearing();
 
           if (this.getZoomStart() != null) {
             zoom = this.getZoomStart();
@@ -686,10 +625,7 @@ export default function Map() {
 
             // Add listener for visibility change
             document.addEventListener("visibilitychange", async () => {
-              if (
-                this._isScreenLocked &&
-                document.visibilityState === "visible"
-              ) {
+              if (this._isScreenLocked && document.visibilityState === "visible") {
                 this._wakeLock = await navigator.wakeLock.request("screen");
               }
             });
@@ -725,18 +661,16 @@ export default function Map() {
     });
 
     geolocateRef.current.on("geolocate", (e) => {
+      if (locationControlRef.current.isTrackingBearing() == true)
+        mapRef.current.getContainer().classList.add("geolocate-track-user-bearing");
+
       const long = e.coords.longitude;
       const lat = e.coords.latitude;
-      const bearing = e.coords.heading
-        ? e.coords.heading
-        : mapRef.current.getBearing();
+      const bearing = e.coords.heading ? e.coords.heading : mapRef.current.getBearing();
       let zoom = mapRef.current.getZoom();
       let pitch = mapRef.current.getPitch();
 
-      if (
-        locationControlRef.current.isTrackingBearing() &&
-        locationControlRef.current.getZoomStart() != null
-      ) {
+      if (locationControlRef.current.isTrackingBearing() && locationControlRef.current.getZoomStart() != null) {
         zoom = locationControlRef.current.getZoomStart();
         pitch = locationControlRef.current.getPitchStart();
         locationControlRef.current.resetZoomStart();
@@ -752,11 +686,9 @@ export default function Map() {
           })
           .once("moveend", () => {
             locationControlRef.current.showStopTrackingBearingIcon();
+            mapRef.current.getContainer().classList.remove("geolocate-track-user-bearing");
           });
-      } else if (
-        locationControlRef.current.isTrackingLocation() &&
-        locationControlRef.current.getZoomStart() != null
-      ) {
+      } else if (locationControlRef.current.isTrackingLocation() && locationControlRef.current.getZoomStart() != null) {
         zoom = locationControlRef.current.getZoomStart();
         locationControlRef.current.resetZoomStart();
         mapRef.current
@@ -797,13 +729,17 @@ export default function Map() {
         }
         if (locationControlRef.current.isTrackingBearing()) {
           if (locationControlRef.current.isUserDragging()) return;
-          mapRef.current.easeTo({
-            center: [long, lat],
-            offset: [0, 120],
-            bearing: bearing,
-            duration: duration,
-            easing: (t) => t,
-          });
+          mapRef.current
+            .easeTo({
+              center: [long, lat],
+              offset: [0, 120],
+              bearing: bearing,
+              duration: duration,
+              easing: (t) => t,
+            })
+            .once("moveend", () => {
+              mapRef.current.getContainer().classList.remove("geolocate-track-user-bearing");
+            });
         } else if (locationControlRef.current.isTrackingLocation()) {
           mapRef.current.easeTo({
             center: [long, lat],
@@ -822,10 +758,7 @@ export default function Map() {
     // On drag stop tracking location
     mapRef.current.on("drag", (e) => {
       console.log("drag");
-      if (
-        locationControlRef.current &&
-        locationControlRef.current.isTrackingLocation()
-      ) {
+      if (locationControlRef.current && locationControlRef.current.isTrackingLocation()) {
         locationControlRef.current.stopTrackingLocation();
       }
     });
@@ -843,16 +776,10 @@ export default function Map() {
       console.log("dragend");
       if (locationControlRef.current?.isTrackingBearing()) {
         // Move map back to user's last known location
-        if (
-          locationControlRef.current._lastPostionLat != null &&
-          locationControlRef.current._lastPostionLong != null
-        ) {
+        if (locationControlRef.current._lastPostionLat != null && locationControlRef.current._lastPostionLong != null) {
           mapRef.current
             .easeTo({
-              center: [
-                locationControlRef.current._lastPostionLong,
-                locationControlRef.current._lastPostionLat,
-              ],
+              center: [locationControlRef.current._lastPostionLong, locationControlRef.current._lastPostionLat],
               offset: [0, 120],
               duration: 500,
               easing: (t) => t,
@@ -892,10 +819,7 @@ export default function Map() {
     // When user clicks on search result stop tracking bearing and location, clear and collapse search input
     geocoder.on("result", () => {
       if (locationControlRef.current) {
-        if (
-          locationControlRef.current.isTrackingBearing() ||
-          locationControlRef.current.isTrackingLocation()
-        ) {
+        if (locationControlRef.current.isTrackingBearing() || locationControlRef.current.isTrackingLocation()) {
           locationControlRef.current.stopTrackingLocationAndBearing();
         }
       }
@@ -912,10 +836,7 @@ export default function Map() {
     });
 
     // Initialize custom location control
-    locationControlRef.current = new LocationControl(
-      geolocateRef.current,
-      mapRef.current,
-    );
+    locationControlRef.current = new LocationControl(geolocateRef.current, mapRef.current);
 
     // Add custom location tracking controls to map
     mapRef.current.addControl(locationControlRef.current, "top-right");
@@ -985,19 +906,13 @@ export default function Map() {
           {
             text: "SOURCE",
             handler: () => {
-              window.open(
-                "https://github.com/strukovnasamobor/rontomap",
-                "_blank",
-              );
+              window.open("https://github.com/strukovnasamobor/rontomap", "_blank");
             },
           },
           {
             text: "SUPPORT",
             handler: () => {
-              window.open(
-                "https://www.paypal.com/ncp/payment/ZRBQZMWTCJYFE",
-                "_blank",
-              );
+              window.open("https://www.paypal.com/ncp/payment/ZRBQZMWTCJYFE", "_blank");
             },
           },
           {

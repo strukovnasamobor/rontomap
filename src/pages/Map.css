@@ -79,6 +79,18 @@
   margin-right: 0 !important;
 }
 
+.geolocate-track-user-bearing .mapboxgl-user-location,
+.geolocate-track-user-bearing .mapboxgl-user-location-accuracy-circle {
+  transform: translate(-50%, -50%) !important;
+  left: 50% !important;
+  top: calc(50% + 127.5px) !important;
+}
+
+.hide-user-location .mapboxgl-user-location,
+.hide-user-location .mapboxgl-user-location-accuracy-circle {
+  opacity: 0 !important;
+}
+
 .mapboxgl-user-location-dot:after {
   border: 3px solid var(--ion-color-tertiary) !important;
 }
