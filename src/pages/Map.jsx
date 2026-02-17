@@ -599,6 +599,7 @@ export default function Map() {
     geolocateRef.current.on("geolocate", (e) => {
       console.log("Event > geolocate");
 
+      if (locationControlRef.current.isUserDragging()) return;
       const long = e.coords.longitude;
       const lat = e.coords.latitude;
       const bearing = e.coords.heading ? e.coords.heading : mapRef.current.getBearing();
@@ -640,7 +641,6 @@ export default function Map() {
       }
 
       if (locationControlRef.current.isTrackingBearing()) {
-        if (locationControlRef.current.isUserDragging()) return;
         // Moving map behind while dot location and accuracy circle are fixed
         mapRef.current.getContainer().classList.add("geolocate-track-user-bearing");
         // Disable dragging the map while tracking bearing to prevent conflicts
@@ -672,24 +672,18 @@ export default function Map() {
       locationControlRef.current._lastPositionBearing = bearing;
     });
 
-    // On drag stop tracking location
-    mapRef.current.on("drag", (e) => {
-      console.log("Event > map drag");
-      if (locationControlRef.current && locationControlRef.current.isTrackingLocation()) {
-        locationControlRef.current.stopTrackingLocation();
-      }
-    });
-
-    // On dragstart set isUserDragging to prevent camera to move to the user location
+    // On dragstart
     mapRef.current.on("dragstart", () => {
       console.log("Event > map dragstart");
-      if (locationControlRef.current?.isTrackingBearing()) {
+      if (locationControlRef.current.isTrackingLocation()) {
+        locationControlRef.current.stopTrackingLocation();
+      } else if (locationControlRef.current?.isTrackingBearing()) {
         locationControlRef.current._isUserDragging = true;
         mapRef.current.getContainer().classList.remove("geolocate-track-user-bearing");
       }
     });
 
-    // On dragend recenter
+    // On dragend
     mapRef.current.on("dragend", () => {
       console.log("Event > map dragend");
       if (locationControlRef.current?.isTrackingBearing()) {
@@ -712,15 +706,18 @@ export default function Map() {
       }
     });
 
-    // On zoomstart set isUserDragging to prevent camera to move to the user location
+    // On zoomstart
     mapRef.current.on("zoomstart", () => {
       console.log("Event > map zoomstart");
-      if (locationControlRef.current?.isTrackingBearing()) {
+      if (locationControlRef.current?.isTrackingLocation()) {
         locationControlRef.current._isUserDragging = true;
+      } else if (locationControlRef.current?.isTrackingBearing()) {
+        locationControlRef.current._isUserDragging = true;
+        mapRef.current.getContainer().classList.remove("geolocate-track-user-bearing");
       }
     });
 
-    // On zoomend recenter
+    // On zoomend
     mapRef.current.on("zoomend", () => {
       console.log("Event > map zoomend");
       if (locationControlRef.current?.isTrackingLocation()) {
@@ -748,7 +745,7 @@ export default function Map() {
               easing: (t) => t,
             })
             .once("moveend", () => {
-              console.log("Event > map rotateend > moveend");
+              console.log("Event > map zoomend > moveend");
               locationControlRef.current._isUserDragging = false;
             });
         } else {
@@ -757,19 +754,36 @@ export default function Map() {
       }
     });
 
-    // On rotatestart set isUserDragging to prevent camera to move to the user location
+    // On rotatestart
     mapRef.current.on("rotatestart", () => {
       console.log("Event > map rotatestart");
-      if (locationControlRef.current?.isTrackingBearing()) {
+      if (locationControlRef.current?.isTrackingLocation()) {
+        locationControlRef.current._isUserDragging = true;
+      } else if (locationControlRef.current?.isTrackingBearing()) {
         locationControlRef.current._isUserDragging = true;
         mapRef.current.getContainer().classList.remove("geolocate-track-user-bearing");
       }
     });
 
-    // On rotateend recenter
+    // On rotateend
     mapRef.current.on("rotateend", () => {
       console.log("Event > map rotateend");
-      if (locationControlRef.current?.isTrackingBearing()) {
+      if (locationControlRef.current?.isTrackingLocation()) {
+        if (locationControlRef.current._lastPostionLat != null && locationControlRef.current._lastPostionLong != null) {
+          mapRef.current
+            .easeTo({
+              center: [locationControlRef.current._lastPostionLong, locationControlRef.current._lastPostionLat],
+              duration: 500,
+              easing: (t) => t,
+            })
+            .once("moveend", () => {
+              console.log("Event > map rotateend > moveend");
+              locationControlRef.current._isUserDragging = false;
+            });
+        } else {
+          locationControlRef.current._isUserDragging = false;
+        }
+      } else if (locationControlRef.current?.isTrackingBearing()) {
         if (locationControlRef.current._lastPostionLat != null && locationControlRef.current._lastPostionLong != null) {
           mapRef.current
             .easeTo({
@@ -779,7 +793,55 @@ export default function Map() {
               easing: (t) => t,
             })
             .once("moveend", () => {
-              console.log("Event > map rotateend > moveend");
+              console.log("Event > map pitchend > moveend");
+              locationControlRef.current._isUserDragging = false;
+            });
+        } else {
+          locationControlRef.current._isUserDragging = false;
+        }
+      }
+    });
+
+    // On pitchstart
+    mapRef.current.on("pitchstart", () => {
+      console.log("Event > map pitchstart");
+      if (locationControlRef.current?.isTrackingLocation()) {
+        locationControlRef.current._isUserDragging = true;
+      } else if (locationControlRef.current?.isTrackingBearing()) {
+        locationControlRef.current._isUserDragging = true;
+        mapRef.current.getContainer().classList.remove("geolocate-track-user-bearing");
+      }
+    });
+
+    // On pitchend
+    mapRef.current.on("pitchend", () => {
+      console.log("Event > map pitchend");
+      if (locationControlRef.current?.isTrackingLocation()) {
+        if (locationControlRef.current._lastPostionLat != null && locationControlRef.current._lastPostionLong != null) {
+          mapRef.current
+            .easeTo({
+              center: [locationControlRef.current._lastPostionLong, locationControlRef.current._lastPostionLat],
+              duration: 500,
+              easing: (t) => t,
+            })
+            .once("moveend", () => {
+              console.log("Event > map pitchend > moveend");
+              locationControlRef.current._isUserDragging = false;
+            });
+        } else {
+          locationControlRef.current._isUserDragging = false;
+        }
+      } else if (locationControlRef.current?.isTrackingBearing()) {
+        if (locationControlRef.current._lastPostionLat != null && locationControlRef.current._lastPostionLong != null) {
+          mapRef.current
+            .easeTo({
+              center: [locationControlRef.current._lastPostionLong, locationControlRef.current._lastPostionLat],
+              offset: [0, 120],
+              duration: 500,
+              easing: (t) => t,
+            })
+            .once("moveend", () => {
+              console.log("Event > map pitchend > moveend");
               locationControlRef.current._isUserDragging = false;
             });
         } else {
