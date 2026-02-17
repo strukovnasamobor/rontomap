@@ -351,17 +351,19 @@ export default function Map() {
         }
 
         console.log("_handleTrackLocation > Fly to:", long, lat, zoom, pitch);
-        mapRef.current.flyTo({
-          center: [long, lat],
-          zoom: zoom,
-          pitch: pitch,
-          duration: 1000,
-        }).once("moveend", () => {
-          console.log("Event > _handleTrackLocation > moveend");
-          this.showTrackingBearingIcon();
-          this._trackingLocation = true;
-          this._geolocate.trigger();
-        });
+        mapRef.current
+          .flyTo({
+            center: [long, lat],
+            zoom: zoom,
+            pitch: pitch,
+            duration: 1000,
+          })
+          .once("moveend", () => {
+            console.log("Event > _handleTrackLocation > moveend");
+            this.showTrackingBearingIcon();
+            this._trackingLocation = true;
+            this._geolocate.trigger();
+          });
       }
 
       async _handleTrackBearing() {
@@ -384,19 +386,21 @@ export default function Map() {
 
         // Set map to last position with bearing
         if (lat != null && long != null) {
-          mapRef.current.flyTo({
-            center: [long, lat],
-            offset: [0, 120],
-            zoom: zoom,
-            pitch: pitch,
-            bearing: bearing,
-            duration: 1000,
-          }).once("moveend", async () => {
-            console.log("Event > _handleTrackBearing > moveend");
-            this.showStopTrackingBearingIcon();
-            await this._requestWakeLock();
-            this._trackingBearing = true;
-          });
+          mapRef.current
+            .flyTo({
+              center: [long, lat],
+              offset: [0, 120],
+              zoom: zoom,
+              pitch: pitch,
+              bearing: bearing,
+              duration: 1000,
+            })
+            .once("moveend", async () => {
+              console.log("Event > _handleTrackBearing > moveend");
+              this.showStopTrackingBearingIcon();
+              await this._requestWakeLock();
+              this._trackingBearing = true;
+            });
         } else {
           console.log("_handleTrackBearing > no last position available");
           this.showTrackingLocationIcon();
@@ -417,18 +421,20 @@ export default function Map() {
         let pitch = this._pitchOnStartTrackingBearing;
         let bearing = this._lastPositionBearing ? this._lastPositionBearing : this._map.getBearing();
 
-        mapRef.current.flyTo({
-          center: [long, lat],
-          zoom: zoom,
-          pitch: pitch,
-          bearing: bearing,
-          duration: 1000,
-        }).once("moveend", () => {
-          console.log("Event > _handleStopTrackingBearing > moveend");
-          this.showTrackingBearingIcon();
-          this._trackingLocation = true;
-          this._releaseWakeLock();
-        });
+        mapRef.current
+          .flyTo({
+            center: [long, lat],
+            zoom: zoom,
+            pitch: pitch,
+            bearing: bearing,
+            duration: 1000,
+          })
+          .once("moveend", () => {
+            console.log("Event > _handleStopTrackingBearing > moveend");
+            this.showTrackingBearingIcon();
+            this._trackingLocation = true;
+            this._releaseWakeLock();
+          });
       }
 
       stopTrackingLocation() {
@@ -691,15 +697,17 @@ export default function Map() {
       if (locationControlRef.current?.isTrackingBearing()) {
         // Move map back to user's last known location
         if (locationControlRef.current._lastPostionLat != null && locationControlRef.current._lastPostionLong != null) {
-          mapRef.current.easeTo({
-            center: [locationControlRef.current._lastPostionLong, locationControlRef.current._lastPostionLat],
-            offset: [0, 120],
-            duration: 500,
-            easing: (t) => t,
-          }).once("moveend", () => {
-            console.log("Event > map dragend > moveend");
-            locationControlRef.current._isUserDragging = false;
-          });
+          mapRef.current
+            .easeTo({
+              center: [locationControlRef.current._lastPostionLong, locationControlRef.current._lastPostionLat],
+              offset: [0, 120],
+              duration: 500,
+              easing: (t) => t,
+            })
+            .once("moveend", () => {
+              console.log("Event > map dragend > moveend");
+              locationControlRef.current._isUserDragging = false;
+            });
         } else {
           locationControlRef.current._isUserDragging = false;
         }
