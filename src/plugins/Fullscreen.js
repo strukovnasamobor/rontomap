@@ -1,5 +1,5 @@
-import { registerPlugin } from '@capacitor/core';
+import { registerPlugin } from "@capacitor/core";
 
-const Fullscreen = registerPlugin('Fullscreen');
+const Fullscreen = registerPlugin("Fullscreen");
 
 export default Fullscreen;
