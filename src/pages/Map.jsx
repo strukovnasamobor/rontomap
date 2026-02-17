@@ -10,6 +10,7 @@ import MapboxGeocoder from "@mapbox/mapbox-gl-geocoder";
 import "@mapbox/mapbox-gl-geocoder/dist/mapbox-gl-geocoder.css";
 import { StatusBar } from "@capacitor/status-bar";
 import { Geolocation } from "@capacitor/geolocation";
+import { Capacitor } from "@capacitor/core";
 
 // Set Mapbox access token
 mapboxgl.accessToken = "pk.eyJ1IjoiYXVyZWxpdXMtemQiLCJhIjoiY21rcXA3cXh2MHNpZDNjcXl1a3MzbW8zciJ9.JO4VSTN6-0vRtWW0YKjlAg";
@@ -26,28 +27,30 @@ export default function Map() {
   });
   const [mapStyle, setMapStyle] = useState("");
   const [defaultCenter, setDefaultCenter] = useState([0, 0]);
-  const [defaultZoom, setDefaultZoom] = useState(14);
-  const [defaultBearing, setDefaultBearing] = useState(0);
+  const [defaultZoom, setDefaultZoom] = useState(1);
+  const [defaultZoomOnQueryParams, setDefaultZoomOnQueryParams] = useState(20);
+  const [defaultZoomOnUserTrackingLocation, setDefaultZoomOnUserTrackingLocation] = useState(14);
+  const [defaultZoomOnUserTrackingBearing, setDefaultZoomOnUserTrackingBearing] = useState(18);
   const [defaultPitch, setDefaultPitch] = useState(0);
-  const [savedCenter, setSavedCenter] = useState(defaultCenter);
-  const [savedZoom, setSavedZoom] = useState(1);
-  const [savedBearing, setSavedBearing] = useState(defaultBearing);
-  const [savedPitch, setSavedPitch] = useState(defaultPitch);
+  const [defaultPitchOnUserTrackingBearing, setDefaultPitchOnUserTrackingBearing] = useState(60);
+  const [defaultBearing, setDefaultBearing] = useState(0);
   const [showTips, setShowTips] = useState(true);
 
-  // Detect Android
-  const isAndroid = () => {
-    return /android/i.test(navigator.userAgent);
+  // Detect native Android (not web browser on Android)
+  const isNativeAndroid = () => {
+    return Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android";
   };
 
   // Get query params from URL
   const getQueryParams = (param) => {
+    console.log("getQueryParams:", param);
     const urlParams = new URLSearchParams(window.location.search);
     return urlParams.get(param);
   };
 
   // Add source and support links to the map
   const addSourceAndSupportLink = () => {
+    console.log("addSourceAndSupportLink");
     const tryAdd = () => {
       const el = mapRef.current?.getContainer()?.querySelector(".mapboxgl-ctrl-attrib-inner");
 
@@ -61,13 +64,13 @@ export default function Map() {
       if (el.innerHTML.includes("rontomap")) return;
       el.innerHTML = el.innerHTML.replace("Improve this map", "");
       el.innerHTML += ` | <a href="https://github.com/strukovnasamobor/rontomap"
-                target="_blank"
-                rel="noopener">
-                Source</a>
-                 | <a href="https://www.paypal.com/ncp/payment/ZRBQZMWTCJYFE"
-                target="_blank"
-                rel="noopener">
-                Support</a>`;
+        target="_blank"
+        rel="noopener">
+        Source</a>
+          | <a href="https://www.paypal.com/ncp/payment/ZRBQZMWTCJYFE"
+        target="_blank"
+        rel="noopener">
+        Support</a>`;
     };
 
     tryAdd();
@@ -75,6 +78,7 @@ export default function Map() {
 
   // Double tap to toggle fullscreen
   const bind = useDoubleTap((e) => {
+    console.log("Event > DoubleTap:", e);
     const controlsContainer = document.querySelector(".mapboxgl-control-container");
     const mapContainer = document.querySelector(".map-container");
 
@@ -87,7 +91,7 @@ export default function Map() {
       if (controlsContainer && mapContainer) {
         controlsContainer.style.display = "none";
         // Android: Hide status bar using Capacitor
-        if (isAndroid()) {
+        if (isNativeAndroid()) {
           console.log("Android: Enter fullscreen.");
           StatusBar.hide();
           Fullscreen.enter();
@@ -112,7 +116,7 @@ export default function Map() {
     } else {
       if (controlsContainer) controlsContainer.style.display = "block";
       // Android: Show status bar
-      if (isAndroid()) {
+      if (isNativeAndroid()) {
         console.log("Android: Exit fullscreen.");
         StatusBar.show();
         Fullscreen.exit();
@@ -156,6 +160,7 @@ export default function Map() {
 
   // Resize map on view enter
   useIonViewWillEnter(() => {
+    console.log("useIonViewWillEnter");
     if (mapRef.current) mapRef.current.resize();
   }, [mapStyle]);
 
@@ -179,6 +184,7 @@ export default function Map() {
 
   // Initialize map and add controls
   useEffect(() => {
+    console.log("useEffect > Initialize map");
     if (mapRef.current) mapRef.current.resize();
 
     // Get lat and long from the URL
@@ -186,18 +192,18 @@ export default function Map() {
     const long = parseFloat(getQueryParams("long"));
 
     // Set new center and zoom
-    const center = !isNaN(lat) && !isNaN(long) ? [long, lat] : savedCenter;
-    const zoom = !isNaN(lat) && !isNaN(long) ? 20 : savedZoom;
-    const bearing = savedBearing;
-    const pitch = savedPitch;
+    const center = !isNaN(lat) && !isNaN(long) ? [long, lat] : defaultCenter;
+    const zoom = !isNaN(lat) && !isNaN(long) ? defaultZoomOnQueryParams : defaultZoom;
+    const pitch = defaultPitch;
+    const bearing = defaultBearing;
 
     if (mapRef.current) {
       if (!isNaN(lat) && !isNaN(long)) {
         mapRef.current.flyTo({
           center: center,
           zoom: zoom,
-          bearing: bearing,
           pitch: pitch,
+          bearing: bearing,
           duration: 1000,
         });
       }
@@ -205,6 +211,7 @@ export default function Map() {
     }
 
     mapRef.current = new mapboxgl.Map({
+      respectPrefersReducedMotion: false,
       container: mapContainerRef.current,
       style: mapStyle,
       doubleClickZoom: false,
@@ -216,6 +223,7 @@ export default function Map() {
     });
 
     mapRef.current.once("load", () => {
+      console.log("Event > Map load");
       if (locationControlRef.current && "geolocation" in navigator) {
         locationControlRef.current.showTrackingLocationIcon();
       }
@@ -231,8 +239,8 @@ export default function Map() {
         this._trackingLocation = false;
         this._trackingBearing = false;
         this._isUserDragging = false;
-        this._zoomOnStartTrackingBearing = defaultZoom;
-        this._pitchOnStartTrackingBearing = defaultPitch;
+        this._zoomOnStartTrackingBearing = defaultZoomOnUserTrackingBearing;
+        this._pitchOnStartTrackingBearing = defaultPitchOnUserTrackingBearing;
         this._zoomOnStopTrackingBearing = null;
         this._pitchOnStopTrackingBearing = null;
         this._zoomStart = null;
@@ -311,125 +319,87 @@ export default function Map() {
 
       async _handleTrackLocation() {
         console.log("_handleTrackLocation");
+        let lat = this._lastPostionLat;
+        let long = this._lastPostionLong;
+        let zoom = this._map.getZoom();
+        let pitch = this._map.getPitch();
 
-        // Set the starting zoom and pitch
-        this._zoomStart = this._map.getZoom();
-        this._pitchStart = this._map.getPitch();
-
-        if (this._zoomStart == 1) this._zoomStart = defaultZoom;
-
-        // Override to prevent camera movement
-        this._geolocate._updateCamera = async () => {
+        // If we don't have a last known position, try to get the current position
+        if (lat == null || long == null) {
           try {
             // Check current permission status
             const permissionStatus = await Geolocation.checkPermissions();
-
             if (permissionStatus.location !== "granted") {
-              // Request if not granted
               const permissions = await Geolocation.requestPermissions();
               if (permissions.location !== "granted" && permissions.location !== "limited") {
-                console.log("_updateCamera > Location permission denied");
+                console.log("_handleTrackLocation > Location permission denied");
                 return;
               }
             }
-
-            const position = await Geolocation.getCurrentPosition();
-            const long = position.coords.longitude;
-            const lat = position.coords.latitude;
-            const bearing = position.coords.heading ? position.coords.heading : null;
-            console.log("_updateCamera:", long, lat, bearing);
-          } catch (err) {
-            console.error("_updateCamera > Error getting user location:", err);
-          }
-        };
-
-        // Set map to last position
-        if (this._lastPostionLat != null && this._lastPostionLong != null) {
-          console.log("_handleTrackLocation > Set map to last position.");
-          const lat = this._lastPostionLat;
-          const long = this._lastPostionLong;
-          let zoom = this._map.getZoom();
-          let pitch = this._map.getPitch();
-
-          if (this.getZoomStart() != null) {
-            zoom = this.getZoomStart();
-            this.resetZoomStart();
-          }
-
-          if (this.getPitchStart() != null) {
-            pitch = this.getPitchStart();
-            this.resetPitchStart();
-          }
-
-          mapRef.current
-            .flyTo({
-              center: [long, lat],
-              zoom: zoom,
-              pitch: pitch,
-              duration: 1000,
-            })
-            .once("moveend", () => {
-              this.showTrackingBearingIcon();
-              this._trackingLocation = true;
+            const position = await Geolocation.getCurrentPosition({
+              enableHighAccuracy: true,
+              timeout: 50000,
+              maximumAge: 2000,
             });
-        } else {
-          this._geolocate.trigger();
-          this._trackingLocation = true;
+            lat = position.coords.latitude;
+            long = position.coords.longitude;
+            zoom = defaultZoomOnUserTrackingLocation;
+          } catch (err) {
+            console.error("_handleTrackLocation > Error getting user location:", err);
+            return;
+          }
         }
+
+        console.log("_handleTrackLocation > Fly to:", long, lat, zoom, pitch);
+        mapRef.current.flyTo({
+          center: [long, lat],
+          zoom: zoom,
+          pitch: pitch,
+          duration: 1000,
+        }).once("moveend", () => {
+          console.log("Event > _handleTrackLocation > moveend");
+          this.showTrackingBearingIcon();
+          this._trackingLocation = true;
+          this._geolocate.trigger();
+        });
       }
 
       async _handleTrackBearing() {
         console.log("_handleTrackBearing");
-        //mapRef.current.dragPan.disable();
         this._trackingLocation = false;
 
-        // Request wake lock
-        await this._requestWakeLock();
-
-        // Remember the current zoom and pitch
+        // Remember the current zoom and pitch to restore them when stopping bearing tracking
         this._zoomOnStartTrackingBearing = this._map.getZoom();
         this._pitchOnStartTrackingBearing = this._map.getPitch();
 
-        // Set the starting zoom and pitch
-        if (this._zoomOnStopTrackingBearing == null) this._zoomStart = 18;
-        else this._zoomStart = this._zoomOnStopTrackingBearing;
-        if (this._pitchOnStopTrackingBearing == null) this._pitchStart = 60;
-        else this._pitchStart = this._pitchOnStopTrackingBearing;
+        let lat = this._lastPostionLat;
+        let long = this._lastPostionLong;
+        let zoom =
+          this._zoomOnStopTrackingBearing != null ? this._zoomOnStopTrackingBearing : defaultZoomOnUserTrackingBearing;
+        let pitch =
+          this._pitchOnStopTrackingBearing != null
+            ? this._pitchOnStopTrackingBearing
+            : defaultPitchOnUserTrackingBearing;
+        let bearing = this._lastPositionBearing ? this._lastPositionBearing : this._map.getBearing();
 
-        // Set map to last position
-        if (this._lastPostionLat != null && this._lastPostionLong != null) {
-          console.log("_handleTrackBearing > Set map to last position.");
-          const lat = this._lastPostionLat;
-          const long = this._lastPostionLong;
-          let zoom = this._map.getZoom();
-          let pitch = this._map.getPitch();
-          let bearing = this._lastPositionBearing ? this._lastPositionBearing : this._map.getBearing();
-
-          if (this.getZoomStart() != null) {
-            zoom = this.getZoomStart();
-            this.resetZoomStart();
-          }
-
-          if (this.getPitchStart() != null) {
-            pitch = this.getPitchStart();
-            this.resetPitchStart();
-          }
-
-          mapRef.current
-            .flyTo({
-              center: [long, lat],
-              offset: [0, 120],
-              zoom: zoom,
-              pitch: pitch,
-              bearing: bearing,
-              duration: 1000,
-            })
-            .once("moveend", () => {
-              this.showStopTrackingBearingIcon();
-              this._trackingBearing = true;
-            });
+        // Set map to last position with bearing
+        if (lat != null && long != null) {
+          mapRef.current.flyTo({
+            center: [long, lat],
+            offset: [0, 120],
+            zoom: zoom,
+            pitch: pitch,
+            bearing: bearing,
+            duration: 1000,
+          }).once("moveend", async () => {
+            console.log("Event > _handleTrackBearing > moveend");
+            this.showStopTrackingBearingIcon();
+            await this._requestWakeLock();
+            this._trackingBearing = true;
+          });
         } else {
-          this._trackingBearing = true;
+          console.log("_handleTrackBearing > no last position available");
+          this.showTrackingLocationIcon();
         }
       }
 
@@ -437,60 +407,39 @@ export default function Map() {
         console.log("_handleStopTrackingBearing");
         this._trackingBearing = false;
 
-        // Remember the current zoom and pitch
+        // Remember the current zoom and pitch to restore them when starting bearing tracking again
         this._zoomOnStopTrackingBearing = this._map.getZoom();
         this._pitchOnStopTrackingBearing = this._map.getPitch();
 
-        // Set the starting zoom and pitch
-        if (this._zoomOnStartTrackingBearing == null) this._zoomStart = defaultZoom;
-        else this._zoomStart = this._zoomOnStartTrackingBearing;
-        if (this._pitchOnStartTrackingBearing == null) this._pitchStart = defaultPitch;
-        else this._pitchStart = this._pitchOnStartTrackingBearing;
+        let lat = this._lastPostionLat;
+        let long = this._lastPostionLong;
+        let zoom = this._zoomOnStartTrackingBearing;
+        let pitch = this._pitchOnStartTrackingBearing;
+        let bearing = this._lastPositionBearing ? this._lastPositionBearing : this._map.getBearing();
 
-        // Set map to last position
-        if (this._lastPostionLat != null && this._lastPostionLong != null) {
-          const lat = this._lastPostionLat;
-          const long = this._lastPostionLong;
-          let zoom = this._map.getZoom();
-          let pitch = this._map.getPitch();
-          let bearing = this._lastPositionBearing ? this._lastPositionBearing : this._map.getBearing();
-
-          if (this.getZoomStart() != null) {
-            zoom = this.getZoomStart();
-            this.resetZoomStart();
-          }
-
-          if (this.getPitchStart() != null) {
-            pitch = this.getPitchStart();
-            this.resetPitchStart();
-          }
-
-          mapRef.current
-            .flyTo({
-              center: [long, lat],
-              zoom: zoom,
-              pitch: pitch,
-              bearing: bearing,
-              duration: 1000,
-            })
-            .once("moveend", () => {
-              this.showTrackingBearingIcon();
-              this._trackingLocation = true;
-              this._releaseWakeLock();
-            });
-        } else {
+        mapRef.current.flyTo({
+          center: [long, lat],
+          zoom: zoom,
+          pitch: pitch,
+          bearing: bearing,
+          duration: 1000,
+        }).once("moveend", () => {
+          console.log("Event > _handleStopTrackingBearing > moveend");
+          this.showTrackingBearingIcon();
           this._trackingLocation = true;
           this._releaseWakeLock();
-        }
+        });
       }
 
       stopTrackingLocation() {
+        console.log("stopTrackingLocation");
         this._trackingLocation = false;
         this._geolocate._watchState = "BACKGROUND";
         this.showTrackingLocationIcon();
       }
 
       stopTrackingLocationAndBearing() {
+        console.log("stopTrackingLocationAndBearing");
         this._trackingBearing = false;
         this._trackingLocation = false;
         this._geolocate._watchState = "BACKGROUND";
@@ -534,89 +483,94 @@ export default function Map() {
       }
 
       resetZoomStart() {
+        console.log("resetZoomStart");
         this._zoomStart = null;
       }
 
       resetPitchStart() {
+        console.log("resetPitchStart");
         this._pitchStart = null;
       }
 
       onAdd() {
+        console.log("LocationControl onAdd");
         this._container = document.createElement("div");
         this._container.className = "mapboxgl-control";
 
         this._container.innerHTML = `
-                    <div class="ctrl-location-container mapboxgl-ctrl mapboxgl-ctrl-group">
-                        <button
-                            class="mapboxgl-ctrl-geolocate hidden"
-                            type="button"
-                            title="Track User Location"
-                            aria-label="Track User Location"
-                            data-control="track_location"
-                        >
-                            <span class="mapboxgl-ctrl-icon"></span>
-                        </button>
-                        <button
-                            class="mapboxgl-ctrl-geolocate hidden"
-                            type="button"
-                            title="Track User Bearing"
-                            aria-label="Track User Bearing"
-                            data-control="track_bearing"
-                        >
-                            <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/user_tracking_location.svg');"></span>
-                        </button>
-                        <button
-                            class="mapboxgl-ctrl-geolocate hidden"
-                            type="button"
-                            title="Stop Tracking User Bearing"
-                            aria-label="Tracking User Bearing"
-                            data-control="stop_tracking_bearing"
-                        >
-                            <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/user_tracking_bearing.svg');"></span>
-                        </button>
-                    </div>
-                    <div class="ctrl-mapstyle-container mapboxgl-ctrl mapboxgl-ctrl-group">
-                        <button
-                            type="button"
-                            class="mapboxgl-ctrl-icon ${idMapStyle === "rontomap_satellite" ? "" : "hidden"}"
-                            title="Change Map Style"
-                            aria-label="Change Map Style"
-                            data-control="change_map_style_rontomap_streets_light"
-                        >
-                            <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/map_style_change.svg');"></span>
-                        </button>
-                        <button
-                            type="button"
-                            class="mapboxgl-ctrl-icon ${idMapStyle === "rontomap_streets_light" ? "" : "hidden"}"
-                            title="Change Map Style"
-                            aria-label="Change Map Style"
-                            data-control="change_map_style_rontomap_streets_dark"
-                        >
-                            <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/map_style_change.svg');"></span>
-                        </button>
-                        <button
-                            type="button"
-                            class="mapboxgl-ctrl-icon ${idMapStyle === "rontomap_streets_dark" ? "" : "hidden"}"
-                            title="Change Map Style"
-                            aria-label="Change Map Style"
-                            data-control="change_map_style_rontomap_satellite"
-                        >
-                            <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/map_style_change.svg');"></span>
-                        </button>
-                    </div>
-                `;
+          <div class="ctrl-location-container mapboxgl-ctrl mapboxgl-ctrl-group">
+              <button
+                  class="mapboxgl-ctrl-geolocate hidden"
+                  type="button"
+                  title="Track User Location"
+                  aria-label="Track User Location"
+                  data-control="track_location"
+              >
+                  <span class="mapboxgl-ctrl-icon"></span>
+              </button>
+              <button
+                  class="mapboxgl-ctrl-geolocate hidden"
+                  type="button"
+                  title="Track User Bearing"
+                  aria-label="Track User Bearing"
+                  data-control="track_bearing"
+              >
+                  <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/user_tracking_location.svg');"></span>
+              </button>
+              <button
+                  class="mapboxgl-ctrl-geolocate hidden"
+                  type="button"
+                  title="Stop Tracking User Bearing"
+                  aria-label="Tracking User Bearing"
+                  data-control="stop_tracking_bearing"
+              >
+                  <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/user_tracking_bearing.svg');"></span>
+              </button>
+          </div>
+          <div class="ctrl-mapstyle-container mapboxgl-ctrl mapboxgl-ctrl-group">
+              <button
+                  type="button"
+                  class="mapboxgl-ctrl-icon ${idMapStyle === "rontomap_satellite" ? "" : "hidden"}"
+                  title="Change Map Style"
+                  aria-label="Change Map Style"
+                  data-control="change_map_style_rontomap_streets_light"
+              >
+                  <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/map_style_change.svg');"></span>
+              </button>
+              <button
+                  type="button"
+                  class="mapboxgl-ctrl-icon ${idMapStyle === "rontomap_streets_light" ? "" : "hidden"}"
+                  title="Change Map Style"
+                  aria-label="Change Map Style"
+                  data-control="change_map_style_rontomap_streets_dark"
+              >
+                  <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/map_style_change.svg');"></span>
+              </button>
+              <button
+                  type="button"
+                  class="mapboxgl-ctrl-icon ${idMapStyle === "rontomap_streets_dark" ? "" : "hidden"}"
+                  title="Change Map Style"
+                  aria-label="Change Map Style"
+                  data-control="change_map_style_rontomap_satellite"
+              >
+                  <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/map_style_change.svg');"></span>
+              </button>
+          </div>
+        `;
 
         this._container.addEventListener("click", this._handleClick);
         return this._container;
       }
 
       onRemove() {
+        console.log("LocationControl onRemove");
         this._container.removeEventListener("click", this._handleClick);
         this._container.parentNode.removeChild(this._container);
         this._map = undefined;
       }
 
       async _requestWakeLock() {
+        console.log("_requestWakeLock");
         try {
           if ("wakeLock" in navigator) {
             this._wakeLock = await navigator.wakeLock.request("screen");
@@ -638,6 +592,7 @@ export default function Map() {
       }
 
       async _releaseWakeLock() {
+        console.log("_releaseWakeLock");
         if (this._wakeLock && this._isScreenLocked) {
           try {
             await this._wakeLock.release();
@@ -660,95 +615,54 @@ export default function Map() {
       showUserHeading: true,
     });
 
+    // Override default _updateCamera to prevent it from moving the camera.
+    // All camera movement is handled by the custom "geolocate" event handler below.
+    geolocateRef.current._updateCamera = () => {};
+
     geolocateRef.current.on("geolocate", (e) => {
-      if (locationControlRef.current.isTrackingBearing() == true)
-        mapRef.current.getContainer().classList.add("geolocate-track-user-bearing");
+      console.log("Event > geolocate");
 
       const long = e.coords.longitude;
       const lat = e.coords.latitude;
       const bearing = e.coords.heading ? e.coords.heading : mapRef.current.getBearing();
-      let zoom = mapRef.current.getZoom();
-      let pitch = mapRef.current.getPitch();
 
-      if (locationControlRef.current.isTrackingBearing() && locationControlRef.current.getZoomStart() != null) {
-        zoom = locationControlRef.current.getZoomStart();
-        pitch = locationControlRef.current.getPitchStart();
-        locationControlRef.current.resetZoomStart();
-        locationControlRef.current.resetPitchStart();
-        mapRef.current
-          .flyTo({
-            center: [long, lat],
-            offset: [0, 120],
-            zoom: zoom,
-            pitch: pitch,
-            bearing: bearing,
-            duration: 1000,
-          })
-          .once("moveend", () => {
-            locationControlRef.current.showStopTrackingBearingIcon();
-            mapRef.current.getContainer().classList.remove("geolocate-track-user-bearing");
-          });
-      } else if (locationControlRef.current.isTrackingLocation() && locationControlRef.current.getZoomStart() != null) {
-        zoom = locationControlRef.current.getZoomStart();
-        locationControlRef.current.resetZoomStart();
-        mapRef.current
-          .flyTo({
-            center: [long, lat],
-            zoom: zoom,
-            pitch: pitch,
-            duration: 1000,
-          })
-          .once("moveend", () => {
-            locationControlRef.current.showTrackingBearingIcon();
-          });
-      } else {
-        // Adaptive duration based on distance moved
-        let duration = 500;
-        if (
-          locationControlRef.current._lastPostionLat !== null &&
-          locationControlRef.current._lastPostionLong !== null
-        ) {
-          // Calculate Euclidean distance (rough approximation)
-          const distance = Math.sqrt(
-            Math.pow(long - locationControlRef.current._lastPostionLong, 2) +
-              Math.pow(lat - locationControlRef.current._lastPostionLat, 2),
-          );
-          if (distance < 0.00005) {
-            // Very small movement (< ~5.5 meters)
-            duration = 500;
-          } else if (distance < 0.0001) {
-            // Small movement (~5.5-11 meters)
-            duration = 250;
-          } else if (distance < 0.0005) {
-            // Medium movement (~11-55 meters)
-            duration = 125;
-          } else {
-            // Large jump (> ~55 meters)
-            duration = 0;
-          }
-        }
-        if (locationControlRef.current.isTrackingBearing()) {
-          if (locationControlRef.current.isUserDragging()) return;
-          mapRef.current
-            .easeTo({
-              center: [long, lat],
-              offset: [0, 120],
-              bearing: bearing,
-              duration: duration,
-              easing: (t) => t,
-            })
-            .once("moveend", () => {
-              mapRef.current.getContainer().classList.remove("geolocate-track-user-bearing");
-            });
-        } else if (locationControlRef.current.isTrackingLocation()) {
-          mapRef.current.easeTo({
-            center: [long, lat],
-            duration: duration,
-            easing: (t) => t,
-          });
+      let duration = 500;
+      if (locationControlRef.current._lastPostionLat !== null && locationControlRef.current._lastPostionLong !== null) {
+        // Calculate Euclidean distance (rough approximation)
+        const distance = Math.sqrt(
+          Math.pow(long - locationControlRef.current._lastPostionLong, 2) +
+            Math.pow(lat - locationControlRef.current._lastPostionLat, 2),
+        );
+        if (distance < 0.00005) {
+          // Very small movement (< ~5.5 meters)
+          duration = 500;
+        } else if (distance < 0.0001) {
+          // Small movement (~5.5-11 meters)
+          duration = 250;
+        } else if (distance < 0.0005) {
+          // Medium movement (~11-55 meters)
+          duration = 125;
+        } else {
+          // Large jump (> ~55 meters)
+          duration = 0;
         }
       }
-
+      if (locationControlRef.current.isTrackingBearing()) {
+        if (locationControlRef.current.isUserDragging()) return;
+        mapRef.current.easeTo({
+          center: [long, lat],
+          offset: [0, 120],
+          bearing: bearing,
+          duration: duration,
+          easing: (t) => t,
+        });
+      } else if (locationControlRef.current.isTrackingLocation()) {
+        mapRef.current.easeTo({
+          center: [long, lat],
+          duration: duration,
+          easing: (t) => t,
+        });
+      }
       // Save last position
       locationControlRef.current._lastPostionLat = lat;
       locationControlRef.current._lastPostionLong = long;
@@ -757,7 +671,7 @@ export default function Map() {
 
     // On drag stop tracking location
     mapRef.current.on("drag", (e) => {
-      console.log("drag");
+      console.log("Event > map drag");
       if (locationControlRef.current && locationControlRef.current.isTrackingLocation()) {
         locationControlRef.current.stopTrackingLocation();
       }
@@ -765,7 +679,7 @@ export default function Map() {
 
     // On dragstart set isUserDragging to prevent camera to move to the user location
     mapRef.current.on("dragstart", () => {
-      console.log("dragstart");
+      console.log("Event > map dragstart");
       if (locationControlRef.current?.isTrackingBearing()) {
         locationControlRef.current._isUserDragging = true;
       }
@@ -773,22 +687,36 @@ export default function Map() {
 
     // On dragend remove isUserDragging to enable camera to move to the user location
     mapRef.current.on("dragend", () => {
-      console.log("dragend");
+      console.log("Event > map dragend");
       if (locationControlRef.current?.isTrackingBearing()) {
         // Move map back to user's last known location
         if (locationControlRef.current._lastPostionLat != null && locationControlRef.current._lastPostionLong != null) {
-          mapRef.current
-            .easeTo({
-              center: [locationControlRef.current._lastPostionLong, locationControlRef.current._lastPostionLat],
-              offset: [0, 120],
-              duration: 500,
-              easing: (t) => t,
-            })
-            .once("moveend", () => {
-              locationControlRef.current._isUserDragging = false;
-            });
+          mapRef.current.easeTo({
+            center: [locationControlRef.current._lastPostionLong, locationControlRef.current._lastPostionLat],
+            offset: [0, 120],
+            duration: 500,
+            easing: (t) => t,
+          }).once("moveend", () => {
+            console.log("Event > map dragend > moveend");
+            locationControlRef.current._isUserDragging = false;
+          });
         } else {
           locationControlRef.current._isUserDragging = false;
+        }
+      }
+    });
+
+    // On zoomend recenter when tracking user bearing
+    mapRef.current.on("zoomend", () => {
+      console.log("Event > map zoomend");
+      if (locationControlRef.current?.isTrackingBearing()) {
+        if (locationControlRef.current._lastPostionLat != null && locationControlRef.current._lastPostionLong != null) {
+          mapRef.current.easeTo({
+            center: [locationControlRef.current._lastPostionLong, locationControlRef.current._lastPostionLat],
+            offset: [0, 120],
+            duration: 500,
+            easing: (t) => t,
+          });
         }
       }
     });
@@ -818,6 +746,7 @@ export default function Map() {
 
     // When user clicks on search result stop tracking bearing and location, clear and collapse search input
     geocoder.on("result", () => {
+      console.log("Event > geocoder result");
       if (locationControlRef.current) {
         if (locationControlRef.current.isTrackingBearing() || locationControlRef.current.isTrackingLocation()) {
           locationControlRef.current.stopTrackingLocationAndBearing();
@@ -859,12 +788,14 @@ export default function Map() {
 
     // Listen for style changes
     mapRef.current.on("styledata", () => {
+      console.log("Event > map styledata");
       addSourceAndSupportLink();
     });
   }, []);
 
   // When changing map style preserve the current camera state
   useEffect(() => {
+    console.log("useEffect > Change map style:", mapStyle);
     if (!mapRef.current || !mapStyle) return;
     const map = mapRef.current;
     const center = map.getCenter();
@@ -884,6 +815,7 @@ export default function Map() {
 
   // Show tips
   useEffect(() => {
+    console.log("useEffect > Show tips");
     const dontShowTips = localStorage.getItem("rontomap_dont_show_tips");
     if (dontShowTips) {
       setShowTips(false);
