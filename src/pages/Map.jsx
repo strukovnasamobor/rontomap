@@ -252,6 +252,7 @@ export default function Map() {
         this._isUserZooming = false;
         this._isUserRotating = false;
         this._isUserPitching = false;
+        this._isMapBeingControlledProgrammatically = false;
         this._zoomOnStartTrackingBearing = defaultZoomOnUserTrackingBearing;
         this._pitchOnStartTrackingBearing = defaultPitchOnUserTrackingBearing;
         this._zoomOnStopTrackingBearing = null;
@@ -288,6 +289,31 @@ export default function Map() {
         this._container.querySelector('[data-control="track_location"]')?.classList.add("hidden");
         this._container.querySelector('[data-control="track_bearing"]')?.classList.add("hidden");
         this._container.querySelector('[data-control="stop_tracking_bearing"]')?.classList.remove("hidden");
+      }
+
+      disableUserInteractions() {
+        console.log("disableUserInteractions");
+        this._isMapBeingControlledProgrammatically = true;
+        this._map.boxZoom.disable();
+        this._map.scrollZoom.disable();
+        this._map.dragPan.disable();
+        this._map.dragRotate.disable();
+        this._map.keyboard.disable();
+        this._map.doubleClickZoom.disable();
+        this._map.touchZoomRotate.disable();
+        this._map.touchPitch.disable();
+      }
+
+      enableUserInteractions() {
+        console.log("enableUserInteractions");
+        this._isMapBeingControlledProgrammatically = false;
+        this._map.boxZoom.enable();
+        this._map.scrollZoom.enable();
+        this._map.dragPan.enable();
+        this._map.dragRotate.enable();
+        this._map.keyboard.enable();
+        this._map.touchZoomRotate.enable();
+        this._map.touchPitch.enable();
       }
 
       async _handleClick(e) {
@@ -355,6 +381,7 @@ export default function Map() {
           }
         } else {
           // Fly to last known position immediately
+          this.disableUserInteractions();
           mapRef.current
             .flyTo({
               center: [this._lastPostionLong, this._lastPostionLat],
@@ -363,6 +390,7 @@ export default function Map() {
             .once("moveend", () => {
               console.log("Event > _handleTrackLocation > moveend");
               this.showTrackingBearingIcon();
+              this.enableUserInteractions();
               this._trackingLocation = true;
             });
         }
@@ -388,6 +416,7 @@ export default function Map() {
 
         // Set map to last position with bearing
         if (lat != null && long != null) {
+          this.disableUserInteractions();
           mapRef.current
             .flyTo({
               center: [long, lat],
@@ -400,6 +429,7 @@ export default function Map() {
             .once("moveend", async () => {
               console.log("Event > _handleTrackBearing > moveend");
               this.showStopTrackingBearingIcon();
+              this.enableUserInteractions();
               await this._requestWakeLock();
               this._trackingBearing = true;
             });
@@ -409,7 +439,7 @@ export default function Map() {
         }
       }
 
-      _handleStopTrackingBearing() {
+      async _handleStopTrackingBearing() {
         console.log("_handleStopTrackingBearing");
         this._trackingBearing = false;
 
@@ -423,6 +453,7 @@ export default function Map() {
         let pitch = this._pitchOnStartTrackingBearing;
         let bearing = this._lastPositionBearing ? this._lastPositionBearing : this._map.getBearing();
 
+        this.disableUserInteractions();
         mapRef.current
           .flyTo({
             center: [long, lat],
@@ -434,6 +465,7 @@ export default function Map() {
           .once("moveend", () => {
             console.log("Event > _handleStopTrackingBearing > moveend");
             this.showTrackingBearingIcon();
+            this.enableUserInteractions();
             this._trackingLocation = true;
             this._releaseWakeLock();
           });
@@ -613,6 +645,9 @@ export default function Map() {
       console.log("Event > geolocate");
       // If user is currently moving the map while tracking bearing, do not move the map
       if (locationControlRef.current.isUserMovingMapWhenTrackingBearing()) {
+        locationControlRef.current._lastPostionLat = lat;
+        locationControlRef.current._lastPostionLong = long;
+        locationControlRef.current._lastPositionBearing = bearing;
         return;
       }
       const long = e.coords.longitude;
@@ -670,7 +705,7 @@ export default function Map() {
           "and pitch:",
           currentPitch,
         );*/
-
+        locationControlRef.current._isMapBeingControlledProgrammatically = true;
         mapRef.current
           .easeTo({
             center: [long, lat],
@@ -682,6 +717,7 @@ export default function Map() {
           .once("moveend", () => {
             console.log("Event > geolocate > moveend");
             mapRef.current.getContainer().classList.remove("geolocate-track-user-bearing-map-moving");
+            locationControlRef.current._isMapBeingControlledProgrammatically = false;
           });
       } else if (locationControlRef.current.isTrackingLocation()) {
         mapRef.current.easeTo({
@@ -699,9 +735,16 @@ export default function Map() {
     // On dragstart
     mapRef.current.on("dragstart", () => {
       console.log("Event > map > dragstart");
+      if (locationControlRef.current._isMapBeingControlledProgrammatically) {
+        console.log(
+          "Event > map > dragstart > Ignoring dragstart event because map is being controlled programmatically.",
+        );
+        return;
+      }
       if (locationControlRef.current.isTrackingLocation()) {
         locationControlRef.current.stopTrackingLocation();
       } else if (locationControlRef.current?.isTrackingBearing()) {
+        locationControlRef.current.hideTrackingIcons();
         locationControlRef.current._isUserMovingMapWhenTrackingBearing = true;
         locationControlRef.current._isUserDragging = true;
         mapRef.current.getContainer().classList.remove("geolocate-track-user-bearing");
@@ -711,6 +754,10 @@ export default function Map() {
     // On dragend
     mapRef.current.on("dragend", () => {
       console.log("Event > map > dragend");
+      if (locationControlRef.current._isMapBeingControlledProgrammatically) {
+        console.log("Event > map > dragend > Ignoring dragend event because map is being controlled programmatically.");
+        return;
+      }
       if (locationControlRef.current?.isTrackingBearing()) {
         // Wait 500 ms before moving the map back to the user's location to allow for quick map adjustments
         locationControlRef.current._isUserDragging = false;
@@ -741,9 +788,11 @@ export default function Map() {
               .once("moveend", () => {
                 console.log("Event > map > dragend > moveend");
                 locationControlRef.current._isUserMovingMapWhenTrackingBearing = false;
+                locationControlRef.current.showStopTrackingBearingIcon();
               });
           } else {
             locationControlRef.current._isUserMovingMapWhenTrackingBearing = false;
+            locationControlRef.current.showStopTrackingBearingIcon();
           }
         }, 500);
       }
@@ -752,9 +801,16 @@ export default function Map() {
     // On zoomstart
     mapRef.current.on("zoomstart", () => {
       console.log("Event > map > zoomstart");
+      if (locationControlRef.current._isMapBeingControlledProgrammatically) {
+        console.log(
+          "Event > map > zoomstart > Ignoring zoomstart event because map is being controlled programmatically.",
+        );
+        return;
+      }
       if (locationControlRef.current.isTrackingLocation()) {
         locationControlRef.current.stopTrackingLocation();
       } else if (locationControlRef.current?.isTrackingBearing()) {
+        locationControlRef.current.hideTrackingIcons();
         locationControlRef.current._isUserMovingMapWhenTrackingBearing = true;
         locationControlRef.current._isUserZooming = true;
         mapRef.current.getContainer().classList.remove("geolocate-track-user-bearing");
@@ -764,6 +820,10 @@ export default function Map() {
     // On zoomend
     mapRef.current.on("zoomend", () => {
       console.log("Event > map > zoomend");
+      if (locationControlRef.current._isMapBeingControlledProgrammatically) {
+        console.log("Event > map > zoomend > Ignoring zoomend event because map is being controlled programmatically.");
+        return;
+      }
       if (locationControlRef.current?.isTrackingBearing()) {
         locationControlRef.current._isUserZooming = false;
         // Wait 500 ms before moving the map back to the user's location to allow for quick map adjustments
@@ -794,9 +854,11 @@ export default function Map() {
               .once("moveend", () => {
                 console.log("Event > map > zoomend > moveend");
                 locationControlRef.current._isUserMovingMapWhenTrackingBearing = false;
+                locationControlRef.current.showStopTrackingBearingIcon();
               });
           } else {
             locationControlRef.current._isUserMovingMapWhenTrackingBearing = false;
+            locationControlRef.current.showStopTrackingBearingIcon();
           }
         }, 500);
       }
@@ -805,9 +867,16 @@ export default function Map() {
     // On rotatestart
     mapRef.current.on("rotatestart", () => {
       console.log("Event > map > rotatestart");
+      if (locationControlRef.current._isMapBeingControlledProgrammatically) {
+        console.log(
+          "Event > map > rotatestart > Ignoring rotatestart event because map is being controlled programmatically.",
+        );
+        return;
+      }
       if (locationControlRef.current.isTrackingLocation()) {
         locationControlRef.current.stopTrackingLocation();
       } else if (locationControlRef.current?.isTrackingBearing()) {
+        locationControlRef.current.hideTrackingIcons();
         locationControlRef.current._isUserMovingMapWhenTrackingBearing = true;
         locationControlRef.current._isUserRotating = true;
         mapRef.current.getContainer().classList.remove("geolocate-track-user-bearing");
@@ -817,6 +886,12 @@ export default function Map() {
     // On rotateend
     mapRef.current.on("rotateend", () => {
       console.log("Event > map > rotateend");
+      if (locationControlRef.current._isMapBeingControlledProgrammatically) {
+        console.log(
+          "Event > map > rotateend > Ignoring rotateend event because map is being controlled programmatically.",
+        );
+        return;
+      }
       if (locationControlRef.current?.isTrackingBearing()) {
         locationControlRef.current._isUserRotating = false;
         // Wait 500 ms before moving the map back to the user's location to allow for quick map adjustments
@@ -847,9 +922,11 @@ export default function Map() {
               .once("moveend", () => {
                 console.log("Event > map > rotateend > moveend");
                 locationControlRef.current._isUserMovingMapWhenTrackingBearing = false;
+                locationControlRef.current.showStopTrackingBearingIcon();
               });
           } else {
             locationControlRef.current._isUserMovingMapWhenTrackingBearing = false;
+            locationControlRef.current.showStopTrackingBearingIcon();
           }
         }, 500);
       }
@@ -858,9 +935,16 @@ export default function Map() {
     // On pitchstart
     mapRef.current.on("pitchstart", () => {
       console.log("Event > map > pitchstart");
+      if (locationControlRef.current._isMapBeingControlledProgrammatically) {
+        console.log(
+          "Event > map > pitchstart > Ignoring pitchstart event because map is being controlled programmatically.",
+        );
+        return;
+      }
       if (locationControlRef.current.isTrackingLocation()) {
         locationControlRef.current.stopTrackingLocation();
       } else if (locationControlRef.current?.isTrackingBearing()) {
+        locationControlRef.current.hideTrackingIcons();
         locationControlRef.current._isUserMovingMapWhenTrackingBearing = true;
         locationControlRef.current._isUserPitching = true;
         mapRef.current.getContainer().classList.remove("geolocate-track-user-bearing");
@@ -870,6 +954,12 @@ export default function Map() {
     // On pitchend
     mapRef.current.on("pitchend", () => {
       console.log("Event > map > pitchend");
+      if (locationControlRef.current._isMapBeingControlledProgrammatically) {
+        console.log(
+          "Event > map > pitchend > Ignoring pitchend event because map is being controlled programmatically.",
+        );
+        return;
+      }
       if (locationControlRef.current?.isTrackingBearing()) {
         locationControlRef.current._isUserPitching = false;
         // Wait 500 ms before moving the map back to the user's location to allow for quick map adjustments
@@ -900,9 +990,11 @@ export default function Map() {
               .once("moveend", () => {
                 console.log("Event > map > pitchend > moveend");
                 locationControlRef.current._isUserMovingMapWhenTrackingBearing = false;
+                locationControlRef.current.showStopTrackingBearingIcon();
               });
           } else {
             locationControlRef.current._isUserMovingMapWhenTrackingBearing = false;
+            locationControlRef.current.showStopTrackingBearingIcon();
           }
         }, 500);
       }
