@@ -611,6 +611,10 @@ export default function Map() {
 
     geolocateRef.current.on("geolocate", (e) => {
       console.log("Event > geolocate");
+      // If user is currently moving the map while tracking bearing, do not move the map
+      if (locationControlRef.current.isUserMovingMapWhenTrackingBearing()) {
+        return;
+      }
       const long = e.coords.longitude;
       const lat = e.coords.latitude;
       const bearing = e.coords.heading ? e.coords.heading : mapRef.current.getBearing();
@@ -651,10 +655,7 @@ export default function Map() {
         }
       }
 
-      if (
-        locationControlRef.current.isTrackingBearing() &&
-        !locationControlRef.current.isUserMovingMapWhenTrackingBearing()
-      ) {
+      if (locationControlRef.current.isTrackingBearing()) {
         // Moving map behind while dot location and accuracy circle are fixed
         mapRef.current.getContainer().classList.add("geolocate-track-user-bearing-map-moving");
         // Get current pitch and set the rotation to dot and accuracy circle to match the map rotation
