@@ -96,8 +96,8 @@
   display: none;
 }
 
-.geolocate-track-user-bearing-map-moving .mapboxgl-user-location,
-.geolocate-track-user-bearing-map-moving .mapboxgl-user-location-accuracy-circle {
+.geolocate-track-user-bearing .mapboxgl-user-location,
+.geolocate-track-user-bearing .mapboxgl-user-location-accuracy-circle {
   transform: translate(-50%, -50%) !important;
   left: 50% !important;
   top: calc(50% + 127.5px) !important;

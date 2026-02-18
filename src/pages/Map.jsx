@@ -428,6 +428,7 @@ export default function Map() {
             })
             .once("moveend", async () => {
               console.log("Event > _handleTrackBearing > moveend");
+              mapRef.current.getContainer().classList.add("geolocate-track-user-bearing");
               this.showStopTrackingBearingIcon();
               this.enableUserInteractions();
               await this._requestWakeLock();
@@ -454,6 +455,7 @@ export default function Map() {
         let bearing = this._lastPositionBearing ? this._lastPositionBearing : this._map.getBearing();
 
         this.disableUserInteractions();
+        mapRef.current.getContainer().classList.remove("geolocate-track-user-bearing");
         mapRef.current
           .flyTo({
             center: [long, lat],
@@ -692,7 +694,6 @@ export default function Map() {
 
       if (locationControlRef.current.isTrackingBearing()) {
         // Moving map behind while dot location and accuracy circle are fixed
-        mapRef.current.getContainer().classList.add("geolocate-track-user-bearing-map-moving");
         // Get current pitch and set the rotation to dot and accuracy circle to match the map rotation
         /*const currentPitch = mapRef.current.getPitch();
         const container = mapRef.current.getContainer();
@@ -716,7 +717,6 @@ export default function Map() {
           })
           .once("moveend", () => {
             console.log("Event > geolocate > moveend");
-            mapRef.current.getContainer().classList.remove("geolocate-track-user-bearing-map-moving");
             locationControlRef.current._isMapBeingControlledProgrammatically = false;
           });
       } else if (locationControlRef.current.isTrackingLocation()) {
@@ -787,12 +787,14 @@ export default function Map() {
               })
               .once("moveend", () => {
                 console.log("Event > map > dragend > moveend");
-                locationControlRef.current._isUserMovingMapWhenTrackingBearing = false;
+                mapRef.current.getContainer().classList.add("geolocate-track-user-bearing");
                 locationControlRef.current.showStopTrackingBearingIcon();
+                locationControlRef.current._isUserMovingMapWhenTrackingBearing = false;
               });
           } else {
-            locationControlRef.current._isUserMovingMapWhenTrackingBearing = false;
+            mapRef.current.getContainer().classList.add("geolocate-track-user-bearing");
             locationControlRef.current.showStopTrackingBearingIcon();
+            locationControlRef.current._isUserMovingMapWhenTrackingBearing = false;
           }
         }, 500);
       }
@@ -853,12 +855,14 @@ export default function Map() {
               })
               .once("moveend", () => {
                 console.log("Event > map > zoomend > moveend");
-                locationControlRef.current._isUserMovingMapWhenTrackingBearing = false;
+                mapRef.current.getContainer().classList.add("geolocate-track-user-bearing");
                 locationControlRef.current.showStopTrackingBearingIcon();
+                locationControlRef.current._isUserMovingMapWhenTrackingBearing = false;
               });
           } else {
-            locationControlRef.current._isUserMovingMapWhenTrackingBearing = false;
+            mapRef.current.getContainer().classList.add("geolocate-track-user-bearing");
             locationControlRef.current.showStopTrackingBearingIcon();
+            locationControlRef.current._isUserMovingMapWhenTrackingBearing = false;
           }
         }, 500);
       }
@@ -921,12 +925,14 @@ export default function Map() {
               })
               .once("moveend", () => {
                 console.log("Event > map > rotateend > moveend");
-                locationControlRef.current._isUserMovingMapWhenTrackingBearing = false;
+                mapRef.current.getContainer().classList.add("geolocate-track-user-bearing");
                 locationControlRef.current.showStopTrackingBearingIcon();
+                locationControlRef.current._isUserMovingMapWhenTrackingBearing = false;
               });
           } else {
-            locationControlRef.current._isUserMovingMapWhenTrackingBearing = false;
+            mapRef.current.getContainer().classList.add("geolocate-track-user-bearing");
             locationControlRef.current.showStopTrackingBearingIcon();
+            locationControlRef.current._isUserMovingMapWhenTrackingBearing = false;
           }
         }, 500);
       }
@@ -989,12 +995,14 @@ export default function Map() {
               })
               .once("moveend", () => {
                 console.log("Event > map > pitchend > moveend");
-                locationControlRef.current._isUserMovingMapWhenTrackingBearing = false;
+                mapRef.current.getContainer().classList.add("geolocate-track-user-bearing");
                 locationControlRef.current.showStopTrackingBearingIcon();
+                locationControlRef.current._isUserMovingMapWhenTrackingBearing = false;
               });
           } else {
-            locationControlRef.current._isUserMovingMapWhenTrackingBearing = false;
+            mapRef.current.getContainer().classList.add("geolocate-track-user-bearing");
             locationControlRef.current.showStopTrackingBearingIcon();
+            locationControlRef.current._isUserMovingMapWhenTrackingBearing = false;
           }
         }, 500);
       }
