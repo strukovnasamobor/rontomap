@@ -253,6 +253,7 @@ export default function Map() {
         this._isUserRotating = false;
         this._isUserPitching = false;
         this._isMapBeingControlledProgrammatically = false;
+        this._isSnappingBackToUser = false;
         this._zoomOnStartTrackingBearing = defaultZoomOnUserTrackingBearing;
         this._pitchOnStartTrackingBearing = defaultPitchOnUserTrackingBearing;
         this._zoomOnStopTrackingBearing = null;
@@ -615,6 +616,45 @@ export default function Map() {
         }
       }
 
+      _scheduleSnapBackToUser(source) {
+        if (this._isSnappingBackToUser) {
+          console.log(`Event > map > ${source} > Snap-back already in progress, ignoring.`);
+          return;
+        }
+        this._isSnappingBackToUser = true;
+
+        setTimeout(() => {
+          if (this._isUserDragging || this._isUserZooming || this._isUserRotating || this._isUserPitching) {
+            console.log(
+              `Event > map > ${source} > User is still interacting with the map, not moving back to user location.`,
+            );
+            this._isSnappingBackToUser = false;
+            return;
+          }
+          if (this._lastPostionLat != null && this._lastPostionLong != null) {
+            mapRef.current
+              .easeTo({
+                center: [this._lastPostionLong, this._lastPostionLat],
+                offset: [0, 120],
+                duration: 500,
+                easing: (t) => t,
+              })
+              .once("moveend", () => {
+                console.log(`Event > map > ${source} > moveend`);
+                mapRef.current.getContainer().classList.add("geolocate-track-user-bearing");
+                this.showStopTrackingBearingIcon();
+                this._isUserMovingMapWhenTrackingBearing = false;
+                this._isSnappingBackToUser = false;
+              });
+          } else {
+            mapRef.current.getContainer().classList.add("geolocate-track-user-bearing");
+            this.showStopTrackingBearingIcon();
+            this._isUserMovingMapWhenTrackingBearing = false;
+            this._isSnappingBackToUser = false;
+          }
+        }, 500);
+      }
+
       async _releaseWakeLock() {
         console.log("_releaseWakeLock");
         if (this._wakeLock && this._isScreenLocked) {
@@ -759,44 +799,8 @@ export default function Map() {
         return;
       }
       if (locationControlRef.current?.isTrackingBearing()) {
-        // Wait 500 ms before moving the map back to the user's location to allow for quick map adjustments
         locationControlRef.current._isUserDragging = false;
-        setTimeout(() => {
-          if (
-            locationControlRef.current._isUserDragging ||
-            locationControlRef.current._isUserZooming ||
-            locationControlRef.current._isUserRotating ||
-            locationControlRef.current._isUserPitching
-          ) {
-            console.log(
-              "Event > map > dragend > User is still interacting with the map, not moving back to user location.",
-            );
-            return;
-          }
-          // Move map back to user's last known location
-          if (
-            locationControlRef.current._lastPostionLat != null &&
-            locationControlRef.current._lastPostionLong != null
-          ) {
-            mapRef.current
-              .easeTo({
-                center: [locationControlRef.current._lastPostionLong, locationControlRef.current._lastPostionLat],
-                offset: [0, 120],
-                duration: 500,
-                easing: (t) => t,
-              })
-              .once("moveend", () => {
-                console.log("Event > map > dragend > moveend");
-                mapRef.current.getContainer().classList.add("geolocate-track-user-bearing");
-                locationControlRef.current.showStopTrackingBearingIcon();
-                locationControlRef.current._isUserMovingMapWhenTrackingBearing = false;
-              });
-          } else {
-            mapRef.current.getContainer().classList.add("geolocate-track-user-bearing");
-            locationControlRef.current.showStopTrackingBearingIcon();
-            locationControlRef.current._isUserMovingMapWhenTrackingBearing = false;
-          }
-        }, 500);
+        locationControlRef.current._scheduleSnapBackToUser("dragend");
       }
     });
 
@@ -828,43 +832,7 @@ export default function Map() {
       }
       if (locationControlRef.current?.isTrackingBearing()) {
         locationControlRef.current._isUserZooming = false;
-        // Wait 500 ms before moving the map back to the user's location to allow for quick map adjustments
-        setTimeout(() => {
-          if (
-            locationControlRef.current._isUserDragging ||
-            locationControlRef.current._isUserZooming ||
-            locationControlRef.current._isUserRotating ||
-            locationControlRef.current._isUserPitching
-          ) {
-            console.log(
-              "Event > map > zoomend > User is still interacting with the map, not moving back to user location.",
-            );
-            return;
-          }
-          // Move map back to user's last known location
-          if (
-            locationControlRef.current._lastPostionLat != null &&
-            locationControlRef.current._lastPostionLong != null
-          ) {
-            mapRef.current
-              .easeTo({
-                center: [locationControlRef.current._lastPostionLong, locationControlRef.current._lastPostionLat],
-                offset: [0, 120],
-                duration: 500,
-                easing: (t) => t,
-              })
-              .once("moveend", () => {
-                console.log("Event > map > zoomend > moveend");
-                mapRef.current.getContainer().classList.add("geolocate-track-user-bearing");
-                locationControlRef.current.showStopTrackingBearingIcon();
-                locationControlRef.current._isUserMovingMapWhenTrackingBearing = false;
-              });
-          } else {
-            mapRef.current.getContainer().classList.add("geolocate-track-user-bearing");
-            locationControlRef.current.showStopTrackingBearingIcon();
-            locationControlRef.current._isUserMovingMapWhenTrackingBearing = false;
-          }
-        }, 500);
+        locationControlRef.current._scheduleSnapBackToUser("zoomend");
       }
     });
 
@@ -898,43 +866,7 @@ export default function Map() {
       }
       if (locationControlRef.current?.isTrackingBearing()) {
         locationControlRef.current._isUserRotating = false;
-        // Wait 500 ms before moving the map back to the user's location to allow for quick map adjustments
-        setTimeout(() => {
-          if (
-            locationControlRef.current._isUserDragging ||
-            locationControlRef.current._isUserZooming ||
-            locationControlRef.current._isUserRotating ||
-            locationControlRef.current._isUserPitching
-          ) {
-            console.log(
-              "Event > map > rotateend > User is still interacting with the map, not moving back to user location.",
-            );
-            return;
-          }
-          // Move map back to user's last known location
-          if (
-            locationControlRef.current._lastPostionLat != null &&
-            locationControlRef.current._lastPostionLong != null
-          ) {
-            mapRef.current
-              .easeTo({
-                center: [locationControlRef.current._lastPostionLong, locationControlRef.current._lastPostionLat],
-                offset: [0, 120],
-                duration: 500,
-                easing: (t) => t,
-              })
-              .once("moveend", () => {
-                console.log("Event > map > rotateend > moveend");
-                mapRef.current.getContainer().classList.add("geolocate-track-user-bearing");
-                locationControlRef.current.showStopTrackingBearingIcon();
-                locationControlRef.current._isUserMovingMapWhenTrackingBearing = false;
-              });
-          } else {
-            mapRef.current.getContainer().classList.add("geolocate-track-user-bearing");
-            locationControlRef.current.showStopTrackingBearingIcon();
-            locationControlRef.current._isUserMovingMapWhenTrackingBearing = false;
-          }
-        }, 500);
+        locationControlRef.current._scheduleSnapBackToUser("rotateend");
       }
     });
 
@@ -968,43 +900,7 @@ export default function Map() {
       }
       if (locationControlRef.current?.isTrackingBearing()) {
         locationControlRef.current._isUserPitching = false;
-        // Wait 500 ms before moving the map back to the user's location to allow for quick map adjustments
-        setTimeout(() => {
-          if (
-            locationControlRef.current._isUserDragging ||
-            locationControlRef.current._isUserZooming ||
-            locationControlRef.current._isUserRotating ||
-            locationControlRef.current._isUserPitching
-          ) {
-            console.log(
-              "Event > map > pitchend > User is still interacting with the map, not moving back to user location.",
-            );
-            return;
-          }
-          // Move map back to user's last known location
-          if (
-            locationControlRef.current._lastPostionLat != null &&
-            locationControlRef.current._lastPostionLong != null
-          ) {
-            mapRef.current
-              .easeTo({
-                center: [locationControlRef.current._lastPostionLong, locationControlRef.current._lastPostionLat],
-                offset: [0, 120],
-                duration: 500,
-                easing: (t) => t,
-              })
-              .once("moveend", () => {
-                console.log("Event > map > pitchend > moveend");
-                mapRef.current.getContainer().classList.add("geolocate-track-user-bearing");
-                locationControlRef.current.showStopTrackingBearingIcon();
-                locationControlRef.current._isUserMovingMapWhenTrackingBearing = false;
-              });
-          } else {
-            mapRef.current.getContainer().classList.add("geolocate-track-user-bearing");
-            locationControlRef.current.showStopTrackingBearingIcon();
-            locationControlRef.current._isUserMovingMapWhenTrackingBearing = false;
-          }
-        }, 500);
+        locationControlRef.current._scheduleSnapBackToUser("pitchend");
       }
     });
 
