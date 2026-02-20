@@ -685,16 +685,18 @@ export default function Map() {
 
     geolocateRef.current.on("geolocate", (e) => {
       console.log("Event > geolocate");
+      const long = e.coords.longitude;
+      const lat = e.coords.latitude;
+      const bearing = e.coords.heading ? e.coords.heading : mapRef.current.getBearing();
+      
       // If user is currently moving the map while tracking bearing, do not move the map
       if (locationControlRef.current.isUserMovingMapWhenTrackingBearing()) {
+        console.log("Event > geolocate > User is moving the map while tracking bearing, ignoring geolocate event.");
         locationControlRef.current._lastPostionLat = lat;
         locationControlRef.current._lastPostionLong = long;
         locationControlRef.current._lastPositionBearing = bearing;
         return;
       }
-      const long = e.coords.longitude;
-      const lat = e.coords.latitude;
-      const bearing = e.coords.heading ? e.coords.heading : mapRef.current.getBearing();
 
       if (locationControlRef.current._lastPostionLat == null || locationControlRef.current._lastPostionLong == null) {
         mapRef.current
@@ -704,7 +706,7 @@ export default function Map() {
             duration: 1000,
           })
           .once("moveend", () => {
-            console.log("Event > _handleTrackLocation > moveend");
+            console.log("Event > geolocate > moveend");
             locationControlRef.current.showTrackingBearingIcon();
             locationControlRef.current._trackingLocation = true;
           });
