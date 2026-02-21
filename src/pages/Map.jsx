@@ -253,6 +253,7 @@ export default function Map() {
         this._isUserRotating = false;
         this._isUserPitching = false;
         this._isMapBeingControlledProgrammatically = false;
+        this._programmaticMoveId = 0;
         this._isSnappingBackToUser = false;
         this._zoomOnStartTrackingBearing = defaultZoomOnUserTrackingBearing;
         this._pitchOnStartTrackingBearing = defaultPitchOnUserTrackingBearing;
@@ -688,7 +689,7 @@ export default function Map() {
       const long = e.coords.longitude;
       const lat = e.coords.latitude;
       const bearing = e.coords.heading ? e.coords.heading : mapRef.current.getBearing();
-      
+
       // If user is currently moving the map while tracking bearing, do not move the map
       if (locationControlRef.current.isUserMovingMapWhenTrackingBearing()) {
         console.log("Event > geolocate > User is moving the map while tracking bearing, ignoring geolocate event.");
@@ -749,6 +750,7 @@ export default function Map() {
           currentPitch,
         );*/
         locationControlRef.current._isMapBeingControlledProgrammatically = true;
+        const moveId = ++locationControlRef.current._programmaticMoveId;
         mapRef.current
           .easeTo({
             center: [long, lat],
@@ -758,8 +760,11 @@ export default function Map() {
             easing: (t) => t,
           })
           .once("moveend", () => {
-            console.log("Event > geolocate > moveend");
-            locationControlRef.current._isMapBeingControlledProgrammatically = false;
+            // Only reset the flag if no newer programmatic move has started
+            if (locationControlRef.current._programmaticMoveId === moveId) {
+              console.log("Event > geolocate > moveend");
+              locationControlRef.current._isMapBeingControlledProgrammatically = false;
+            }
           });
       } else if (locationControlRef.current.isTrackingLocation()) {
         mapRef.current.easeTo({
