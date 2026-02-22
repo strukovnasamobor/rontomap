@@ -713,42 +713,23 @@ export default function Map() {
           });
       }
 
-      let duration = 500;
+      // Use a duration longer than the GPS update interval (~1s) so the animation
+      // is still running when the next geolocate event arrives. This prevents the
+      // "stop-and-start" stutter — each new easeTo seamlessly replaces the previous one.
+      let duration = 1500;
       if (locationControlRef.current._lastPostionLat !== null && locationControlRef.current._lastPostionLong !== null) {
         // Calculate Euclidean distance (rough approximation)
         const distance = Math.sqrt(
           Math.pow(long - locationControlRef.current._lastPostionLong, 2) +
             Math.pow(lat - locationControlRef.current._lastPostionLat, 2),
         );
-        if (distance < 0.00005) {
-          // Very small movement (< ~5.5 meters)
-          duration = 500;
-        } else if (distance < 0.0001) {
-          // Small movement (~5.5-11 meters)
-          duration = 250;
-        } else if (distance < 0.0005) {
-          // Medium movement (~11-55 meters)
-          duration = 125;
-        } else {
-          // Large jump (> ~55 meters)
+        if (distance > 0.0005) {
+          // Large jump (> ~55 meters) — teleport instantly
           duration = 0;
         }
       }
 
       if (locationControlRef.current.isTrackingBearing()) {
-        // Moving map behind while dot location and accuracy circle are fixed
-        // Get current pitch and set the rotation to dot and accuracy circle to match the map rotation
-        /*const currentPitch = mapRef.current.getPitch();
-        const container = mapRef.current.getContainer();
-        container.querySelector(".mapboxgl-user-location").style.transform = `rotateX(${currentPitch}deg)`;
-        container.querySelector(".mapboxgl-user-location-accuracy-circle").style.transform =
-          `rotateX(${currentPitch}deg)`;
-        console.log(
-          "Event > geolocate > isTrackingBearing > Rotate dot location and accuracy circle to match map bearing and pitch > Bearing:",
-          bearing,
-          "and pitch:",
-          currentPitch,
-        );*/
         locationControlRef.current._isMapBeingControlledProgrammatically = true;
         const moveId = ++locationControlRef.current._programmaticMoveId;
         mapRef.current
