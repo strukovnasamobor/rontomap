@@ -675,6 +675,8 @@ export default function Map() {
     geolocateRef.current = new mapboxgl.GeolocateControl({
       positionOptions: {
         enableHighAccuracy: true,
+        maximumAge: 0,
+        timeout: 3000,
       },
       trackUserLocation: true,
       showUserHeading: true,
@@ -683,6 +685,35 @@ export default function Map() {
     // Override default _updateCamera to prevent it from moving the camera.
     // All camera movement is handled by the custom "geolocate" event handler below.
     geolocateRef.current._updateCamera = () => {};
+
+    // Override the internal geolocation watcher to poll at a custom interval
+    // for more frequent updates than the default watchPosition provides.
+    const GPS_POLL_INTERVAL = 500; // ms — poll every 500ms for faster updates
+    geolocateRef.current._onSuccess = geolocateRef.current._onSuccess.bind(geolocateRef.current);
+    geolocateRef.current._onError = geolocateRef.current._onError.bind(geolocateRef.current);
+    const originalSetupFn = geolocateRef.current._setup;
+    geolocateRef.current._setup = function () {
+      originalSetupFn.call(this);
+
+      // Replace the native watchPosition with a polling getCurrentPosition
+      if (this._geolocationWatchID !== undefined) {
+        navigator.geolocation.clearWatch(this._geolocationWatchID);
+      }
+      this._geolocationWatchID = undefined;
+      this._gpsPollTimer = setInterval(() => {
+        navigator.geolocation.getCurrentPosition(this._onSuccess, this._onError, this.options.positionOptions);
+      }, GPS_POLL_INTERVAL);
+    };
+
+    // Clean up polling timer when control is removed
+    const originalOnRemove = geolocateRef.current.onRemove;
+    geolocateRef.current.onRemove = function (map) {
+      if (this._gpsPollTimer) {
+        clearInterval(this._gpsPollTimer);
+        this._gpsPollTimer = null;
+      }
+      return originalOnRemove.call(this, map);
+    };
 
     geolocateRef.current.on("geolocate", (e) => {
       console.log("Event > geolocate");
@@ -713,23 +744,26 @@ export default function Map() {
           });
       }
 
-      // Use a duration longer than the GPS update interval (~1s) so the animation
-      // is still running when the next geolocate event arrives. This prevents the
-      // "stop-and-start" stutter — each new easeTo seamlessly replaces the previous one.
-      let duration = 1500;
-      if (locationControlRef.current._lastPostionLat !== null && locationControlRef.current._lastPostionLong !== null) {
-        // Calculate Euclidean distance (rough approximation)
-        const distance = Math.sqrt(
-          Math.pow(long - locationControlRef.current._lastPostionLong, 2) +
-            Math.pow(lat - locationControlRef.current._lastPostionLat, 2),
-        );
-        if (distance > 0.0005) {
-          // Large jump (> ~55 meters) — teleport instantly
-          duration = 0;
-        }
-      }
-
       if (locationControlRef.current.isTrackingBearing()) {
+        // Use a duration longer than the GPS update interval so the animation
+        // is still running when the next geolocate event arrives. This prevents the
+        // "stop-and-start" stutter — each new easeTo seamlessly replaces the previous one.
+        let duration = 1000;
+        if (
+          locationControlRef.current._lastPostionLat !== null &&
+          locationControlRef.current._lastPostionLong !== null
+        ) {
+          // Calculate Euclidean distance (rough approximation)
+          const distance = Math.sqrt(
+            Math.pow(long - locationControlRef.current._lastPostionLong, 2) +
+              Math.pow(lat - locationControlRef.current._lastPostionLat, 2),
+          );
+          if (distance > 0.0005) {
+            // Large jump (> ~55 meters) — teleport instantly
+            duration = 0;
+          }
+        }
+
         locationControlRef.current._isMapBeingControlledProgrammatically = true;
         const moveId = ++locationControlRef.current._programmaticMoveId;
         mapRef.current
@@ -738,7 +772,7 @@ export default function Map() {
             offset: [0, 120],
             bearing: bearing,
             duration: duration,
-            easing: (t) => t,
+            easing: (t) => 1 - Math.pow(1 - t, 3),
           })
           .once("moveend", () => {
             // Only reset the flag if no newer programmatic move has started
@@ -750,7 +784,7 @@ export default function Map() {
       } else if (locationControlRef.current.isTrackingLocation()) {
         mapRef.current.easeTo({
           center: [long, lat],
-          duration: duration,
+          duration: 500,
           easing: (t) => t,
         });
       }
