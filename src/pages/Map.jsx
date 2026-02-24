@@ -772,7 +772,7 @@ export default function Map() {
             offset: [0, 120],
             bearing: bearing,
             duration: duration,
-            easing: (t) => 1 - Math.pow(1 - t, 3),
+            easing: (t) => t,
           })
           .once("moveend", () => {
             // Only reset the flag if no newer programmatic move has started
