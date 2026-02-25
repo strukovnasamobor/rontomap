@@ -748,7 +748,7 @@ export default function Map() {
         // Use a duration longer than the GPS update interval so the animation
         // is still running when the next geolocate event arrives. This prevents the
         // "stop-and-start" stutter — each new easeTo seamlessly replaces the previous one.
-        let duration = 1000;
+        let duration = 1200;
         if (
           locationControlRef.current._lastPostionLat !== null &&
           locationControlRef.current._lastPostionLong !== null
