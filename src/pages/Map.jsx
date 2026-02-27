@@ -798,15 +798,10 @@ export default function Map() {
     mapRef.current.on("dragstart", () => {
       console.log("Event > map > dragstart");
       if (locationControlRef.current._isMapBeingControlledProgrammatically) {
-        if (!locationControlRef.current?.isTrackingBearing()) {
-          console.log(
-            "Event > map > dragstart > Ignoring dragstart event because map is being controlled programmatically.",
-          );
-          return;
-        }
         console.log(
-          "Event > map > dragstart > Allowing user drag while map is being controlled programmatically when tracking bearing.",
+          "Event > map > dragstart > Ignoring dragstart event because map is being controlled programmatically.",
         );
+        return;
       }
       if (locationControlRef.current.isTrackingLocation()) {
         locationControlRef.current.stopTrackingLocation();
@@ -822,13 +817,8 @@ export default function Map() {
     mapRef.current.on("dragend", () => {
       console.log("Event > map > dragend");
       if (locationControlRef.current._isMapBeingControlledProgrammatically) {
-        if (!locationControlRef.current?.isTrackingBearing()) {
-          console.log("Event > map > dragend > Ignoring dragend event because map is being controlled programmatically.");
-          return;
-        }
-        console.log(
-          "Event > map > dragend > Allowing user dragend while map is being controlled programmatically (tracking bearing).",
-        );
+        console.log("Event > map > dragend > Ignoring dragend event because map is being controlled programmatically.");
+        return;
       }
       if (locationControlRef.current?.isTrackingBearing()) {
         locationControlRef.current._isUserDragging = false;
