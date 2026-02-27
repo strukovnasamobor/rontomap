@@ -840,15 +840,10 @@ export default function Map() {
     mapRef.current.on("zoomstart", () => {
       console.log("Event > map > zoomstart");
       if (locationControlRef.current._isMapBeingControlledProgrammatically) {
-        if (!locationControlRef.current?.isTrackingBearing()) {
-          console.log(
-            "Event > map > zoomstart > Ignoring zoomstart event because map is being controlled programmatically.",
-          );
-          return;
-        }
         console.log(
-          "Event > map > zoomstart > Allowing user zoom while map is being controlled programmatically (tracking bearing).",
+          "Event > map > zoomstart > Ignoring zoomstart event because map is being controlled programmatically.",
         );
+        return;
       }
       if (locationControlRef.current.isTrackingLocation()) {
         locationControlRef.current.stopTrackingLocation();
@@ -864,13 +859,8 @@ export default function Map() {
     mapRef.current.on("zoomend", () => {
       console.log("Event > map > zoomend");
       if (locationControlRef.current._isMapBeingControlledProgrammatically) {
-        if (!locationControlRef.current?.isTrackingBearing()) {
-          console.log("Event > map > zoomend > Ignoring zoomend event because map is being controlled programmatically.");
-          return;
-        }
-        console.log(
-          "Event > map > zoomend > Allowing user zoomend while map is being controlled programmatically (tracking bearing).",
-        );
+        console.log("Event > map > zoomend > Ignoring zoomend event because map is being controlled programmatically.");
+        return;
       }
       if (locationControlRef.current?.isTrackingBearing()) {
         locationControlRef.current._isUserZooming = false;
@@ -882,15 +872,10 @@ export default function Map() {
     mapRef.current.on("rotatestart", () => {
       console.log("Event > map > rotatestart");
       if (locationControlRef.current._isMapBeingControlledProgrammatically) {
-        if (!locationControlRef.current?.isTrackingBearing()) {
-          console.log(
-            "Event > map > rotatestart > Ignoring rotatestart event because map is being controlled programmatically.",
-          );
-          return;
-        }
         console.log(
-          "Event > map > rotatestart > Allowing user rotate while map is being controlled programmatically (tracking bearing).",
+          "Event > map > rotatestart > Ignoring rotatestart event because map is being controlled programmatically.",
         );
+        return;
       }
       if (locationControlRef.current.isTrackingLocation()) {
         locationControlRef.current.stopTrackingLocation();
@@ -906,15 +891,10 @@ export default function Map() {
     mapRef.current.on("rotateend", () => {
       console.log("Event > map > rotateend");
       if (locationControlRef.current._isMapBeingControlledProgrammatically) {
-        if (!locationControlRef.current?.isTrackingBearing()) {
-          console.log(
-            "Event > map > rotateend > Ignoring rotateend event because map is being controlled programmatically.",
-          );
-          return;
-        }
         console.log(
-          "Event > map > rotateend > Allowing user rotateend while map is being controlled programmatically (tracking bearing).",
+          "Event > map > rotateend > Ignoring rotateend event because map is being controlled programmatically.",
         );
+        return;
       }
       if (locationControlRef.current?.isTrackingBearing()) {
         locationControlRef.current._isUserRotating = false;
@@ -926,15 +906,10 @@ export default function Map() {
     mapRef.current.on("pitchstart", () => {
       console.log("Event > map > pitchstart");
       if (locationControlRef.current._isMapBeingControlledProgrammatically) {
-        if (!locationControlRef.current?.isTrackingBearing()) {
-          console.log(
-            "Event > map > pitchstart > Ignoring pitchstart event because map is being controlled programmatically.",
-          );
-          return;
-        }
         console.log(
-          "Event > map > pitchstart > Allowing user pitch while map is being controlled programmatically (tracking bearing).",
+          "Event > map > pitchstart > Ignoring pitchstart event because map is being controlled programmatically.",
         );
+        return;
       }
       if (locationControlRef.current.isTrackingLocation()) {
         locationControlRef.current.stopTrackingLocation();
@@ -950,15 +925,10 @@ export default function Map() {
     mapRef.current.on("pitchend", () => {
       console.log("Event > map > pitchend");
       if (locationControlRef.current._isMapBeingControlledProgrammatically) {
-        if (!locationControlRef.current?.isTrackingBearing()) {
-          console.log(
-            "Event > map > pitchend > Ignoring pitchend event because map is being controlled programmatically.",
-          );
-          return;
-        }
         console.log(
-          "Event > map > pitchend > Allowing user pitchend while map is being controlled programmatically (tracking bearing).",
+          "Event > map > pitchend > Ignoring pitchend event because map is being controlled programmatically.",
         );
+        return;
       }
       if (locationControlRef.current?.isTrackingBearing()) {
         locationControlRef.current._isUserPitching = false;
