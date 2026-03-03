@@ -20,6 +20,7 @@ export default function Map() {
   const mapContainerRef = useRef(null);
   const geolocateRef = useRef(null);
   const locationControlRef = useRef(null);
+  const markersRef = useRef([]);
   const [fullscreen, setFullscreen] = useState(false);
   const [idMapStyle, setIdMapStyle] = useState(() => {
     const storedIdMapStyle = localStorage.getItem("rontomap_id_map_style");
@@ -924,6 +925,21 @@ export default function Map() {
         locationControlRef.current._isUserPitching = false;
         locationControlRef.current._scheduleSnapBackToUser("pitchend");
       }
+    });
+
+    // Add marker on click (debounced to avoid double-tap placing two markers)
+    let clickTimer = null;
+    mapRef.current.on("click", (e) => {
+      if (clickTimer) {
+        clearTimeout(clickTimer);
+        clickTimer = null;
+        return;
+      }
+      clickTimer = setTimeout(() => {
+        clickTimer = null;
+        const marker = new mapboxgl.Marker({ color: "#ff6f00" }).setLngLat(e.lngLat).addTo(mapRef.current);
+        markersRef.current.push(marker);
+      }, 300);
     });
 
     // Add the geolocate control to the map without adding it to the UI
