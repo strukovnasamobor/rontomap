@@ -798,6 +798,7 @@ export default function Map() {
     // On dragstart
     mapRef.current.on("dragstart", () => {
       console.log("Event > map > dragstart");
+      mapRef.current.getCanvasContainer().classList.add("map-dragging");
       if (locationControlRef.current._isMapBeingControlledProgrammatically) {
         console.log(
           "Event > map > dragstart > Ignoring dragstart event because map is being controlled programmatically.",
@@ -817,6 +818,7 @@ export default function Map() {
     // On dragend
     mapRef.current.on("dragend", () => {
       console.log("Event > map > dragend");
+      mapRef.current.getCanvasContainer().classList.remove("map-dragging");
       if (locationControlRef.current._isMapBeingControlledProgrammatically) {
         console.log("Event > map > dragend > Ignoring dragend event because map is being controlled programmatically.");
         return;
@@ -862,6 +864,7 @@ export default function Map() {
     // On rotatestart
     mapRef.current.on("rotatestart", () => {
       console.log("Event > map > rotatestart");
+      mapRef.current.getCanvasContainer().classList.add("map-dragging");
       if (locationControlRef.current._isMapBeingControlledProgrammatically) {
         console.log(
           "Event > map > rotatestart > Ignoring rotatestart event because map is being controlled programmatically.",
@@ -881,6 +884,7 @@ export default function Map() {
     // On rotateend
     mapRef.current.on("rotateend", () => {
       console.log("Event > map > rotateend");
+      mapRef.current.getCanvasContainer().classList.remove("map-dragging");
       if (locationControlRef.current._isMapBeingControlledProgrammatically) {
         console.log(
           "Event > map > rotateend > Ignoring rotateend event because map is being controlled programmatically.",

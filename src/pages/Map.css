@@ -3,6 +3,14 @@
   height: 100dvh;
 }
 
+.mapboxgl-canvas-container.mapboxgl-interactive {
+  cursor: default !important;
+}
+
+.mapboxgl-canvas-container.mapboxgl-interactive.map-dragging {
+  cursor: grabbing !important;
+}
+
 .mapboxgl-ctrl-top-left,
 .mapboxgl-ctrl-top,
 .mapboxgl-ctrl-top-right {
