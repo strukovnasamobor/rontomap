@@ -1154,7 +1154,7 @@ export default function Map() {
         }).join("_"),
       );
     }
-    return `${window.location.origin}${window.location.pathname}?${params}`;
+    return `https://rontomap.web.app${window.location.pathname}?${params}`;
   };
 
   const handleCenterToMarker = () => {
