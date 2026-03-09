@@ -36,6 +36,34 @@ export default function Map() {
   const [defaultPitchOnUserTrackingBearing, setDefaultPitchOnUserTrackingBearing] = useState(60);
   const [defaultBearing, setDefaultBearing] = useState(0);
   const [showTips, setShowTips] = useState(true);
+  const [markerMenu, setMarkerMenu] = useState(null); // { marker }
+  const [menuPos, setMenuPos] = useState({ x: 0, y: 0 });
+
+  const namingMarkerRef = useRef(null);
+  const [nameAlert, setNameAlert] = useState(false);
+
+  // Add or update the name label on a marker element
+  const updateMarkerLabel = (marker) => {
+    const el = marker.getElement();
+    let label = el.querySelector(".marker-label");
+    if (marker._markerName) {
+      if (!label) {
+        label = document.createElement("div");
+        label.className = "marker-label";
+        el.appendChild(label);
+      }
+      label.textContent = marker._markerName;
+    } else {
+      label?.remove();
+    }
+  };
+
+  // Compute marker menu screen position from its geographic coordinates
+  const computeMenuPos = (marker) => {
+    const point = mapRef.current.project(marker.getLngLat());
+    const rect = mapRef.current.getContainer().getBoundingClientRect();
+    return { x: rect.left + point.x, y: rect.top + point.y };
+  };
 
   // Detect native Android (not web browser on Android)
   const isNativeAndroid = () => {
@@ -186,17 +214,54 @@ export default function Map() {
   // Initialize map and add controls
   useEffect(() => {
     console.log("useEffect > Initialize map");
+
+    // Helper to create a marker with cursor and menu event handlers
+    const createMarker = (lngLat) => {
+      const marker = new mapboxgl.Marker({ color: "#ff6f00", draggable: true })
+        .setLngLat(lngLat)
+        .addTo(mapRef.current);
+      const el = marker.getElement();
+      el.style.cursor = "pointer";
+      let wasDragged = false;
+      el.addEventListener("mousedown", () => {
+        el.style.cursor = "grabbing";
+        mapRef.current.getCanvasContainer().classList.add("marker-dragging");
+      });
+      el.addEventListener("mouseup", () => {
+        el.style.cursor = "pointer";
+        mapRef.current.getCanvasContainer().classList.remove("marker-dragging");
+      });
+      marker.on("dragstart", () => { wasDragged = true; });
+      marker.on("dragend", () => {
+        el.style.cursor = "pointer";
+        mapRef.current.getCanvasContainer().classList.remove("marker-dragging");
+        setTimeout(() => { wasDragged = false; }, 0);
+      });
+      el.addEventListener("click", (e) => {
+        if (wasDragged) return;
+        e.stopPropagation();
+        setMenuPos(computeMenuPos(marker));
+        setMarkerMenu({ marker });
+      });
+      marker._markerName = "";
+      markersRef.current.push(marker);
+      return marker;
+    };
+
     if (mapRef.current) mapRef.current.resize();
 
-    // Get lat and long from the URL
+    // Get camera params from the URL
     const lat = parseFloat(getQueryParams("lat"));
     const long = parseFloat(getQueryParams("long"));
+    const urlZoom = parseFloat(getQueryParams("zoom"));
+    const urlBearing = parseFloat(getQueryParams("bearing"));
+    const urlPitch = parseFloat(getQueryParams("pitch"));
 
     // Set new center and zoom
     const center = !isNaN(lat) && !isNaN(long) ? [long, lat] : defaultCenter;
-    const zoom = !isNaN(lat) && !isNaN(long) ? defaultZoomOnQueryParams : defaultZoom;
-    const pitch = defaultPitch;
-    const bearing = defaultBearing;
+    const zoom = !isNaN(urlZoom) ? urlZoom : (!isNaN(lat) && !isNaN(long) ? defaultZoomOnQueryParams : defaultZoom);
+    const pitch = !isNaN(urlPitch) ? urlPitch : defaultPitch;
+    const bearing = !isNaN(urlBearing) ? urlBearing : defaultBearing;
 
     // If map already initialized fly to the new center and zoom
     if (mapRef.current) {
@@ -941,24 +1006,7 @@ export default function Map() {
       }
       clickTimer = setTimeout(() => {
         clickTimer = null;
-        const marker = new mapboxgl.Marker({ color: "#ff6f00", draggable: true })
-          .setLngLat(e.lngLat)
-          .addTo(mapRef.current);
-        const el = marker.getElement();
-        el.style.cursor = "pointer";
-        el.addEventListener("mousedown", () => {
-          el.style.cursor = "grabbing";
-          mapRef.current.getCanvasContainer().classList.add("marker-dragging");
-        });
-        el.addEventListener("mouseup", () => {
-          el.style.cursor = "pointer";
-          mapRef.current.getCanvasContainer().classList.remove("marker-dragging");
-        });
-        marker.on("dragend", () => {
-          el.style.cursor = "pointer";
-          mapRef.current.getCanvasContainer().classList.remove("marker-dragging");
-        });
-        markersRef.current.push(marker);
+        createMarker(e.lngLat);
       }, 300);
     });
 
@@ -1026,6 +1074,24 @@ export default function Map() {
 
     // Enable pinch-to-zoom and rotate gestures on touch devices
     mapRef.current.touchZoomRotate.enable();
+
+    // Recreate markers from URL params
+    const markersParam = getQueryParams("markers");
+    if (markersParam) {
+      markersParam.split("_").forEach((markerStr) => {
+        const parts = markerStr.split("-");
+        const markerLat = parseFloat(parts[0]);
+        const markerLng = parseFloat(parts[1]);
+        if (!isNaN(markerLat) && !isNaN(markerLng)) {
+          const m = createMarker([markerLng, markerLat]);
+          const markerName = decodeURIComponent(parts.slice(2).join("-"));
+          if (markerName) {
+            m._markerName = markerName;
+            updateMarkerLabel(m);
+          }
+        }
+      });
+    }
   }, []);
 
   // When changing map style preserve the current camera state
@@ -1047,6 +1113,71 @@ export default function Map() {
       });
     });
   }, [mapStyle]);
+
+  // Reposition marker menu on window resize or map move
+  useEffect(() => {
+    if (!markerMenu) return;
+    const reposition = () => setMenuPos(computeMenuPos(markerMenu.marker));
+    window.addEventListener("resize", reposition);
+    mapRef.current?.on("moveend", reposition);
+    return () => {
+      window.removeEventListener("resize", reposition);
+      mapRef.current?.off("moveend", reposition);
+    };
+  }, [markerMenu]);
+
+  // Build a shareable URL from current camera state and given markers
+  const buildShareUrl = (markers) => {
+    const center = mapRef.current.getCenter();
+    const zoom = mapRef.current.getZoom();
+    const bearing = mapRef.current.getBearing();
+    const pitch = mapRef.current.getPitch();
+    const params = new URLSearchParams({
+      lat: center.lat.toFixed(6),
+      long: center.lng.toFixed(6),
+      zoom: zoom.toFixed(2),
+      bearing: bearing.toFixed(1),
+      pitch: pitch.toFixed(1),
+    });
+    if (markers.length > 0) {
+      params.set(
+        "markers",
+        markers.map((m) => {
+          const ll = m.getLngLat();
+          const base = `${ll.lat.toFixed(6)}-${ll.lng.toFixed(6)}`;
+          return m._markerName ? `${base}-${encodeURIComponent(m._markerName)}` : base;
+        }).join("_"),
+      );
+    }
+    return `${window.location.origin}${window.location.pathname}?${params}`;
+  };
+
+  const handleCenterToMarker = () => {
+    mapRef.current.flyTo({ center: markerMenu.marker.getLngLat(), duration: 500 });
+    setMarkerMenu(null);
+  };
+
+  const handleCopyMarker = () => {
+    navigator.clipboard.writeText(buildShareUrl([markerMenu.marker]));
+    setMarkerMenu(null);
+  };
+
+  const handleCopyAll = () => {
+    navigator.clipboard.writeText(buildShareUrl(markersRef.current));
+    setMarkerMenu(null);
+  };
+
+  const handleDeleteMarker = () => {
+    markerMenu.marker.remove();
+    markersRef.current = markersRef.current.filter((m) => m !== markerMenu.marker);
+    setMarkerMenu(null);
+  };
+
+  const handleSetName = () => {
+    namingMarkerRef.current = markerMenu.marker;
+    setMarkerMenu(null);
+    setNameAlert(true);
+  };
 
   // Show tips
   useEffect(() => {
@@ -1094,6 +1225,36 @@ export default function Map() {
           },
         ]}
       ></IonAlert>
+      <IonAlert
+        isOpen={nameAlert}
+        onDidDismiss={() => setNameAlert(false)}
+        header="Marker name"
+        inputs={[{ name: "name", type: "text", placeholder: "Enter name", value: namingMarkerRef.current?._markerName ?? "" }]}
+        buttons={[
+          { text: "Cancel", role: "cancel" },
+          {
+            text: "OK",
+            handler: (data) => {
+              if (namingMarkerRef.current) {
+                namingMarkerRef.current._markerName = data.name || "";
+                updateMarkerLabel(namingMarkerRef.current);
+              }
+            },
+          },
+        ]}
+      />
+      {markerMenu && (
+        <>
+          <div className="marker-menu-overlay" onClick={() => setMarkerMenu(null)} />
+          <div className="marker-menu" style={{ left: menuPos.x, top: menuPos.y }}>
+            <button onClick={handleSetName}>Set name</button>
+            <button onClick={handleCenterToMarker}>Fly to marker</button>
+            <button onClick={handleCopyMarker}>Copy link to marker</button>
+            <button onClick={handleCopyAll}>Copy link to all markers</button>
+            <button onClick={handleDeleteMarker}>Delete marker</button>
+          </div>
+        </>
+      )}
       <div ref={mapContainerRef} {...bind} className="map-container" />
     </PageFixedLayout>
   );
