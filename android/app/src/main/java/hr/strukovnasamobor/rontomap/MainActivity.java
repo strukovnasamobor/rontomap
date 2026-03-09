@@ -1,5 +1,7 @@
 package hr.strukovnasamobor.rontomap;
 
+import android.content.Intent;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
@@ -15,6 +17,24 @@ public class MainActivity extends BridgeActivity {
 
         // Register the plugin
         registerPlugin(FullscreenPlugin.class);
+
+        handleDeepLink(getIntent());
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        handleDeepLink(intent);
+    }
+
+    private void handleDeepLink(Intent intent) {
+        if (!Intent.ACTION_VIEW.equals(intent.getAction())) return;
+        Uri data = intent.getData();
+        if (data == null) return;
+        String query = data.getQuery();
+        if (query == null || query.isEmpty()) return;
+        final String url = getBridge().getServerUrl() + "/?" + query;
+        getBridge().getWebView().post(() -> getBridge().getWebView().loadUrl(url));
     }
 
     public void enterFullscreen() {
