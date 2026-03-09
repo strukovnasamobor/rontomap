@@ -11,6 +11,10 @@
   cursor: grabbing !important;
 }
 
+.mapboxgl-canvas-container.mapboxgl-interactive.marker-dragging {
+  cursor: grabbing !important;
+}
+
 .mapboxgl-ctrl-top-left,
 .mapboxgl-ctrl-top,
 .mapboxgl-ctrl-top-right {

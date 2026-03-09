@@ -941,7 +941,23 @@ export default function Map() {
       }
       clickTimer = setTimeout(() => {
         clickTimer = null;
-        const marker = new mapboxgl.Marker({ color: "#ff6f00" }).setLngLat(e.lngLat).addTo(mapRef.current);
+        const marker = new mapboxgl.Marker({ color: "#ff6f00", draggable: true })
+          .setLngLat(e.lngLat)
+          .addTo(mapRef.current);
+        const el = marker.getElement();
+        el.style.cursor = "pointer";
+        el.addEventListener("mousedown", () => {
+          el.style.cursor = "grabbing";
+          mapRef.current.getCanvasContainer().classList.add("marker-dragging");
+        });
+        el.addEventListener("mouseup", () => {
+          el.style.cursor = "pointer";
+          mapRef.current.getCanvasContainer().classList.remove("marker-dragging");
+        });
+        marker.on("dragend", () => {
+          el.style.cursor = "pointer";
+          mapRef.current.getCanvasContainer().classList.remove("marker-dragging");
+        });
         markersRef.current.push(marker);
       }, 300);
     });
