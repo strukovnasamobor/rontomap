@@ -127,7 +127,7 @@
   font-weight: 500;
   white-space: nowrap;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
-  pointer-events: none;
+  cursor: pointer;
 }
 
 .marker-menu-overlay {
@@ -161,6 +161,42 @@
 .marker-menu button:hover {
   background: #f0f0f0;
 }
+
+.marker-menu-dark {
+  background: #1a1a1a;
+}
+
+.marker-menu-dark button {
+  color: white;
+}
+
+.marker-menu-dark button:hover {
+  background: #2a2a2a;
+}
+
+.map-style-dark .marker-label {
+  background: rgba(0, 0, 0, 0.85);
+  color: white;
+}
+
+.name-alert .alert-button-group {
+  flex-direction: row !important;
+}
+
+.name-alert-dark .alert-wrapper {
+  background: #1a1a1a !important;
+}
+
+.name-alert-dark .alert-title,
+.name-alert-dark .alert-sub-title {
+  color: white !important;
+}
+
+.name-alert-dark .alert-input {
+  background: #2a2a2a !important;
+  color: white !important;
+}
+
 
 
 @keyframes user-location-accuracy-circle-pulsing {

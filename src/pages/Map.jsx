@@ -53,6 +53,11 @@ export default function Map() {
         el.appendChild(label);
       }
       label.textContent = marker._markerName;
+      label.onclick = (e) => {
+        e.stopPropagation();
+        namingMarkerRef.current = marker;
+        setNameAlert(true);
+      };
     } else {
       label?.remove();
     }
@@ -1227,11 +1232,38 @@ export default function Map() {
       ></IonAlert>
       <IonAlert
         isOpen={nameAlert}
+        cssClass={`name-alert${idMapStyle === "rontomap_streets_dark" ? " name-alert-dark" : ""}`}
         onDidDismiss={() => setNameAlert(false)}
+        onDidPresent={() => {
+          setTimeout(() => {
+            const input = document.querySelector("ion-alert .alert-input");
+            if (input) {
+              input.focus();
+              input.addEventListener("keydown", (e) => {
+                if (e.key === "Enter") {
+                  if (namingMarkerRef.current) {
+                    namingMarkerRef.current._markerName = input.value || "";
+                    updateMarkerLabel(namingMarkerRef.current);
+                  }
+                  setNameAlert(false);
+                }
+              });
+            }
+          }, 100);
+        }}
         header="Marker name"
         inputs={[{ name: "name", type: "text", placeholder: "Enter name", value: namingMarkerRef.current?._markerName ?? "" }]}
         buttons={[
           { text: "Cancel", role: "cancel" },
+          {
+            text: "Clear",
+            handler: () => {
+              if (namingMarkerRef.current) {
+                namingMarkerRef.current._markerName = "";
+                updateMarkerLabel(namingMarkerRef.current);
+              }
+            },
+          },
           {
             text: "OK",
             handler: (data) => {
@@ -1246,7 +1278,7 @@ export default function Map() {
       {markerMenu && (
         <>
           <div className="marker-menu-overlay" onClick={() => setMarkerMenu(null)} />
-          <div className="marker-menu" style={{ left: menuPos.x, top: menuPos.y }}>
+          <div className={`marker-menu${idMapStyle === "rontomap_streets_dark" ? " marker-menu-dark" : ""}`} style={{ left: menuPos.x, top: menuPos.y }}>
             <button onClick={handleSetName}>Set name</button>
             <button onClick={handleCenterToMarker}>Fly to marker</button>
             <button onClick={handleCopyMarker}>Copy link to marker</button>
@@ -1255,7 +1287,7 @@ export default function Map() {
           </div>
         </>
       )}
-      <div ref={mapContainerRef} {...bind} className="map-container" />
+      <div ref={mapContainerRef} {...bind} className={`map-container${idMapStyle === "rontomap_streets_dark" ? " map-style-dark" : ""}`} />
     </PageFixedLayout>
   );
 }
