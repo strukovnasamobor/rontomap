@@ -33,7 +33,9 @@ public class MainActivity extends BridgeActivity {
         if (data == null) return;
         String query = data.getQuery();
         if (query == null || query.isEmpty()) return;
-        final String url = getBridge().getServerUrl() + "/?" + query;
+        String serverUrl = getBridge().getServerUrl();
+        if (serverUrl == null) serverUrl = "http://localhost";
+        final String url = serverUrl + "/?" + query;
         getBridge().getWebView().post(() -> getBridge().getWebView().loadUrl(url));
     }
 
