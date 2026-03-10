@@ -11,6 +11,8 @@ import "@mapbox/mapbox-gl-geocoder/dist/mapbox-gl-geocoder.css";
 import { StatusBar } from "@capacitor/status-bar";
 import { Geolocation } from "@capacitor/geolocation";
 import { Capacitor } from "@capacitor/core";
+import { db } from "../../firebase";
+import { collection, addDoc, doc, getDoc, serverTimestamp } from "firebase/firestore";
 
 // Set Mapbox access token
 mapboxgl.accessToken = "pk.eyJ1IjoiYXVyZWxpdXMtemQiLCJhIjoiY21rcXA3cXh2MHNpZDNjcXl1a3MzbW8zciJ9.JO4VSTN6-0vRtWW0YKjlAg";
@@ -1080,21 +1082,35 @@ export default function Map() {
     // Enable pinch-to-zoom and rotate gestures on touch devices
     mapRef.current.touchZoomRotate.enable();
 
-    // Recreate markers from URL params
-    const markersParam = getQueryParams("markers");
-    if (markersParam) {
-      markersParam.split("_").forEach((markerStr) => {
-        const parts = markerStr.split("-");
-        const markerLat = parseFloat(parts[0]);
-        const markerLng = parseFloat(parts[1]);
-        if (!isNaN(markerLat) && !isNaN(markerLng)) {
-          const m = createMarker([markerLng, markerLat]);
-          const markerName = decodeURIComponent(parts.slice(2).join("-"));
-          if (markerName) {
-            m._markerName = markerName;
+    // Recreate single marker from URL params
+    const markerParam = getQueryParams("marker");
+    if (markerParam) {
+      const parts = markerParam.split("-");
+      const markerLat = parseFloat(parts[0]);
+      const markerLng = parseFloat(parts[1]);
+      if (!isNaN(markerLat) && !isNaN(markerLng)) {
+        const m = createMarker([markerLng, markerLat]);
+        const markerName = decodeURIComponent(parts.slice(2).join("-"));
+        if (markerName) {
+          m._markerName = markerName;
+          updateMarkerLabel(m);
+        }
+      }
+    }
+
+    // Recreate markers from a Firebase features collection
+    const featuresCollectionId = getQueryParams("features_collection");
+    if (featuresCollectionId) {
+      getDoc(doc(db, "featuresCollections", featuresCollectionId)).then((snap) => {
+        if (!snap.exists()) return;
+        const data = snap.data();
+        (data.markers || []).forEach((entry) => {
+          const m = createMarker([entry.pos[1], entry.pos[0]]);
+          if (entry.name) {
+            m._markerName = entry.name;
             updateMarkerLabel(m);
           }
-        }
+        });
       });
     }
   }, []);
@@ -1131,31 +1147,6 @@ export default function Map() {
     };
   }, [markerMenu]);
 
-  // Build a shareable URL from current camera state and given markers
-  const buildShareUrl = (markers) => {
-    const center = mapRef.current.getCenter();
-    const zoom = mapRef.current.getZoom();
-    const bearing = mapRef.current.getBearing();
-    const pitch = mapRef.current.getPitch();
-    const params = new URLSearchParams({
-      lat: center.lat.toFixed(6),
-      long: center.lng.toFixed(6),
-      zoom: zoom.toFixed(2),
-      bearing: bearing.toFixed(1),
-      pitch: pitch.toFixed(1),
-    });
-    if (markers.length > 0) {
-      params.set(
-        "markers",
-        markers.map((m) => {
-          const ll = m.getLngLat();
-          const base = `${ll.lat.toFixed(6)}-${ll.lng.toFixed(6)}`;
-          return m._markerName ? `${base}-${encodeURIComponent(m._markerName)}` : base;
-        }).join("_"),
-      );
-    }
-    return `https://rontomap.web.app${window.location.pathname}?${params}`;
-  };
 
   const handleCenterToMarker = () => {
     mapRef.current.flyTo({ center: markerMenu.marker.getLngLat(), duration: 500 });
@@ -1163,12 +1154,53 @@ export default function Map() {
   };
 
   const handleCopyMarker = () => {
-    navigator.clipboard.writeText(buildShareUrl([markerMenu.marker]));
+    const center = mapRef.current.getCenter();
+    const zoom = mapRef.current.getZoom();
+    const bearing = mapRef.current.getBearing();
+    const pitch = mapRef.current.getPitch();
+    const ll = markerMenu.marker.getLngLat();
+    const params = new URLSearchParams({
+      lat: center.lat.toFixed(6),
+      long: center.lng.toFixed(6),
+      zoom: zoom.toFixed(2),
+      bearing: bearing.toFixed(1),
+      pitch: pitch.toFixed(1),
+      marker: markerMenu.marker._markerName
+        ? `${ll.lat.toFixed(6)}-${ll.lng.toFixed(6)}-${encodeURIComponent(markerMenu.marker._markerName)}`
+        : `${ll.lat.toFixed(6)}-${ll.lng.toFixed(6)}`,
+    });
+    const url = `https://rontomap.web.app/?${params}`;
+    navigator.clipboard.writeText(url);
     setMarkerMenu(null);
   };
 
-  const handleCopyAll = () => {
-    navigator.clipboard.writeText(buildShareUrl(markersRef.current));
+  const handleCopyFeatures = async () => {
+    const center = mapRef.current.getCenter();
+    const zoom = mapRef.current.getZoom();
+    const bearing = mapRef.current.getBearing();
+    const pitch = mapRef.current.getPitch();
+    const markers = markersRef.current.map((m, i) => {
+      const ll = m.getLngLat();
+      return {
+        id: `m${i + 1}`,
+        name: m._markerName || "",
+        pos: [ll.lat, ll.lng],
+      };
+    });
+    const docRef = await addDoc(collection(db, "featuresCollections"), {
+      created: serverTimestamp(),
+      markers,
+    });
+    const params = new URLSearchParams({
+      lat: center.lat.toFixed(6),
+      long: center.lng.toFixed(6),
+      zoom: zoom.toFixed(2),
+      bearing: bearing.toFixed(1),
+      pitch: pitch.toFixed(1),
+      features_collection: docRef.id,
+    });
+    const url = `https://rontomap.web.app/?${params}`;
+    navigator.clipboard.writeText(url);
     setMarkerMenu(null);
   };
 
@@ -1282,7 +1314,7 @@ export default function Map() {
             <button onClick={handleSetName}>Set name</button>
             <button onClick={handleCenterToMarker}>Fly to marker</button>
             <button onClick={handleCopyMarker}>Copy link to marker</button>
-            <button onClick={handleCopyAll}>Copy link to all markers</button>
+            <button onClick={handleCopyFeatures}>Copy link to features</button>
             <button onClick={handleDeleteMarker}>Delete marker</button>
           </div>
         </>
