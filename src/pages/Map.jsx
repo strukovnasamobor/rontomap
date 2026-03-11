@@ -40,8 +40,11 @@ export default function Map() {
   const [showTips, setShowTips] = useState(true);
   const [markerMenu, setMarkerMenu] = useState(null); // { marker }
   const [menuPos, setMenuPos] = useState({ x: 0, y: 0 });
+  const [mapClickMenu, setMapClickMenu] = useState(null); // { lngLat, x, y }
 
   const namingMarkerRef = useRef(null);
+  const createMarkerRef = useRef(null);
+  const geocoderOpenRef = useRef(false);
   const [nameAlert, setNameAlert] = useState(false);
 
   // Add or update the name label on a marker element
@@ -254,6 +257,7 @@ export default function Map() {
       markersRef.current.push(marker);
       return marker;
     };
+    createMarkerRef.current = createMarker;
 
     if (mapRef.current) mapRef.current.resize();
 
@@ -1013,7 +1017,11 @@ export default function Map() {
       }
       clickTimer = setTimeout(() => {
         clickTimer = null;
-        createMarker(e.lngLat);
+        // Don't show menu when clicking to close the search input
+        if (geocoderOpenRef.current) return;
+        const point = mapRef.current.project(e.lngLat);
+        const rect = mapRef.current.getContainer().getBoundingClientRect();
+        setMapClickMenu({ lngLat: e.lngLat, x: rect.left + point.x, y: rect.top + point.y });
       }, 300);
     });
 
@@ -1039,6 +1047,19 @@ export default function Map() {
         input?.focus();
       });
     }
+
+    // Capture geocoder expanded state on mousedown/touchstart (before the geocoder auto-collapses)
+    const captureGeocoderState = () => {
+      const el = document.querySelector(".mapboxgl-ctrl-geocoder");
+      if (el && !el.classList.contains("mapboxgl-ctrl-geocoder--collapsed")) {
+        const input = el.querySelector("input");
+        geocoderOpenRef.current = !input?.value;
+      } else {
+        geocoderOpenRef.current = false;
+      }
+    };
+    document.addEventListener("mousedown", captureGeocoderState, true);
+    document.addEventListener("touchstart", captureGeocoderState, true);
 
     // When user clicks on search result stop tracking bearing and location, clear and collapse search input
     geocoder.on("result", () => {
@@ -1216,6 +1237,16 @@ export default function Map() {
     setNameAlert(true);
   };
 
+  const handleFlyToHere = () => {
+    mapRef.current.flyTo({ center: mapClickMenu.lngLat, duration: 500 });
+    setMapClickMenu(null);
+  };
+
+  const handleAddMarkerFromMenu = () => {
+    createMarkerRef.current(mapClickMenu.lngLat);
+    setMapClickMenu(null);
+  };
+
   // Show tips
   useEffect(() => {
     console.log("useEffect > Show tips");
@@ -1316,6 +1347,16 @@ export default function Map() {
             <button onClick={handleCopyMarker}>Copy link to marker</button>
             <button onClick={handleCopyFeatures}>Copy link to features</button>
             <button onClick={handleDeleteMarker}>Delete marker</button>
+          </div>
+        </>
+      )}
+      {mapClickMenu && (
+        <>
+          <div className="marker-menu-overlay" onClick={() => setMapClickMenu(null)} />
+          <div className={`marker-menu${idMapStyle === "rontomap_streets_dark" ? " marker-menu-dark" : ""}`} style={{ left: mapClickMenu.x, top: mapClickMenu.y }}>
+            <button onClick={handleFlyToHere}>Fly to here</button>
+            <button onClick={handleAddMarkerFromMenu}>Add marker</button>
+            <button disabled>Start path creation</button>
           </div>
         </>
       )}
