@@ -209,6 +209,10 @@
   z-index: 2;
 }
 
+.path-vertex-last {
+  background: #ff6f00;
+}
+
 /* Path midpoint handle - smaller circle */
 .path-midpoint {
   width: 9px;
@@ -225,6 +229,40 @@
 .path-midpoint:hover {
   opacity: 1;
   transform: scale(1.2);
+}
+
+.map-style-dark .path-vertex {
+  background: white;
+  border-color: #ff6f00;
+}
+
+.map-style-dark .path-vertex-last {
+  background: #ff6f00;
+}
+
+.map-style-dark .path-midpoint {
+  background: white;
+  border-color: #ff6f00;
+}
+
+.path-toast {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: white;
+  color: #333;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 14px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  z-index: 1000;
+  pointer-events: none;
+}
+
+.path-toast-dark {
+  background: #1a1a1a;
+  color: white;
 }
 
 .marker-menu button:disabled {
