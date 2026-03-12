@@ -15,6 +15,12 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        // Set navigation bar to black on startup
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            getWindow().setNavigationBarColor(android.graphics.Color.parseColor("#000000"));
+            getWindow().setStatusBarColor(android.graphics.Color.parseColor("#000000"));
+        }
+
         // Register the plugin
         registerPlugin(FullscreenPlugin.class);
 

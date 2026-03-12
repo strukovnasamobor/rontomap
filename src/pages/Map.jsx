@@ -126,7 +126,7 @@ export default function Map() {
   const bind = useDoubleTap((e) => {
     console.log("Event > DoubleTap");
     const controlsContainer = document.querySelector(".mapboxgl-control-container");
-    const mapContainer = document.querySelector(".map-container");
+    const pageContainer = document.querySelector(".map.center");
 
     // Ignore clicks on Mapbox controls
     if (e?.target?.closest(".mapboxgl-control-container")) {
@@ -134,7 +134,7 @@ export default function Map() {
     }
 
     if (!fullscreen) {
-      if (controlsContainer && mapContainer) {
+      if (controlsContainer && pageContainer) {
         controlsContainer.style.display = "none";
         // Android: Hide status bar using Capacitor
         if (isNativeAndroid()) {
@@ -143,20 +143,20 @@ export default function Map() {
           Fullscreen.enter();
         }
         // Try native fullscreen
-        if (mapContainer.requestFullscreen) {
-          mapContainer.requestFullscreen();
+        if (pageContainer.requestFullscreen) {
+          pageContainer.requestFullscreen();
         }
         // @ts-ignore
-        else if (mapContainer.webkitRequestFullscreen) {
+        else if (pageContainer.webkitRequestFullscreen) {
           /* Safari */
           // @ts-ignore
-          mapContainer.webkitRequestFullscreen();
+          pageContainer.webkitRequestFullscreen();
         }
         // @ts-ignore
-        else if (mapContainer.msRequestFullscreen) {
+        else if (pageContainer.msRequestFullscreen) {
           /* IE11 */
           // @ts-ignore
-          mapContainer.msRequestFullscreen();
+          pageContainer.msRequestFullscreen();
         }
       }
     } else {
