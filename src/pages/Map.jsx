@@ -314,6 +314,41 @@ export default function Map() {
 
     const computeMidpoint = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
 
+    const snapToPath = (path, lngLat) => {
+      const verts = path.vertices;
+      let bestDist = Infinity, bestSeg = 0, bestT = 0;
+      const px = lngLat[0], py = lngLat[1];
+      for (let i = 0; i < verts.length - 1; i++) {
+        const ax = verts[i].lngLat[0], ay = verts[i].lngLat[1];
+        const bx = verts[i + 1].lngLat[0], by = verts[i + 1].lngLat[1];
+        const dx = bx - ax, dy = by - ay;
+        const len2 = dx * dx + dy * dy;
+        let t = len2 === 0 ? 0 : ((px - ax) * dx + (py - ay) * dy) / len2;
+        t = Math.max(0, Math.min(1, t));
+        const cx = ax + t * dx, cy = ay + t * dy;
+        const dist = (px - cx) * (px - cx) + (py - cy) * (py - cy);
+        if (dist < bestDist) { bestDist = dist; bestSeg = i; bestT = t; }
+      }
+      return { segmentIndex: bestSeg, t: bestT };
+    };
+
+    const getAttachedMarkerPos = (path, am) => {
+      const verts = path.vertices;
+      const segIdx = am._segmentIndex ?? am.segmentIndex;
+      const t = am._t ?? am.t;
+      const seg = Math.min(segIdx, verts.length - 2);
+      const a = verts[seg].lngLat, b = verts[seg + 1].lngLat;
+      return [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])];
+    };
+
+    const updateAttachedMarkers = (path) => {
+      if (!path.attachedMarkers) return;
+      path.attachedMarkers.forEach((m) => {
+        const pos = getAttachedMarkerPos(path, m);
+        m.setLngLat(pos);
+      });
+    };
+
     const createPathVertex = (lngLat) => {
       const el = document.createElement("div");
       el.className = "path-vertex";
@@ -363,12 +398,14 @@ export default function Map() {
         vertexEntry.lngLat = [pos.lng, pos.lat];
         updatePathLine(vertexEntry.path);
         updateAdjacentMidpoints(vertexEntry);
+        updateAttachedMarkers(vertexEntry.path);
       });
       vertexEntry.marker.on("dragend", () => {
         mapRef.current.getCanvas().style.cursor = "";
         const pos = vertexEntry.marker.getLngLat();
         vertexEntry.lngLat = [pos.lng, pos.lat];
         updatePathLine(vertexEntry.path);
+        updateAttachedMarkers(vertexEntry.path);
         if (!vertexEntry.path.isFinished) rebuildMidpoints(vertexEntry.path);
       });
     };
@@ -378,6 +415,22 @@ export default function Map() {
       const ll = marker.getLngLat();
       path.midpoints.forEach((mp) => mp.marker.remove());
       path.midpoints = [];
+      // Shift attached markers on the split segment
+      if (path.attachedMarkers) {
+        path.attachedMarkers.forEach((m) => {
+          if (m._segmentIndex === segmentIndex) {
+            // Split t: marker was at t along old segment, now need to remap
+            if (m._t <= 0.5) {
+              m._t = m._t * 2;
+            } else {
+              m._segmentIndex = segmentIndex + 1;
+              m._t = (m._t - 0.5) * 2;
+            }
+          } else if (m._segmentIndex > segmentIndex) {
+            m._segmentIndex += 1;
+          }
+        });
+      }
       const newMarker = createPathVertex([ll.lng, ll.lat]);
       const newVertex = { lngLat: [ll.lng, ll.lat], marker: newMarker, path };
       path.vertices.splice(segmentIndex + 1, 0, newVertex);
@@ -386,6 +439,7 @@ export default function Map() {
       updatePathLine(path);
       rebuildMidpoints(path);
       updateVertexStyles(path);
+      updateAttachedMarkers(path);
     };
 
     const rebuildMidpoints = (path) => {
@@ -425,14 +479,46 @@ export default function Map() {
         if (wasDragged) return;
         const path = vertexEntry.path;
         const verts = path.vertices;
-        if (!path.isFinished && verts.length > 1 && verts[verts.length - 1] === vertexEntry) {
-          path.isFinished = true;
-          isPathModeRef.current = false;
-          setIsPathMode(false);
-          hideIntermediateVertices(path);
-          path.midpoints.forEach((mp) => mp.marker.remove());
-          path.midpoints = [];
-          setPathToast(null);
+        if (!path.isFinished && verts.length > 2) {
+          const idx = verts.indexOf(vertexEntry);
+          if (idx < 0) return;
+          // Shift attached markers for removed vertex
+          if (path.attachedMarkers) {
+            const maxSeg = verts.length - 2; // segments before removal
+            path.attachedMarkers = path.attachedMarkers.filter((m) => {
+              // Remove markers on segments touching this vertex that can't be remapped
+              if (idx === 0 && m._segmentIndex === 0) {
+                m._segmentIndex = 0;
+                return true;
+              }
+              if (m._segmentIndex === idx - 1 || m._segmentIndex === idx) {
+                // Merge into the new combined segment
+                const prevIdx = Math.max(0, idx - 1);
+                const nextIdx = Math.min(idx + 1, verts.length - 1);
+                // Re-snap after removal
+                const a = verts[prevIdx].lngLat;
+                const b = verts[nextIdx].lngLat;
+                const pos = m.getLngLat();
+                const dx = b[0] - a[0], dy = b[1] - a[1];
+                const len2 = dx * dx + dy * dy;
+                m._t = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((pos.lng - a[0]) * dx + (pos.lat - a[1]) * dy) / len2));
+                m._segmentIndex = idx === 0 ? 0 : idx - 1;
+                return true;
+              }
+              if (m._segmentIndex > idx) {
+                m._segmentIndex -= 1;
+              } else if (m._segmentIndex === maxSeg && idx === verts.length - 1) {
+                m._segmentIndex = Math.max(0, m._segmentIndex - 1);
+              }
+              return true;
+            });
+          }
+          vertexEntry.marker.remove();
+          verts.splice(idx, 1);
+          updatePathLine(path);
+          rebuildMidpoints(path);
+          updateVertexStyles(path);
+          updateAttachedMarkers(path);
         } else if (path.isFinished && (verts[0] === vertexEntry || verts[verts.length - 1] === vertexEntry)) {
           pathClickHandledRef.current = true;
           setTimeout(() => { pathClickHandledRef.current = false; }, 400);
@@ -454,7 +540,7 @@ export default function Map() {
     pathHelpersRef.current = {
       ensurePathLayer, updatePathLine, createPathVertex, rebuildMidpoints,
       attachVertexDragHandler, attachFinishHandler, updateVertexStyles,
-      hideIntermediateVertices, showAllVertices,
+      hideIntermediateVertices, showAllVertices, snapToPath, updateAttachedMarkers, getAttachedMarkerPos,
     };
 
     if (mapRef.current) mapRef.current.resize();
@@ -1390,6 +1476,39 @@ export default function Map() {
             h.attachVertexDragHandler(vertex);
             h.attachFinishHandler(vertex);
           });
+          if (entry.startName && path.vertices.length > 0) {
+            path.vertices[0].marker._markerName = entry.startName;
+            updateMarkerLabel(path.vertices[0].marker);
+          }
+          if (entry.endName && path.vertices.length > 0) {
+            path.vertices[path.vertices.length - 1].marker._markerName = entry.endName;
+            updateMarkerLabel(path.vertices[path.vertices.length - 1].marker);
+          }
+          if (entry.savedView) path.savedView = entry.savedView;
+          if (entry.attachedMarkers) {
+            path.attachedMarkers = [];
+            entry.attachedMarkers.forEach((am) => {
+              const pos = h.getAttachedMarkerPos(path, am);
+              const m = createMarker(pos);
+              m._attachedPath = path;
+              m._segmentIndex = am.segmentIndex;
+              m._t = am.t;
+              if (am.name) {
+                m._markerName = am.name;
+                updateMarkerLabel(m);
+              }
+              m.on("drag", () => {
+                if (!m._attachedPath) return;
+                const p = m.getLngLat();
+                const s = h.snapToPath(m._attachedPath, [p.lng, p.lat]);
+                m._segmentIndex = s.segmentIndex;
+                m._t = s.t;
+                const newPos = h.getAttachedMarkerPos(m._attachedPath, m);
+                m.setLngLat(newPos);
+              });
+              path.attachedMarkers.push(m);
+            });
+          }
           h.updatePathLine(path);
           h.hideIntermediateVertices(path);
           h.updateVertexStyles(path);
@@ -1471,7 +1590,8 @@ export default function Map() {
     const zoom = mapRef.current.getZoom();
     const bearing = mapRef.current.getBearing();
     const pitch = mapRef.current.getPitch();
-    const markers = markersRef.current.map((m, i) => {
+    const freeMarkers = markersRef.current.filter((m) => !m._attachedPath);
+    const markers = freeMarkers.map((m, i) => {
       const ll = m.getLngLat();
       return {
         id: `m${i + 1}`,
@@ -1479,10 +1599,25 @@ export default function Map() {
         pos: [ll.lat, ll.lng],
       };
     });
-    const paths = pathsRef.current.map((p, i) => ({
-      id: `p${i + 1}`,
-      coords: p.vertices.map((v) => ({ long: v.lngLat[0], lat: v.lngLat[1] })),
-    }));
+    const paths = pathsRef.current.map((p, i) => {
+      const pathData = {
+        id: `p${i + 1}`,
+        coords: p.vertices.map((v) => ({ long: v.lngLat[0], lat: v.lngLat[1] })),
+      };
+      const startName = p.vertices[0]?.marker._markerName;
+      const endName = p.vertices[p.vertices.length - 1]?.marker._markerName;
+      if (startName) pathData.startName = startName;
+      if (endName) pathData.endName = endName;
+      if (p.savedView) pathData.savedView = p.savedView;
+      if (p.attachedMarkers && p.attachedMarkers.length > 0) {
+        pathData.attachedMarkers = p.attachedMarkers.map((m) => {
+          const am = { segmentIndex: m._segmentIndex, t: m._t };
+          if (m._markerName) am.name = m._markerName;
+          return am;
+        });
+      }
+      return pathData;
+    });
     const docRef = await addDoc(collection(db, "featuresCollections"), {
       created: serverTimestamp(),
       markers,
@@ -1506,6 +1641,18 @@ export default function Map() {
   const handleDeleteMarker = () => {
     markerMenu.marker.remove();
     markersRef.current = markersRef.current.filter((m) => m !== markerMenu.marker);
+    setMarkerMenu(null);
+  };
+
+  const handleDetachFromPath = () => {
+    const marker = markerMenu.marker;
+    const path = marker._attachedPath;
+    if (path && path.attachedMarkers) {
+      path.attachedMarkers = path.attachedMarkers.filter((m) => m !== marker);
+    }
+    delete marker._attachedPath;
+    delete marker._segmentIndex;
+    delete marker._t;
     setMarkerMenu(null);
   };
 
@@ -1563,7 +1710,7 @@ export default function Map() {
     h.attachFinishHandler(vertex);
     h.updatePathLine(newPath);
     h.updateVertexStyles(newPath);
-    setPathToast("Click the last orange point to finish the path.");
+    setPathToast("Click here to finish the path.");
   };
 
   const handleEditPath = () => {
@@ -1585,14 +1732,21 @@ export default function Map() {
     pathHelpersRef.current.updateVertexStyles(path);
     setIsPathMode(true);
     isPathModeRef.current = true;
-    setPathToast("Click the last orange point to finish the path.");
+    setPathToast("Click here to finish the path.");
   };
 
   const handleReversePath = () => {
     const path = mapClickMenu.path;
     setMapClickMenu(null);
 
+    const numSegs = path.vertices.length - 1;
     path.vertices.reverse();
+    if (path.attachedMarkers) {
+      path.attachedMarkers.forEach((m) => {
+        m._segmentIndex = numSegs - 1 - m._segmentIndex;
+        m._t = 1 - m._t;
+      });
+    }
     pathHelpersRef.current.updatePathLine(path);
     pathHelpersRef.current.updateVertexStyles(path);
   };
@@ -1609,6 +1763,12 @@ export default function Map() {
 
     path.vertices.forEach((v) => v.marker.remove());
     path.midpoints.forEach((mp) => mp.marker.remove());
+    if (path.attachedMarkers) {
+      path.attachedMarkers.forEach((m) => {
+        m.remove();
+        markersRef.current = markersRef.current.filter((mk) => mk !== m);
+      });
+    }
 
     pathsRef.current = pathsRef.current.filter((p) => p !== path);
 
@@ -1616,6 +1776,84 @@ export default function Map() {
       activePathRef.current = null;
       setIsPathMode(false);
       isPathModeRef.current = false;
+    }
+  };
+
+  const handleRecordPathView = () => {
+    const path = mapClickMenu.path;
+    setMapClickMenu(null);
+    if (!path) return;
+    const map = mapRef.current;
+    path.savedView = {
+      center: map.getCenter().toArray(),
+      zoom: map.getZoom(),
+      pitch: map.getPitch(),
+      bearing: map.getBearing(),
+    };
+    setPathToast("Path view recorded.");
+    setTimeout(() => { setPathToast(null); }, 1000);
+  };
+
+  const handleFlyToPath = () => {
+    const path = mapClickMenu.path;
+    setMapClickMenu(null);
+    if (!path) return;
+    const map = mapRef.current;
+    if (path.savedView) {
+      map.flyTo({
+        center: path.savedView.center,
+        zoom: path.savedView.zoom,
+        pitch: path.savedView.pitch,
+        bearing: path.savedView.bearing,
+        duration: 1500,
+      });
+    } else if (path.vertices.length > 0) {
+      map.flyTo({ center: path.vertices[0].lngLat, duration: 1500 });
+    }
+  };
+
+  const handleAddMarkerToPath = () => {
+    const path = mapClickMenu.path;
+    const lngLat = mapClickMenu.lngLat;
+    setMapClickMenu(null);
+    if (!path || path.vertices.length < 2) return;
+    const h = pathHelpersRef.current;
+    const snap = h.snapToPath(path, [lngLat.lng, lngLat.lat]);
+    const a = path.vertices[snap.segmentIndex].lngLat;
+    const b = path.vertices[snap.segmentIndex + 1].lngLat;
+    const snappedLngLat = [a[0] + snap.t * (b[0] - a[0]), a[1] + snap.t * (b[1] - a[1])];
+    const marker = createMarkerRef.current(snappedLngLat);
+    marker._attachedPath = path;
+    marker._segmentIndex = snap.segmentIndex;
+    marker._t = snap.t;
+    marker.on("drag", () => {
+      if (!marker._attachedPath) return;
+      const pos = marker.getLngLat();
+      const s = h.snapToPath(marker._attachedPath, [pos.lng, pos.lat]);
+      marker._segmentIndex = s.segmentIndex;
+      marker._t = s.t;
+      const newPos = h.getAttachedMarkerPos(marker._attachedPath, marker);
+      marker.setLngLat(newPos);
+    });
+    if (!path.attachedMarkers) path.attachedMarkers = [];
+    path.attachedMarkers.push(marker);
+  };
+
+  const handleSetPathStartName = () => {
+    const path = mapClickMenu.path;
+    setMapClickMenu(null);
+    if (path && path.vertices.length > 0) {
+      namingMarkerRef.current = path.vertices[0].marker;
+      setNameAlert(true);
+    }
+  };
+
+  const handleSetPathEndName = () => {
+    const path = mapClickMenu.path;
+    setMapClickMenu(null);
+    if (path && path.vertices.length > 0) {
+      namingMarkerRef.current = path.vertices[path.vertices.length - 1].marker;
+      setNameAlert(true);
     }
   };
 
@@ -1714,9 +1952,10 @@ export default function Map() {
         <>
           <div className="marker-menu-overlay" onClick={() => setMarkerMenu(null)} />
           <div className={`marker-menu${idMapStyle === "rontomap_streets_dark" ? " marker-menu-dark" : ""}`} style={{ left: menuPos.x, top: menuPos.y }}>
-            <button onClick={handleSetName}>Set name</button>
             <button onClick={handleCenterToMarker}>Fly to marker</button>
+            <button onClick={handleSetName}>Set name</button>
             <button onClick={handleCopyMarker}>Copy link to marker</button>
+            {markerMenu.marker._attachedPath && <button onClick={handleDetachFromPath}>Detach from path</button>}
             <button onClick={handleDeleteMarker}>Delete marker</button>
           </div>
         </>
@@ -1725,18 +1964,43 @@ export default function Map() {
         <>
           <div className="marker-menu-overlay" onClick={() => setMapClickMenu(null)} />
           <div className={`marker-menu${idMapStyle === "rontomap_streets_dark" ? " marker-menu-dark" : ""}`} style={{ left: mapClickMenu.x, top: mapClickMenu.y }}>
-            <button onClick={handleFlyToHere}>Fly to here</button>
-            <button onClick={handleAddMarkerFromMenu}>Add marker</button>
-            <button onClick={handleStartPathCreation}>Start path creation</button>
-            <button onClick={handleCopyFeatures}>Copy link to features</button>
-            {mapClickMenu.path && <button onClick={handleEditPath}>Edit path</button>}
-            {mapClickMenu.path && <button onClick={handleReversePath}>Reverse path</button>}
-            {mapClickMenu.path && <button onClick={handleDeletePath}>Delete path</button>}
+            {mapClickMenu.path ? (
+              <>
+                <button onClick={handleFlyToPath}>Fly to path</button>
+                <button onClick={handleAddMarkerToPath}>Add marker to path</button>
+                <button onClick={handleEditPath}>Edit path</button>
+                <button onClick={handleReversePath}>Reverse path</button>
+                <button onClick={handleSetPathStartName}>Set name to start</button>
+                <button onClick={handleSetPathEndName}>Set name to end</button>
+                <button onClick={handleRecordPathView}>Record path view</button>
+                <button onClick={handleDeletePath}>Delete path</button>
+              </>
+            ) : (
+              <>
+                <button onClick={handleFlyToHere}>Fly to here</button>
+                <button onClick={handleAddMarkerFromMenu}>Add marker</button>
+                <button onClick={handleStartPathCreation}>Start path creation</button>
+                <button onClick={handleCopyFeatures}>Copy link to features</button>
+              </>
+            )}
           </div>
         </>
       )}
       {pathToast && (
-        <div className={`path-toast${idMapStyle === "rontomap_streets_dark" ? " path-toast-dark" : ""}`}>
+        <div className={`path-toast${idMapStyle === "rontomap_streets_dark" ? " path-toast-dark" : ""}`}
+          onClick={() => {
+            const path = activePathRef.current;
+            if (path && !path.isFinished && path.vertices.length > 1) {
+              path.isFinished = true;
+              isPathModeRef.current = false;
+              setIsPathMode(false);
+              pathHelpersRef.current.hideIntermediateVertices(path);
+              path.midpoints.forEach((mp) => mp.marker.remove());
+              path.midpoints = [];
+              setPathToast(null);
+            }
+          }}
+          style={{ cursor: isPathMode ? "pointer" : undefined }}>
           {pathToast}
         </div>
       )}

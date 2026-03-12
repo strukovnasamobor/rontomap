@@ -263,7 +263,7 @@
   text-align: center;
   font-size: 14px;
   z-index: 1000;
-  pointer-events: none;
+  pointer-events: auto;
 }
 
 .path-toast-dark {
