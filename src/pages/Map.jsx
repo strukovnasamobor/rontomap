@@ -278,10 +278,9 @@ export default function Map() {
         mapRef.current.getCanvasContainer().classList.remove("marker-dragging");
         setTimeout(() => { wasDragged = false; }, 0);
       });
-      el.addEventListener("contextmenu", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
+      el.addEventListener("click", (e) => {
         if (wasDragged) return;
+        e.stopPropagation();
         setMenuPos(computeMenuPos(marker));
         setMarkerMenu({ marker });
       });
@@ -536,11 +535,10 @@ export default function Map() {
           updateAttachedMarkers(path);
         }
       });
-      // Right-click / long-press: open path menu on finished path endpoints
-      el.addEventListener("contextmenu", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
+      // Click: open path menu on finished path endpoints
+      el.addEventListener("click", (e) => {
         if (wasDragged) return;
+        e.stopPropagation();
         const path = vertexEntry.path;
         const verts = path.vertices;
         if (path.isFinished && (verts[0] === vertexEntry || verts[verts.length - 1] === vertexEntry)) {
@@ -1329,55 +1327,113 @@ export default function Map() {
       }
     });
 
-    // Click on map: add vertex during path creation
+    // Click on map: add vertex or open menu (debounced to avoid double-tap conflicts)
+    let clickTimer = null;
     mapRef.current.on("click", (e) => {
-      if (isPathModeRef.current) {
-        const path = activePathRef.current;
-        if (path && !path.isFinished) {
-          const lngLat = [e.lngLat.lng, e.lngLat.lat];
-          const h = pathHelpersRef.current;
-          const marker = h.createPathVertex(lngLat);
-          const vertex = { lngLat, marker, path };
-          path.vertices.push(vertex);
-          h.attachVertexDragHandler(vertex);
-          h.attachFinishHandler(vertex);
-          h.updatePathLine(path);
-          h.rebuildMidpoints(path);
-          h.updateVertexStyles(path);
-        }
+      if (clickTimer) {
+        clearTimeout(clickTimer);
+        clickTimer = null;
+        return;
       }
-    });
+      clickTimer = setTimeout(() => {
+        clickTimer = null;
+        if (geocoderOpenRef.current) return;
+        if (locationControlRef.current?.isTrackingBearing()) return;
+        if (pathClickHandledRef.current) return;
 
-    // Track right-click hold to distinguish click from map rotation
-    let rightDownTime = 0;
-    mapRef.current.getCanvas().addEventListener("mousedown", (ev) => {
-      if (ev.button === 2) rightDownTime = Date.now();
-    });
-
-    // Right-click / long-press: open context menu
-    mapRef.current.on("contextmenu", (e) => {
-      e.preventDefault();
-      if (Date.now() - rightDownTime > 300) return;
-      if (geocoderOpenRef.current) return;
-      if (locationControlRef.current?.isTrackingBearing()) return;
-      if (pathClickHandledRef.current) return;
-
-      // Check if a path hit layer was clicked
-      const point = e.point;
-      for (const p of pathsRef.current) {
-        if (!p._hitLayerId) continue;
-        const features = mapRef.current.queryRenderedFeatures(point, { layers: [p._hitLayerId] });
-        if (features.length > 0) {
-          pathClickHandledRef.current = true;
-          setTimeout(() => { pathClickHandledRef.current = false; }, 400);
-          const rect = mapRef.current.getContainer().getBoundingClientRect();
-          setMapClickMenu({ lngLat: e.lngLat, x: rect.left + point.x, y: rect.top + point.y, path: p });
+        // Path mode: add vertex instead of showing context menu
+        if (isPathModeRef.current) {
+          const path = activePathRef.current;
+          if (path && !path.isFinished) {
+            const lngLat = [e.lngLat.lng, e.lngLat.lat];
+            const h = pathHelpersRef.current;
+            const marker = h.createPathVertex(lngLat);
+            const vertex = { lngLat, marker, path };
+            path.vertices.push(vertex);
+            h.attachVertexDragHandler(vertex);
+            h.attachFinishHandler(vertex);
+            h.updatePathLine(path);
+            h.rebuildMidpoints(path);
+            h.updateVertexStyles(path);
+          }
           return;
         }
-      }
 
-      const rect = mapRef.current.getContainer().getBoundingClientRect();
-      setMapClickMenu({ lngLat: e.lngLat, x: rect.left + point.x, y: rect.top + point.y });
+        // Check if a path hit layer was clicked
+        const point = e.point;
+        for (const p of pathsRef.current) {
+          if (!p._hitLayerId) continue;
+          const features = mapRef.current.queryRenderedFeatures(point, { layers: [p._hitLayerId] });
+          if (features.length > 0) {
+            pathClickHandledRef.current = true;
+            setTimeout(() => { pathClickHandledRef.current = false; }, 400);
+            const rect = mapRef.current.getContainer().getBoundingClientRect();
+            setMapClickMenu({ lngLat: e.lngLat, x: rect.left + point.x, y: rect.top + point.y, path: p });
+            return;
+          }
+        }
+
+        const rect = mapRef.current.getContainer().getBoundingClientRect();
+        setMapClickMenu({ lngLat: e.lngLat, x: rect.left + point.x, y: rect.top + point.y });
+      }, 300);
+    });
+
+    // Right-click: drag to rotate/pitch, quick click to add marker
+    let rightDrag = false;
+    let rightDragged = false;
+    let rightLastX = 0;
+    let rightLastY = 0;
+    mapRef.current.getCanvas().addEventListener("mousedown", (ev) => {
+      if (ev.button === 2) {
+        rightDrag = true;
+        rightDragged = false;
+        rightLastX = ev.clientX;
+        rightLastY = ev.clientY;
+        mapRef.current.getCanvas().style.cursor = "grab";
+      }
+    });
+    window.addEventListener("mousemove", (ev) => {
+      if (!rightDrag) return;
+      const dx = ev.clientX - rightLastX;
+      const dy = ev.clientY - rightLastY;
+      if (Math.abs(dx) > 2 || Math.abs(dy) > 2) rightDragged = true;
+      if (!rightDragged) return;
+      mapRef.current.getCanvas().style.cursor = "grabbing";
+      rightLastX = ev.clientX;
+      rightLastY = ev.clientY;
+      const bearing = mapRef.current.getBearing() - dx * 0.5;
+      const pitch = mapRef.current.getPitch() - dy * 0.5;
+      mapRef.current.setBearing(bearing);
+      mapRef.current.setPitch(Math.max(0, Math.min(85, pitch)));
+    });
+    window.addEventListener("mouseup", (ev) => {
+      if (ev.button === 2) {
+        rightDrag = false;
+        mapRef.current.getCanvas().style.cursor = "";
+      }
+    });
+    mapRef.current.on("contextmenu", (e) => {
+      e.preventDefault();
+      if (rightDragged) return;
+      if (isPathModeRef.current) return;
+      const marker = createMarkerRef.current(e.lngLat);
+      const center = mapRef.current.getCenter();
+      const zoom = mapRef.current.getZoom();
+      const bearing = mapRef.current.getBearing();
+      const pitch = mapRef.current.getPitch();
+      const ll = marker.getLngLat();
+      const params = new URLSearchParams({
+        lat: center.lat.toFixed(6),
+        long: center.lng.toFixed(6),
+        zoom: zoom.toFixed(2),
+        bearing: bearing.toFixed(1),
+        pitch: pitch.toFixed(1),
+        marker: `${ll.lat.toFixed(6)}-${ll.lng.toFixed(6)}`,
+      });
+      const url = `https://rontomap.web.app/?${params}`;
+      navigator.clipboard.writeText(url);
+      setPathToast("Marker added. Link copied.");
+      setTimeout(() => { setPathToast(null); }, 1500);
     });
 
     // Add the geolocate control to the map without adding it to the UI
@@ -1453,7 +1509,40 @@ export default function Map() {
     nav._container.classList.add("ctrl-compass-container");
 
     // Enable rotation gestures (right-click drag on desktop, two-finger rotate on mobile)
-    mapRef.current.dragRotate.enable();
+    // Disable built-in right-click drag rotate (handled manually for both right and middle button)
+    mapRef.current.dragRotate.disable();
+
+    // Middle mouse button drag: free movement (rotate + pitch)
+    let middleDrag = false;
+    let middleLastX = 0;
+    let middleLastY = 0;
+    mapRef.current.getCanvas().addEventListener("mousedown", (ev) => {
+      if (ev.button === 1) {
+        middleDrag = true;
+        middleLastX = ev.clientX;
+        middleLastY = ev.clientY;
+        mapRef.current.getCanvas().style.cursor = "grab";
+        ev.preventDefault();
+      }
+    });
+    window.addEventListener("mousemove", (ev) => {
+      if (!middleDrag) return;
+      mapRef.current.getCanvas().style.cursor = "grabbing";
+      const dx = ev.clientX - middleLastX;
+      const dy = ev.clientY - middleLastY;
+      middleLastX = ev.clientX;
+      middleLastY = ev.clientY;
+      const bearing = mapRef.current.getBearing() - dx * 0.5;
+      const pitch = mapRef.current.getPitch() - dy * 0.5;
+      mapRef.current.setBearing(bearing);
+      mapRef.current.setPitch(Math.max(0, Math.min(85, pitch)));
+    });
+    window.addEventListener("mouseup", (ev) => {
+      if (ev.button === 1) {
+        middleDrag = false;
+        mapRef.current.getCanvas().style.cursor = "";
+      }
+    });
 
     // Enable pinch-to-zoom and rotate gestures on touch devices
     mapRef.current.touchZoomRotate.enable();
@@ -1934,7 +2023,7 @@ export default function Map() {
         onDidDismiss={() => setShowTips(false)}
         header="RontoMap"
         message={
-          "Tilt the map: Use two fingers in parallel on touchscreen or right-click and drag with mouse.\n\n" +
+          "Tilt the map: Use two fingers in parallel on touchscreen or right/wheel-click and drag with mouse.\n\n" +
           "Location tracking: Click location icon for tracking, click once more to follow direction. \n\n" +
           "Full screen: Double-click to enter/exit.\n\n" +
           "Web App:\nrontomap.web.app"
