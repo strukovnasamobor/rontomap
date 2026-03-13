@@ -1378,63 +1378,6 @@ export default function Map() {
       }, 300);
     });
 
-    // Right-click: drag to rotate/pitch, quick click to add marker
-    let rightDrag = false;
-    let rightDragged = false;
-    let rightLastX = 0;
-    let rightLastY = 0;
-    mapRef.current.getCanvas().addEventListener("mousedown", (ev) => {
-      if (ev.button === 2) {
-        rightDrag = true;
-        rightDragged = false;
-        rightLastX = ev.clientX;
-        rightLastY = ev.clientY;
-        mapRef.current.getCanvas().style.cursor = "grab";
-      }
-    });
-    window.addEventListener("mousemove", (ev) => {
-      if (!rightDrag) return;
-      const dx = ev.clientX - rightLastX;
-      const dy = ev.clientY - rightLastY;
-      if (Math.abs(dx) > 2 || Math.abs(dy) > 2) rightDragged = true;
-      if (!rightDragged) return;
-      mapRef.current.getCanvas().style.cursor = "grabbing";
-      rightLastX = ev.clientX;
-      rightLastY = ev.clientY;
-      const bearing = mapRef.current.getBearing() - dx * 0.5;
-      const pitch = mapRef.current.getPitch() - dy * 0.5;
-      mapRef.current.setBearing(bearing);
-      mapRef.current.setPitch(Math.max(0, Math.min(85, pitch)));
-    });
-    window.addEventListener("mouseup", (ev) => {
-      if (ev.button === 2) {
-        rightDrag = false;
-        mapRef.current.getCanvas().style.cursor = "";
-      }
-    });
-    mapRef.current.on("contextmenu", (e) => {
-      e.preventDefault();
-      if (rightDragged) return;
-      if (isPathModeRef.current) return;
-      const marker = createMarkerRef.current(e.lngLat);
-      const center = mapRef.current.getCenter();
-      const zoom = mapRef.current.getZoom();
-      const bearing = mapRef.current.getBearing();
-      const pitch = mapRef.current.getPitch();
-      const ll = marker.getLngLat();
-      const params = new URLSearchParams({
-        lat: center.lat.toFixed(6),
-        long: center.lng.toFixed(6),
-        zoom: zoom.toFixed(2),
-        bearing: bearing.toFixed(1),
-        pitch: pitch.toFixed(1),
-        marker: `${ll.lat.toFixed(6)}-${ll.lng.toFixed(6)}`,
-      });
-      const url = `https://rontomap.web.app/?${params}`;
-      navigator.clipboard.writeText(url);
-      setPathToast("Marker added. Link copied.");
-      setTimeout(() => { setPathToast(null); }, 1500);
-    });
 
     // Add the geolocate control to the map without adding it to the UI
     mapRef.current.addControl(geolocateRef.current);
@@ -1509,8 +1452,6 @@ export default function Map() {
     nav._container.classList.add("ctrl-compass-container");
 
     // Enable rotation gestures (right-click drag on desktop, two-finger rotate on mobile)
-    // Disable built-in right-click drag rotate (handled manually for both right and middle button)
-    mapRef.current.dragRotate.disable();
 
     // Middle mouse button drag: free movement (rotate + pitch)
     let middleDrag = false;
