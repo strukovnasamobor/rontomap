@@ -1453,7 +1453,7 @@ export default function Map() {
 
     // Enable rotation gestures (right-click drag on desktop, two-finger rotate on mobile)
 
-    // Middle mouse button drag: free movement (rotate + pitch)
+    // Middle mouse button drag: rotate camera in place (no orbit)
     let middleDrag = false;
     let middleLastX = 0;
     let middleLastY = 0;
@@ -1473,10 +1473,12 @@ export default function Map() {
       const dy = ev.clientY - middleLastY;
       middleLastX = ev.clientX;
       middleLastY = ev.clientY;
-      const bearing = mapRef.current.getBearing() - dx * 0.5;
-      const pitch = mapRef.current.getPitch() - dy * 0.5;
-      mapRef.current.setBearing(bearing);
-      mapRef.current.setPitch(Math.max(0, Math.min(85, pitch)));
+      const newBearing = mapRef.current.getBearing() + dx * 0.5;
+      const newPitch = Math.max(0, Math.min(85, mapRef.current.getPitch() - dy * 0.5));
+      // Use free camera API to rotate in place without orbiting
+      const camera = mapRef.current.getFreeCameraOptions();
+      camera.setPitchBearing(newPitch, newBearing);
+      mapRef.current.setFreeCameraOptions(camera);
     });
     window.addEventListener("mouseup", (ev) => {
       if (ev.button === 1) {
