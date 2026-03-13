@@ -52,6 +52,7 @@ export default function Map() {
   const activePathRef = useRef(null);
   const pathsRef = useRef([]);
   const pathClickHandledRef = useRef(false);
+  const longPressHandledRef = useRef(false);
   const pathHelpersRef = useRef({});
   const [featuresLocked, setFeaturesLocked] = useState(false);
   const featuresLockedRef = useRef(false);
@@ -1340,6 +1341,7 @@ export default function Map() {
         if (geocoderOpenRef.current) return;
         if (locationControlRef.current?.isTrackingBearing()) return;
         if (pathClickHandledRef.current) return;
+        if (longPressHandledRef.current) { longPressHandledRef.current = false; return; }
 
         // Path mode: add vertex instead of showing context menu
         if (isPathModeRef.current) {
@@ -1378,6 +1380,58 @@ export default function Map() {
       }, 300);
     });
 
+    // Long press on mobile: add marker and copy link
+    let longPressTimer = null;
+    let longPressStartPos = null;
+    const canvas = mapRef.current.getCanvasContainer();
+    canvas.addEventListener("touchstart", (e) => {
+      if (e.touches.length !== 1) { clearTimeout(longPressTimer); longPressTimer = null; return; }
+      const touch = e.touches[0];
+      longPressStartPos = { x: touch.clientX, y: touch.clientY };
+      longPressTimer = setTimeout(() => {
+        longPressTimer = null;
+        longPressHandledRef.current = true;
+        // Suppress the map click that follows touchend
+        if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+
+        const rect = mapRef.current.getContainer().getBoundingClientRect();
+        const point = new mapboxgl.Point(
+          longPressStartPos.x - rect.left,
+          longPressStartPos.y - rect.top,
+        );
+        const lngLat = mapRef.current.unproject(point);
+        const marker = createMarkerRef.current(lngLat);
+
+        // Build link and copy to clipboard
+        const center = mapRef.current.getCenter();
+        const zoom = mapRef.current.getZoom();
+        const bearing = mapRef.current.getBearing();
+        const pitch = mapRef.current.getPitch();
+        const ll = marker.getLngLat();
+        const params = new URLSearchParams({
+          lat: center.lat.toFixed(6),
+          long: center.lng.toFixed(6),
+          zoom: zoom.toFixed(2),
+          bearing: bearing.toFixed(1),
+          pitch: pitch.toFixed(1),
+          marker: `${ll.lat.toFixed(6)}-${ll.lng.toFixed(6)}`,
+        });
+        const url = `https://rontomap.web.app/?${params}`;
+        navigator.clipboard.writeText(url);
+        setPathToast("Marker added. Link copied.");
+        setTimeout(() => { setPathToast(null); }, 1000);
+      }, 500);
+    }, { passive: true });
+    canvas.addEventListener("touchmove", (e) => {
+      if (longPressTimer && e.touches.length === 1) {
+        const touch = e.touches[0];
+        const dx = touch.clientX - longPressStartPos.x;
+        const dy = touch.clientY - longPressStartPos.y;
+        if (dx * dx + dy * dy > 100) { clearTimeout(longPressTimer); longPressTimer = null; }
+      }
+    }, { passive: true });
+    canvas.addEventListener("touchend", () => { clearTimeout(longPressTimer); longPressTimer = null; }, { passive: true });
+    canvas.addEventListener("touchcancel", () => { clearTimeout(longPressTimer); longPressTimer = null; }, { passive: true });
 
     // Add the geolocate control to the map without adding it to the UI
     mapRef.current.addControl(geolocateRef.current);
@@ -1462,13 +1516,13 @@ export default function Map() {
         middleDrag = true;
         middleLastX = ev.clientX;
         middleLastY = ev.clientY;
-        mapRef.current.getCanvas().style.cursor = "grab";
+        mapRef.current.getCanvas().style.cursor = "crosshair";
         ev.preventDefault();
       }
     });
     window.addEventListener("mousemove", (ev) => {
       if (!middleDrag) return;
-      mapRef.current.getCanvas().style.cursor = "grabbing";
+      mapRef.current.getCanvas().style.cursor = "crosshair";
       const dx = ev.clientX - middleLastX;
       const dy = ev.clientY - middleLastY;
       middleLastX = ev.clientX;
