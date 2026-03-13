@@ -53,6 +53,8 @@ export default function Map() {
   const pathsRef = useRef([]);
   const pathClickHandledRef = useRef(false);
   const pathHelpersRef = useRef({});
+  const [featuresLocked, setFeaturesLocked] = useState(false);
+  const featuresLockedRef = useRef(false);
 
   // Add or update the name label on a marker element
   const updateMarkerLabel = (marker) => {
@@ -1513,6 +1515,13 @@ export default function Map() {
           h.hideIntermediateVertices(path);
           h.updateVertexStyles(path);
         });
+        // Lock features when loaded from URL
+        featuresLockedRef.current = true;
+        setFeaturesLocked(true);
+        markersRef.current.forEach((m) => m.setDraggable(false));
+        pathsRef.current.forEach((p) => {
+          p.vertices.forEach((v) => v.marker.setDraggable(false));
+        });
       });
     }
   }, []);
@@ -1664,6 +1673,21 @@ export default function Map() {
 
   const handleFlyToHere = () => {
     mapRef.current.flyTo({ center: mapClickMenu.lngLat, duration: 500 });
+    setMapClickMenu(null);
+  };
+
+  const applyFeaturesLock = (locked) => {
+    markersRef.current.forEach((m) => m.setDraggable(!locked));
+    pathsRef.current.forEach((p) => {
+      p.vertices.forEach((v) => v.marker.setDraggable(!locked));
+    });
+  };
+
+  const handleToggleFeaturesLock = () => {
+    const newLocked = !featuresLockedRef.current;
+    featuresLockedRef.current = newLocked;
+    setFeaturesLocked(newLocked);
+    applyFeaturesLock(newLocked);
     setMapClickMenu(null);
   };
 
@@ -1980,6 +2004,7 @@ export default function Map() {
                 <button onClick={handleFlyToHere}>Fly to here</button>
                 <button onClick={handleAddMarkerFromMenu}>Add marker</button>
                 <button onClick={handleStartPathCreation}>Start path creation</button>
+                <button onClick={handleToggleFeaturesLock}>{featuresLocked ? "Unlock features" : "Lock features"}</button>
                 <button onClick={handleCopyFeatures}>Copy link to features</button>
               </>
             )}
