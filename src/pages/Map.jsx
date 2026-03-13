@@ -206,6 +206,28 @@ export default function Map() {
     }, 100);
   }, 300);
 
+  // Sync fullscreen state when exiting via Escape/F11
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      if (!document.fullscreenElement && !document.webkitFullscreenElement && !document.msFullscreenElement) {
+        setFullscreen(false);
+        const controlsContainer = document.querySelector(".mapboxgl-control-container");
+        if (controlsContainer) controlsContainer.style.display = "block";
+        if (isNativeAndroid()) {
+          StatusBar.show();
+          Fullscreen.exit();
+        }
+        setTimeout(() => { if (mapRef.current) mapRef.current.resize(); }, 100);
+      }
+    };
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    document.addEventListener("webkitfullscreenchange", onFullscreenChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", onFullscreenChange);
+      document.removeEventListener("webkitfullscreenchange", onFullscreenChange);
+    };
+  }, []);
+
   // Resize map on view enter
   useIonViewWillEnter(() => {
     console.log("useIonViewWillEnter");
@@ -1751,6 +1773,13 @@ export default function Map() {
 
     path.isFinished = false;
     activePathRef.current = path;
+    // Unlock features for editing, remember previous state
+    path._wasLocked = featuresLockedRef.current;
+    if (featuresLockedRef.current) {
+      featuresLockedRef.current = false;
+      setFeaturesLocked(false);
+      applyFeaturesLock(false);
+    }
     pathHelpersRef.current.showAllVertices(path);
     pathHelpersRef.current.rebuildMidpoints(path);
     pathHelpersRef.current.updateVertexStyles(path);
@@ -2023,6 +2052,12 @@ export default function Map() {
               path.midpoints.forEach((mp) => mp.marker.remove());
               path.midpoints = [];
               setPathToast(null);
+              if (path._wasLocked) {
+                delete path._wasLocked;
+                featuresLockedRef.current = true;
+                setFeaturesLocked(true);
+                applyFeaturesLock(true);
+              }
             }
           }}
           style={{ cursor: isPathMode ? "pointer" : undefined }}>
