@@ -128,7 +128,7 @@ export default function Map() {
   const bind = useDoubleTap((e) => {
     console.log("Event > DoubleTap");
     const controlsContainer = document.querySelector(".mapboxgl-control-container");
-    const pageContainer = document.querySelector(".map.center");
+    const fsTarget = document.documentElement;
 
     // Ignore clicks on Mapbox controls
     if (e?.target?.closest(".mapboxgl-control-container")) {
@@ -136,7 +136,7 @@ export default function Map() {
     }
 
     if (!fullscreen) {
-      if (controlsContainer && pageContainer) {
+      if (controlsContainer) {
         controlsContainer.style.display = "none";
         // Android: Hide status bar using Capacitor
         if (isNativeAndroid()) {
@@ -145,20 +145,20 @@ export default function Map() {
           Fullscreen.enter();
         }
         // Try native fullscreen
-        if (pageContainer.requestFullscreen) {
-          pageContainer.requestFullscreen();
+        if (fsTarget.requestFullscreen) {
+          fsTarget.requestFullscreen();
         }
         // @ts-ignore
-        else if (pageContainer.webkitRequestFullscreen) {
+        else if (fsTarget.webkitRequestFullscreen) {
           /* Safari */
           // @ts-ignore
-          pageContainer.webkitRequestFullscreen();
+          fsTarget.webkitRequestFullscreen();
         }
         // @ts-ignore
-        else if (pageContainer.msRequestFullscreen) {
+        else if (fsTarget.msRequestFullscreen) {
           /* IE11 */
           // @ts-ignore
-          pageContainer.msRequestFullscreen();
+          fsTarget.msRequestFullscreen();
         }
       }
     } else {
@@ -278,9 +278,10 @@ export default function Map() {
         mapRef.current.getCanvasContainer().classList.remove("marker-dragging");
         setTimeout(() => { wasDragged = false; }, 0);
       });
-      el.addEventListener("click", (e) => {
-        if (wasDragged) return;
+      el.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
         e.stopPropagation();
+        if (wasDragged) return;
         setMenuPos(computeMenuPos(marker));
         setMarkerMenu({ marker });
       });
@@ -316,14 +317,7 @@ export default function Map() {
           paint: { "line-color": "#000000", "line-width": 16, "line-opacity": 0 },
           layout: { "line-cap": "round", "line-join": "round" },
         });
-        const pathClickHandler = (e) => {
-          if (isPathModeRef.current) return;
-          pathClickHandledRef.current = true;
-          setTimeout(() => { pathClickHandledRef.current = false; }, 400);
-          const rect = map.getContainer().getBoundingClientRect();
-          setMapClickMenu({ lngLat: e.lngLat, x: rect.left + e.point.x, y: rect.top + e.point.y, path });
-        };
-        map.on("click", hitLayerId, pathClickHandler);
+        path._hitLayerId = hitLayerId;
         map.on("mouseenter", hitLayerId, () => { map.getCanvas().style.cursor = "pointer"; });
         map.on("mouseleave", hitLayerId, () => { map.getCanvas().style.cursor = ""; });
       }
@@ -498,6 +492,7 @@ export default function Map() {
       let wasDragged = false;
       vertexEntry.marker.on("dragstart", () => { wasDragged = true; });
       vertexEntry.marker.on("dragend", () => { setTimeout(() => { wasDragged = false; }, 0); });
+      // Click: remove vertex during path creation
       el.addEventListener("click", (e) => {
         e.stopPropagation();
         if (wasDragged) return;
@@ -506,20 +501,16 @@ export default function Map() {
         if (!path.isFinished && verts.length > 2) {
           const idx = verts.indexOf(vertexEntry);
           if (idx < 0) return;
-          // Shift attached markers for removed vertex
           if (path.attachedMarkers) {
-            const maxSeg = verts.length - 2; // segments before removal
+            const maxSeg = verts.length - 2;
             path.attachedMarkers = path.attachedMarkers.filter((m) => {
-              // Remove markers on segments touching this vertex that can't be remapped
               if (idx === 0 && m._segmentIndex === 0) {
                 m._segmentIndex = 0;
                 return true;
               }
               if (m._segmentIndex === idx - 1 || m._segmentIndex === idx) {
-                // Merge into the new combined segment
                 const prevIdx = Math.max(0, idx - 1);
                 const nextIdx = Math.min(idx + 1, verts.length - 1);
-                // Re-snap after removal
                 const a = verts[prevIdx].lngLat;
                 const b = verts[nextIdx].lngLat;
                 const pos = m.getLngLat();
@@ -543,7 +534,16 @@ export default function Map() {
           rebuildMidpoints(path);
           updateVertexStyles(path);
           updateAttachedMarkers(path);
-        } else if (path.isFinished && (verts[0] === vertexEntry || verts[verts.length - 1] === vertexEntry)) {
+        }
+      });
+      // Right-click / long-press: open path menu on finished path endpoints
+      el.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (wasDragged) return;
+        const path = vertexEntry.path;
+        const verts = path.vertices;
+        if (path.isFinished && (verts[0] === vertexEntry || verts[verts.length - 1] === vertexEntry)) {
           pathClickHandledRef.current = true;
           setTimeout(() => { pathClickHandledRef.current = false; }, 400);
           const map = mapRef.current;
@@ -1329,47 +1329,55 @@ export default function Map() {
       }
     });
 
-    // Add marker on click (debounced to avoid double-tap placing two markers)
-    let clickTimer = null;
+    // Click on map: add vertex during path creation
     mapRef.current.on("click", (e) => {
-      if (clickTimer) {
-        clearTimeout(clickTimer);
-        clickTimer = null;
-        return;
-      }
-      clickTimer = setTimeout(() => {
-        clickTimer = null;
-        // Don't show menu when clicking to close the search input
-        if (geocoderOpenRef.current) return;
-
-        // Don't show menu when tracking bearing
-        if (locationControlRef.current?.isTrackingBearing()) return;
-
-        // Don't show menu when a path was clicked (handled by layer-specific handler)
-        if (pathClickHandledRef.current) return;
-
-        // Path mode: add vertex instead of showing context menu
-        if (isPathModeRef.current) {
-          const path = activePathRef.current;
-          if (path && !path.isFinished) {
-            const lngLat = [e.lngLat.lng, e.lngLat.lat];
-            const h = pathHelpersRef.current;
-            const marker = h.createPathVertex(lngLat);
-            const vertex = { lngLat, marker, path };
-            path.vertices.push(vertex);
-            h.attachVertexDragHandler(vertex);
-            h.attachFinishHandler(vertex);
-            h.updatePathLine(path);
-            h.rebuildMidpoints(path);
-            h.updateVertexStyles(path);
-            return;
-          }
+      if (isPathModeRef.current) {
+        const path = activePathRef.current;
+        if (path && !path.isFinished) {
+          const lngLat = [e.lngLat.lng, e.lngLat.lat];
+          const h = pathHelpersRef.current;
+          const marker = h.createPathVertex(lngLat);
+          const vertex = { lngLat, marker, path };
+          path.vertices.push(vertex);
+          h.attachVertexDragHandler(vertex);
+          h.attachFinishHandler(vertex);
+          h.updatePathLine(path);
+          h.rebuildMidpoints(path);
+          h.updateVertexStyles(path);
         }
+      }
+    });
 
-        const point = mapRef.current.project(e.lngLat);
-        const rect = mapRef.current.getContainer().getBoundingClientRect();
-        setMapClickMenu({ lngLat: e.lngLat, x: rect.left + point.x, y: rect.top + point.y });
-      }, 300);
+    // Track right-click hold to distinguish click from map rotation
+    let rightDownTime = 0;
+    mapRef.current.getCanvas().addEventListener("mousedown", (ev) => {
+      if (ev.button === 2) rightDownTime = Date.now();
+    });
+
+    // Right-click / long-press: open context menu
+    mapRef.current.on("contextmenu", (e) => {
+      e.preventDefault();
+      if (Date.now() - rightDownTime > 300) return;
+      if (geocoderOpenRef.current) return;
+      if (locationControlRef.current?.isTrackingBearing()) return;
+      if (pathClickHandledRef.current) return;
+
+      // Check if a path hit layer was clicked
+      const point = e.point;
+      for (const p of pathsRef.current) {
+        if (!p._hitLayerId) continue;
+        const features = mapRef.current.queryRenderedFeatures(point, { layers: [p._hitLayerId] });
+        if (features.length > 0) {
+          pathClickHandledRef.current = true;
+          setTimeout(() => { pathClickHandledRef.current = false; }, 400);
+          const rect = mapRef.current.getContainer().getBoundingClientRect();
+          setMapClickMenu({ lngLat: e.lngLat, x: rect.left + point.x, y: rect.top + point.y, path: p });
+          return;
+        }
+      }
+
+      const rect = mapRef.current.getContainer().getBoundingClientRect();
+      setMapClickMenu({ lngLat: e.lngLat, x: rect.left + point.x, y: rect.top + point.y });
     });
 
     // Add the geolocate control to the map without adding it to the UI
@@ -1926,8 +1934,8 @@ export default function Map() {
         onDidDismiss={() => setShowTips(false)}
         header="RontoMap"
         message={
-          "Tilt the map: Use two fingers on touchscreen or right-click and drag with mouse.\n\n" +
-          "Location tracking: Click location icon to enable, once more to follow direction. \n\n" +
+          "Tilt the map: Use two fingers in parallel on touchscreen or right-click and drag with mouse.\n\n" +
+          "Location tracking: Click location icon for tracking, click once more to follow direction. \n\n" +
           "Full screen: Double-click to enter/exit.\n\n" +
           "Web App:\nrontomap.web.app"
         }
