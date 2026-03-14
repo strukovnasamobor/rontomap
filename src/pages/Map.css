@@ -141,6 +141,15 @@
   display: none;
 }
 
+.mapboxgl-user-location,
+.mapboxgl-user-location-accuracy-circle,
+.features-locked .mapboxgl-user-location,
+.features-locked .mapboxgl-user-location-accuracy-circle,
+.map-mousedown .mapboxgl-user-location,
+.map-mousedown .mapboxgl-user-location-accuracy-circle {
+  cursor: default !important;
+}
+
 .geolocate-track-user-bearing .mapboxgl-user-location,
 .geolocate-track-user-bearing .mapboxgl-user-location-accuracy-circle {
   transform: translate(-50%, -50%) !important;
