@@ -1,11 +1,3 @@
-@media (prefers-color-scheme: dark) {
-  :root {
-    color-scheme: light only;
-    forced-color-adjust: none;
-    -webkit-text-fill-color: initial;
-  }
-}
-
 body {
   /* Prevent history back and forward on swipe */
   overscroll-behavior-x: none; /* Prevent left/right overscroll chaining */
@@ -13,7 +5,7 @@ body {
   user-select: none; /* Prevent text selection */
   -webkit-user-select: none; /* Safari */
   -ms-user-select: none; /* IE/Edge */
-  color-scheme: light only;
+  color-scheme: none;
   font-family: sans-serif;
 }
 
