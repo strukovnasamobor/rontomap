@@ -7,12 +7,45 @@
   cursor: default !important;
 }
 
-.mapboxgl-canvas-container.mapboxgl-interactive.map-dragging {
+/* Left click on map or locked features: all-scroll */
+.map-mousedown * {
+  cursor: all-scroll !important;
+}
+
+/* Left drag on map: all-scroll */
+.map-dragging * {
+  cursor: all-scroll !important;
+}
+
+/* Right-click drag (rotation): crosshair */
+.map-right-dragging * {
+  cursor: crosshair !important;
+}
+
+/* Unlocked feature drag: grabbing (overrides all-scroll) */
+.marker-dragging * {
   cursor: grabbing !important;
 }
 
-.mapboxgl-canvas-container.mapboxgl-interactive.marker-dragging {
-  cursor: grabbing !important;
+/* Unlocked features: grab cursor (overrides all-scroll on mousedown) */
+.map-mousedown .mapboxgl-marker,
+.map-mousedown .path-vertex,
+.map-mousedown .path-midpoint {
+  cursor: grab !important;
+}
+
+/* Locked features: alias cursor */
+.features-locked .mapboxgl-marker,
+.features-locked .path-vertex,
+.features-locked .path-midpoint {
+  cursor: alias !important;
+}
+
+/* Locked features on mousedown: all-scroll (same as map) */
+.map-mousedown.features-locked .mapboxgl-marker,
+.map-mousedown.features-locked .path-vertex,
+.map-mousedown.features-locked .path-midpoint {
+  cursor: all-scroll !important;
 }
 
 .mapboxgl-ctrl-top-left,
@@ -204,7 +237,7 @@
   background: white;
   border: 2px solid #ff6f00;
   border-radius: 50%;
-  cursor: pointer;
+  cursor: grab;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
   z-index: 2;
   position: relative;
@@ -233,7 +266,7 @@
   background: white;
   border: 2px solid #ff6f00;
   border-radius: 50%;
-  cursor: pointer;
+  cursor: grab;
   opacity: 0.7;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
   z-index: 1;

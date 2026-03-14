@@ -53,6 +53,7 @@ export default function Map() {
   const pathsRef = useRef([]);
   const pathClickHandledRef = useRef(false);
   const longPressHandledRef = useRef(false);
+  const featureMenuOpenedRef = useRef(false);
   const pathHelpersRef = useRef({});
   const [featuresLocked, setFeaturesLocked] = useState(false);
   const featuresLockedRef = useRef(false);
@@ -263,25 +264,30 @@ export default function Map() {
         .setLngLat(lngLat)
         .addTo(mapRef.current);
       const el = marker.getElement();
-      el.style.cursor = "pointer";
+      el.style.cursor = "grab";
       let wasDragged = false;
       el.addEventListener("mousedown", () => {
+        if (featuresLockedRef.current) return;
         el.style.cursor = "grabbing";
-        mapRef.current.getCanvasContainer().classList.add("marker-dragging");
+        mapRef.current.getContainer().classList.add("marker-dragging");
       });
       el.addEventListener("mouseup", () => {
-        el.style.cursor = "pointer";
-        mapRef.current.getCanvasContainer().classList.remove("marker-dragging");
+        if (featuresLockedRef.current) return;
+        el.style.cursor = "grab";
+        mapRef.current.getContainer().classList.remove("marker-dragging");
       });
       marker.on("dragstart", () => { wasDragged = true; });
       marker.on("dragend", () => {
-        el.style.cursor = "pointer";
-        mapRef.current.getCanvasContainer().classList.remove("marker-dragging");
+        el.style.cursor = "grab";
+        mapRef.current.getContainer().classList.remove("marker-dragging");
         setTimeout(() => { wasDragged = false; }, 0);
       });
-      el.addEventListener("click", (e) => {
-        if (wasDragged) return;
+      el.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
         e.stopPropagation();
+        if (wasDragged) return;
+        featureMenuOpenedRef.current = true;
+        setTimeout(() => { featureMenuOpenedRef.current = false; }, 300);
         setMenuPos(computeMenuPos(marker));
         setMarkerMenu({ marker });
       });
@@ -318,7 +324,7 @@ export default function Map() {
           layout: { "line-cap": "round", "line-join": "round" },
         });
         path._hitLayerId = hitLayerId;
-        map.on("mouseenter", hitLayerId, () => { map.getCanvas().style.cursor = "pointer"; });
+        map.on("mouseenter", hitLayerId, () => { map.getCanvas().style.cursor = "alias"; });
         map.on("mouseleave", hitLayerId, () => { map.getCanvas().style.cursor = ""; });
       }
     };
@@ -410,7 +416,7 @@ export default function Map() {
     };
 
     const attachVertexDragHandler = (vertexEntry) => {
-      vertexEntry.marker.on("dragstart", () => { mapRef.current.getCanvas().style.cursor = "grabbing"; });
+      vertexEntry.marker.on("dragstart", () => { mapRef.current.getContainer().classList.add("marker-dragging"); });
       vertexEntry.marker.on("drag", () => {
         const pos = vertexEntry.marker.getLngLat();
         vertexEntry.lngLat = [pos.lng, pos.lat];
@@ -419,7 +425,7 @@ export default function Map() {
         updateAttachedMarkers(vertexEntry.path);
       });
       vertexEntry.marker.on("dragend", () => {
-        mapRef.current.getCanvas().style.cursor = "";
+        mapRef.current.getContainer().classList.remove("marker-dragging");
         const pos = vertexEntry.marker.getLngLat();
         vertexEntry.lngLat = [pos.lng, pos.lat];
         updatePathLine(vertexEntry.path);
@@ -468,7 +474,7 @@ export default function Map() {
         const mid = computeMidpoint(verts[i].lngLat, verts[i + 1].lngLat);
         const marker = createMidpointMarker(mid);
         const mpEntry = { marker, segmentIndex: i, path };
-        marker.on("dragstart", () => { mapRef.current.getCanvas().style.cursor = "grabbing"; });
+        marker.on("dragstart", () => { mapRef.current.getContainer().classList.add("marker-dragging"); });
         marker.on("drag", () => {
           const pos = marker.getLngLat();
           const coords = [];
@@ -480,7 +486,7 @@ export default function Map() {
           if (source) source.setData({ type: "Feature", geometry: { type: "LineString", coordinates: coords } });
         });
         marker.on("dragend", () => {
-          mapRef.current.getCanvas().style.cursor = "";
+          mapRef.current.getContainer().classList.remove("marker-dragging");
           promoteMidpointToVertex(mpEntry);
         });
         path.midpoints.push(mpEntry);
@@ -536,10 +542,13 @@ export default function Map() {
           updateAttachedMarkers(path);
         }
       });
-      // Click: open path menu on finished path endpoints
-      el.addEventListener("click", (e) => {
-        if (wasDragged) return;
+      // Right click: open path menu on finished path endpoints
+      el.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
         e.stopPropagation();
+        if (wasDragged) return;
+        featureMenuOpenedRef.current = true;
+        setTimeout(() => { featureMenuOpenedRef.current = false; }, 300);
         const path = vertexEntry.path;
         const verts = path.vertices;
         if (path.isFinished && (verts[0] === vertexEntry || verts[verts.length - 1] === vertexEntry)) {
@@ -1192,10 +1201,20 @@ export default function Map() {
       locationControlRef.current._lastPositionBearing = bearing;
     });
 
+    // Mouse button down: track left/right for cursor changes
+    mapRef.current.getContainer().addEventListener("mousedown", (ev) => {
+      if (ev.button === 0) mapRef.current.getContainer().classList.add("map-mousedown");
+      if (ev.button === 2) mapRef.current.getContainer().classList.add("map-right-mousedown");
+    });
+    window.addEventListener("mouseup", (ev) => {
+      if (ev.button === 0) mapRef.current.getContainer().classList.remove("map-mousedown");
+      if (ev.button === 2) { mapRef.current.getContainer().classList.remove("map-right-mousedown"); mapRef.current.getContainer().classList.remove("map-right-dragging"); }
+    });
+
     // On dragstart
     mapRef.current.on("dragstart", () => {
       console.log("Event > map > dragstart");
-      mapRef.current.getCanvasContainer().classList.add("map-dragging");
+      mapRef.current.getContainer().classList.add("map-dragging");
       if (locationControlRef.current._isMapBeingControlledProgrammatically) {
         console.log(
           "Event > map > dragstart > Ignoring dragstart event because map is being controlled programmatically.",
@@ -1215,7 +1234,7 @@ export default function Map() {
     // On dragend
     mapRef.current.on("dragend", () => {
       console.log("Event > map > dragend");
-      mapRef.current.getCanvasContainer().classList.remove("map-dragging");
+      mapRef.current.getContainer().classList.remove("map-dragging");
       if (locationControlRef.current._isMapBeingControlledProgrammatically) {
         console.log("Event > map > dragend > Ignoring dragend event because map is being controlled programmatically.");
         return;
@@ -1261,7 +1280,11 @@ export default function Map() {
     // On rotatestart
     mapRef.current.on("rotatestart", () => {
       console.log("Event > map > rotatestart");
-      mapRef.current.getCanvasContainer().classList.add("map-dragging");
+      if (mapRef.current.getContainer().classList.contains("map-right-mousedown")) {
+        mapRef.current.getContainer().classList.add("map-right-dragging");
+      } else {
+        mapRef.current.getContainer().classList.add("map-dragging");
+      }
       if (locationControlRef.current._isMapBeingControlledProgrammatically) {
         console.log(
           "Event > map > rotatestart > Ignoring rotatestart event because map is being controlled programmatically.",
@@ -1281,7 +1304,8 @@ export default function Map() {
     // On rotateend
     mapRef.current.on("rotateend", () => {
       console.log("Event > map > rotateend");
-      mapRef.current.getCanvasContainer().classList.remove("map-dragging");
+      mapRef.current.getContainer().classList.remove("map-dragging");
+      mapRef.current.getContainer().classList.remove("map-right-dragging");
       if (locationControlRef.current._isMapBeingControlledProgrammatically) {
         console.log(
           "Event > map > rotateend > Ignoring rotateend event because map is being controlled programmatically.",
@@ -1328,7 +1352,9 @@ export default function Map() {
       }
     });
 
-    // Click on map: add vertex or open menu (debounced to avoid double-tap conflicts)
+    const canvas = mapRef.current.getCanvasContainer();
+
+    // Click on map: add vertex in path mode (debounced to avoid double-tap conflicts)
     let clickTimer = null;
     mapRef.current.on("click", (e) => {
       if (clickTimer) {
@@ -1343,7 +1369,7 @@ export default function Map() {
         if (pathClickHandledRef.current) return;
         if (longPressHandledRef.current) { longPressHandledRef.current = false; return; }
 
-        // Path mode: add vertex instead of showing context menu
+        // Path mode: add vertex
         if (isPathModeRef.current) {
           const path = activePathRef.current;
           if (path && !path.isFinished) {
@@ -1358,38 +1384,64 @@ export default function Map() {
             h.rebuildMidpoints(path);
             h.updateVertexStyles(path);
           }
-          return;
         }
-
-        // Check if a path hit layer was clicked
-        const point = e.point;
-        for (const p of pathsRef.current) {
-          if (!p._hitLayerId) continue;
-          const features = mapRef.current.queryRenderedFeatures(point, { layers: [p._hitLayerId] });
-          if (features.length > 0) {
-            pathClickHandledRef.current = true;
-            setTimeout(() => { pathClickHandledRef.current = false; }, 400);
-            const rect = mapRef.current.getContainer().getBoundingClientRect();
-            setMapClickMenu({ lngLat: e.lngLat, x: rect.left + point.x, y: rect.top + point.y, path: p });
-            return;
-          }
-        }
-
-        const rect = mapRef.current.getContainer().getBoundingClientRect();
-        setMapClickMenu({ lngLat: e.lngLat, x: rect.left + point.x, y: rect.top + point.y });
       }, 300);
     });
 
-    // Long press on mobile: add marker and copy link
+    // Track right-click drag to suppress context menu after camera rotation
+    let rightMouseMoved = false;
+    let rightMouseStartPos = null;
+    canvas.addEventListener("mousedown", (e) => {
+      if (e.button === 2) {
+        rightMouseMoved = false;
+        rightMouseStartPos = { x: e.clientX, y: e.clientY };
+      }
+    });
+    window.addEventListener("mousemove", (e) => {
+      if (rightMouseStartPos) {
+        const dx = e.clientX - rightMouseStartPos.x;
+        const dy = e.clientY - rightMouseStartPos.y;
+        if (dx * dx + dy * dy > 25) rightMouseMoved = true;
+      }
+    });
+    window.addEventListener("mouseup", (e) => {
+      if (e.button === 2) rightMouseStartPos = null;
+    });
+
+    // Prevent browser default context menu on the map
+    canvas.addEventListener("contextmenu", (e) => { e.preventDefault(); });
+
+    // Right click on map: open context menu
+    mapRef.current.on("contextmenu", (e) => {
+      if (featureMenuOpenedRef.current) return;
+      if (geocoderOpenRef.current) return;
+      if (rightMouseMoved) { rightMouseMoved = false; return; }
+
+      const point = e.point;
+      for (const p of pathsRef.current) {
+        if (!p._hitLayerId) continue;
+        const features = mapRef.current.queryRenderedFeatures(point, { layers: [p._hitLayerId] });
+        if (features.length > 0) {
+          const rect = mapRef.current.getContainer().getBoundingClientRect();
+          setMapClickMenu({ lngLat: e.lngLat, x: rect.left + point.x, y: rect.top + point.y, path: p });
+          return;
+        }
+      }
+
+      const rect = mapRef.current.getContainer().getBoundingClientRect();
+      setMapClickMenu({ lngLat: e.lngLat, x: rect.left + point.x, y: rect.top + point.y });
+    });
+
+    // Long press on mobile: open context menu
     let longPressTimer = null;
     let longPressStartPos = null;
-    const canvas = mapRef.current.getCanvasContainer();
     canvas.addEventListener("touchstart", (e) => {
       if (e.touches.length !== 1) { clearTimeout(longPressTimer); longPressTimer = null; return; }
       const touch = e.touches[0];
       longPressStartPos = { x: touch.clientX, y: touch.clientY };
       longPressTimer = setTimeout(() => {
         longPressTimer = null;
+        if (featureMenuOpenedRef.current) return;
         longPressHandledRef.current = true;
         // Suppress the map click that follows touchend
         if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
@@ -1400,26 +1452,18 @@ export default function Map() {
           longPressStartPos.y - rect.top,
         );
         const lngLat = mapRef.current.unproject(point);
-        const marker = createMarkerRef.current(lngLat);
 
-        // Build link and copy to clipboard
-        const center = mapRef.current.getCenter();
-        const zoom = mapRef.current.getZoom();
-        const bearing = mapRef.current.getBearing();
-        const pitch = mapRef.current.getPitch();
-        const ll = marker.getLngLat();
-        const params = new URLSearchParams({
-          lat: center.lat.toFixed(6),
-          long: center.lng.toFixed(6),
-          zoom: zoom.toFixed(2),
-          bearing: bearing.toFixed(1),
-          pitch: pitch.toFixed(1),
-          marker: `${ll.lat.toFixed(6)}-${ll.lng.toFixed(6)}`,
-        });
-        const url = `https://rontomap.web.app/?${params}`;
-        navigator.clipboard.writeText(url);
-        setPathToast("Marker added. Link copied.");
-        setTimeout(() => { setPathToast(null); }, 1000);
+        // Check for path hits
+        for (const p of pathsRef.current) {
+          if (!p._hitLayerId) continue;
+          const features = mapRef.current.queryRenderedFeatures(point, { layers: [p._hitLayerId] });
+          if (features.length > 0) {
+            setMapClickMenu({ lngLat, x: longPressStartPos.x, y: longPressStartPos.y, path: p });
+            return;
+          }
+        }
+
+        setMapClickMenu({ lngLat, x: longPressStartPos.x, y: longPressStartPos.y });
       }, 500);
     }, { passive: true });
     canvas.addEventListener("touchmove", (e) => {
@@ -1557,6 +1601,10 @@ export default function Map() {
           m._markerName = markerName;
           updateMarkerLabel(m);
         }
+        featuresLockedRef.current = true;
+        setFeaturesLocked(true);
+        m.setDraggable(false);
+        mapRef.current.getContainer().classList.add("features-locked");
       }
     }
 
@@ -1634,6 +1682,7 @@ export default function Map() {
         // Lock features when loaded from URL
         featuresLockedRef.current = true;
         setFeaturesLocked(true);
+        mapRef.current.getContainer().classList.add("features-locked");
         markersRef.current.forEach((m) => m.setDraggable(false));
         pathsRef.current.forEach((p) => {
           p.vertices.forEach((v) => v.marker.setDraggable(false));
@@ -1793,6 +1842,11 @@ export default function Map() {
   };
 
   const applyFeaturesLock = (locked) => {
+    const container = mapRef.current?.getContainer();
+    if (container) {
+      if (locked) container.classList.add("features-locked");
+      else container.classList.remove("features-locked");
+    }
     markersRef.current.forEach((m) => m.setDraggable(!locked));
     pathsRef.current.forEach((p) => {
       p.vertices.forEach((v) => v.marker.setDraggable(!locked));
@@ -1808,7 +1862,10 @@ export default function Map() {
   };
 
   const handleAddMarkerFromMenu = () => {
-    createMarkerRef.current(mapClickMenu.lngLat);
+    const m = createMarkerRef.current(mapClickMenu.lngLat);
+    if (featuresLockedRef.current) {
+      m.setDraggable(false);
+    }
     setMapClickMenu(null);
   };
 
@@ -1835,6 +1892,14 @@ export default function Map() {
     };
     pathsRef.current.push(newPath);
     activePathRef.current = newPath;
+
+    // Unlock features for path creation, remember previous state
+    newPath._wasLocked = featuresLockedRef.current;
+    if (featuresLockedRef.current) {
+      featuresLockedRef.current = false;
+      setFeaturesLocked(false);
+      applyFeaturesLock(false);
+    }
 
     setIsPathMode(true);
     isPathModeRef.current = true;
@@ -2097,8 +2162,8 @@ export default function Map() {
       />
       {markerMenu && (
         <>
-          <div className="marker-menu-overlay" onClick={() => setMarkerMenu(null)} />
-          <div className={`marker-menu${idMapStyle === "rontomap_streets_dark" ? " marker-menu-dark" : ""}`} style={{ left: menuPos.x, top: menuPos.y }}>
+          <div className="marker-menu-overlay" onClick={() => setMarkerMenu(null)} onContextMenu={(e) => { e.preventDefault(); setMarkerMenu(null); }} />
+          <div className={`marker-menu${idMapStyle === "rontomap_streets_dark" ? " marker-menu-dark" : ""}`} style={{ left: menuPos.x, top: menuPos.y }} onContextMenu={(e) => e.preventDefault()}>
             <button onClick={handleCenterToMarker}>Fly to marker</button>
             <button onClick={handleSetName}>Set name</button>
             <button onClick={handleCopyMarker}>Copy link to marker</button>
@@ -2109,8 +2174,15 @@ export default function Map() {
       )}
       {mapClickMenu && (
         <>
-          <div className="marker-menu-overlay" onClick={() => setMapClickMenu(null)} />
-          <div className={`marker-menu${idMapStyle === "rontomap_streets_dark" ? " marker-menu-dark" : ""}`} style={{ left: mapClickMenu.x, top: mapClickMenu.y }}>
+          <div className="marker-menu-overlay" onClick={() => setMapClickMenu(null)} onContextMenu={(e) => {
+            e.preventDefault();
+            if (!mapRef.current) { setMapClickMenu(null); return; }
+            const rect = mapRef.current.getContainer().getBoundingClientRect();
+            const point = new mapboxgl.Point(e.clientX - rect.left, e.clientY - rect.top);
+            const lngLat = mapRef.current.unproject(point);
+            setMapClickMenu({ lngLat, x: e.clientX, y: e.clientY });
+          }} />
+          <div className={`marker-menu${idMapStyle === "rontomap_streets_dark" ? " marker-menu-dark" : ""}`} style={{ left: mapClickMenu.x, top: mapClickMenu.y }} onContextMenu={(e) => e.preventDefault()}>
             {mapClickMenu.path ? (
               <>
                 <button onClick={handleFlyToPath}>Fly to path</button>
