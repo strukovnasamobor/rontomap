@@ -163,6 +163,23 @@
   cursor: pointer;
 }
 
+/* Glow effect on selected features */
+.feature-glow {
+  filter: drop-shadow(0 0 6px rgba(255, 111, 0, 0.8)) drop-shadow(0 0 3px rgba(255, 111, 0, 0.6)) !important;
+}
+
+/* Temporary dot shown at right-click / long-tap location */
+.context-dot {
+  width: 12px;
+  height: 12px;
+  background: #ff6f00;
+  border: 2px solid white;
+  border-radius: 50%;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+  z-index: 100;
+}
+
 .marker-menu-overlay {
   position: fixed;
   inset: 0;

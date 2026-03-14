@@ -46,6 +46,7 @@ export default function Map() {
   const createMarkerRef = useRef(null);
   const geocoderOpenRef = useRef(false);
   const [nameAlert, setNameAlert] = useState(false);
+  const [deleteAllAlert, setDeleteAllAlert] = useState(false);
   const [isPathMode, setIsPathMode] = useState(false);
   const [pathToast, setPathToast] = useState(null);
   const isPathModeRef = useRef(false);
@@ -54,6 +55,7 @@ export default function Map() {
   const pathClickHandledRef = useRef(false);
   const longPressHandledRef = useRef(false);
   const featureMenuOpenedRef = useRef(false);
+  const contextDotRef = useRef(null);
   const pathHelpersRef = useRef({});
   const [featuresLocked, setFeaturesLocked] = useState(false);
   const featuresLockedRef = useRef(false);
@@ -558,7 +560,7 @@ export default function Map() {
           const pos = vertexEntry.marker.getLngLat();
           const point = map.project(pos);
           const rect = map.getContainer().getBoundingClientRect();
-          setMapClickMenu({ lngLat: pos, x: rect.left + point.x, y: rect.top + point.y, path });
+          setMapClickMenu({ lngLat: pos, x: rect.left + point.x, y: rect.top + point.y, path, fromVertex: vertexEntry.marker });
         }
       });
     };
@@ -1369,21 +1371,35 @@ export default function Map() {
         if (pathClickHandledRef.current) return;
         if (longPressHandledRef.current) { longPressHandledRef.current = false; return; }
 
-        // Path mode: add vertex
+        // Path mode: add vertex or start new path
         if (isPathModeRef.current) {
-          const path = activePathRef.current;
-          if (path && !path.isFinished) {
-            const lngLat = [e.lngLat.lng, e.lngLat.lat];
-            const h = pathHelpersRef.current;
-            const marker = h.createPathVertex(lngLat);
-            const vertex = { lngLat, marker, path };
-            path.vertices.push(vertex);
-            h.attachVertexDragHandler(vertex);
-            h.attachFinishHandler(vertex);
-            h.updatePathLine(path);
-            h.rebuildMidpoints(path);
-            h.updateVertexStyles(path);
+          let path = activePathRef.current;
+          if (!path || path.isFinished) {
+            // Start a new path at the click location
+            const id = `path-${Date.now()}`;
+            const newPath = {
+              id,
+              sourceId: `path-line-source-${id}`,
+              layerId: `path-line-layer-${id}`,
+              vertices: [],
+              midpoints: [],
+              isFinished: false,
+            };
+            pathsRef.current.push(newPath);
+            activePathRef.current = newPath;
+            pathHelpersRef.current.ensurePathLayer(newPath);
+            path = newPath;
           }
+          const lngLat = [e.lngLat.lng, e.lngLat.lat];
+          const h = pathHelpersRef.current;
+          const marker = h.createPathVertex(lngLat);
+          const vertex = { lngLat, marker, path };
+          path.vertices.push(vertex);
+          h.attachVertexDragHandler(vertex);
+          h.attachFinishHandler(vertex);
+          h.updatePathLine(path);
+          h.rebuildMidpoints(path);
+          h.updateVertexStyles(path);
         }
       }, 300);
     });
@@ -1712,11 +1728,75 @@ export default function Map() {
         pathHelpersRef.current.ensurePathLayer(path);
         pathHelpersRef.current.updatePathLine(path);
       });
+      if (featuresLockedRef.current) {
+        applyFeaturesLock(true);
+      }
     });
   }, [mapStyle]);
 
   // Keep isPathModeRef in sync with state
   useEffect(() => { isPathModeRef.current = isPathMode; }, [isPathMode]);
+
+  // Show/remove temporary dot or glow at context menu location
+  useEffect(() => {
+    if (!mapClickMenu || !mapRef.current) return;
+    if (mapClickMenu.path) {
+      // Glow the entire path: line, vertices, midpoints, attached markers
+      const path = mapClickMenu.path;
+      const map = mapRef.current;
+      const layerId = path.layerId;
+      if (map.getLayer(layerId)) {
+        map.setPaintProperty(layerId, "line-width", 6);
+        map.setPaintProperty(layerId, "line-opacity", 0.8);
+      }
+      const glowEls = [];
+      path.vertices.forEach((v) => {
+        const el = v.marker.getElement();
+        el.classList.add("feature-glow");
+        glowEls.push(el);
+      });
+      path.midpoints.forEach((mp) => {
+        const el = mp.marker.getElement();
+        el.classList.add("feature-glow");
+        glowEls.push(el);
+      });
+      if (path.attachedMarkers) {
+        path.attachedMarkers.forEach((m) => {
+          const el = m.getElement();
+          el.classList.add("feature-glow");
+          glowEls.push(el);
+        });
+      }
+      return () => {
+        if (map.getLayer(layerId)) {
+          map.setPaintProperty(layerId, "line-width", 3);
+          map.setPaintProperty(layerId, "line-opacity", 1);
+        }
+        glowEls.forEach((el) => el.classList.remove("feature-glow"));
+      };
+    }
+    // Plain map click — show dot
+    const el = document.createElement("div");
+    el.className = "context-dot";
+    const dot = new mapboxgl.Marker({ element: el, anchor: "center" })
+      .setLngLat(mapClickMenu.lngLat)
+      .addTo(mapRef.current);
+    contextDotRef.current = dot;
+    return () => {
+      if (contextDotRef.current) {
+        contextDotRef.current.remove();
+        contextDotRef.current = null;
+      }
+    };
+  }, [mapClickMenu]);
+
+  // Glow marker when marker menu is open
+  useEffect(() => {
+    if (!markerMenu) return;
+    const el = markerMenu.marker.getElement();
+    el.classList.add("feature-glow");
+    return () => el.classList.remove("feature-glow");
+  }, [markerMenu]);
 
   // Reposition marker menu on window resize or map move
   useEffect(() => {
@@ -1812,6 +1892,38 @@ export default function Map() {
     setTimeout(() => { setPathToast(null); }, 1000);
   };
 
+  const handleDeleteAllFeatures = () => {
+    setMapClickMenu(null);
+    setDeleteAllAlert(true);
+  };
+
+  const confirmDeleteAllFeatures = () => {
+    const map = mapRef.current;
+
+    // Remove all paths
+    pathsRef.current.forEach((path) => {
+      const hitLayerId = `${path.layerId}-hit`;
+      if (map.getLayer(hitLayerId)) map.removeLayer(hitLayerId);
+      if (map.getLayer(path.layerId)) map.removeLayer(path.layerId);
+      if (map.getSource(path.sourceId)) map.removeSource(path.sourceId);
+      path.vertices.forEach((v) => v.marker.remove());
+      path.midpoints.forEach((mp) => mp.marker.remove());
+      if (path.attachedMarkers) {
+        path.attachedMarkers.forEach((m) => m.remove());
+      }
+    });
+    pathsRef.current = [];
+
+    // Remove all markers
+    markersRef.current.forEach((m) => m.remove());
+    markersRef.current = [];
+
+    // If in path mode, stay in it so the next click starts a new path
+    if (isPathModeRef.current) {
+      activePathRef.current = null;
+    }
+  };
+
   const handleDeleteMarker = () => {
     markerMenu.marker.remove();
     markersRef.current = markersRef.current.filter((m) => m !== markerMenu.marker);
@@ -1850,6 +1962,7 @@ export default function Map() {
     markersRef.current.forEach((m) => m.setDraggable(!locked));
     pathsRef.current.forEach((p) => {
       p.vertices.forEach((v) => v.marker.setDraggable(!locked));
+      if (p.attachedMarkers) p.attachedMarkers.forEach((m) => m.setDraggable(!locked));
     });
   };
 
@@ -1985,9 +2098,8 @@ export default function Map() {
     pathsRef.current = pathsRef.current.filter((p) => p !== path);
 
     if (activePathRef.current === path) {
+      // Stay in path mode so the next click starts a new path
       activePathRef.current = null;
-      setIsPathMode(false);
-      isPathModeRef.current = false;
     }
   };
 
@@ -2047,6 +2159,7 @@ export default function Map() {
       const newPos = h.getAttachedMarkerPos(marker._attachedPath, marker);
       marker.setLngLat(newPos);
     });
+    if (featuresLockedRef.current) marker.setDraggable(false);
     if (!path.attachedMarkers) path.attachedMarkers = [];
     path.attachedMarkers.push(marker);
   };
@@ -2160,6 +2273,16 @@ export default function Map() {
           },
         ]}
       />
+      <IonAlert
+        isOpen={deleteAllAlert}
+        onDidDismiss={() => setDeleteAllAlert(false)}
+        header="Delete all features"
+        message="Are you sure you want to delete all markers and paths?"
+        buttons={[
+          { text: "Cancel", role: "cancel" },
+          { text: "Delete", handler: confirmDeleteAllFeatures },
+        ]}
+      />
       {markerMenu && (
         <>
           <div className="marker-menu-overlay" onClick={() => setMarkerMenu(null)} onContextMenu={(e) => { e.preventDefault(); setMarkerMenu(null); }} />
@@ -2200,6 +2323,7 @@ export default function Map() {
                 <button onClick={handleAddMarkerFromMenu}>Add marker</button>
                 <button onClick={handleStartPathCreation}>Start path creation</button>
                 <button onClick={handleToggleFeaturesLock}>{featuresLocked ? "Unlock features" : "Lock features"}</button>
+                <button onClick={handleDeleteAllFeatures}>Delete all features</button>
                 <button onClick={handleCopyFeatures}>Copy link to features</button>
               </>
             )}
