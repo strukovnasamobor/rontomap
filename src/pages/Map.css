@@ -53,21 +53,21 @@
 }
 
 /* Unlocked features: grab cursor (overrides all-scroll on mousedown) */
-.map-mousedown:not(.path-editing) .mapboxgl-marker,
+.map-mousedown:not(.path-editing) .mapboxgl-marker:not(.mapboxgl-user-location),
 .map-mousedown:not(.path-editing) .path-vertex,
 .map-mousedown:not(.path-editing) .path-midpoint {
   cursor: grab !important;
 }
 
 /* Locked features: alias cursor */
-.features-locked:not(.path-editing) .mapboxgl-marker:not(.context-dot),
+.features-locked:not(.path-editing) .mapboxgl-marker:not(.context-dot):not(.mapboxgl-user-location),
 .features-locked:not(.path-editing) .path-vertex,
 .features-locked:not(.path-editing) .path-midpoint {
   cursor: alias !important;
 }
 
 /* Locked features on mousedown: all-scroll (same as map) */
-.map-mousedown.features-locked:not(.path-editing) .mapboxgl-marker,
+.map-mousedown.features-locked:not(.path-editing) .mapboxgl-marker:not(.mapboxgl-user-location),
 .map-mousedown.features-locked:not(.path-editing) .path-vertex,
 .map-mousedown.features-locked:not(.path-editing) .path-midpoint {
   cursor: all-scroll !important;

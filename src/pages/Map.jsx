@@ -347,6 +347,26 @@ export default function Map() {
         path._hitLayerId = hitLayerId;
         map.on("mouseenter", hitLayerId, () => { if (!isPathModeRef.current) map.getCanvas().style.cursor = "alias"; });
         map.on("mouseleave", hitLayerId, () => { map.getCanvas().style.cursor = ""; });
+        const arrowLayerId = `${path.layerId}-arrows`;
+        map.addLayer({
+          id: arrowLayerId,
+          type: "symbol",
+          source: path.sourceId,
+          layout: {
+            "symbol-placement": "line",
+            "symbol-spacing": 50,
+            "text-field": "▶",
+            "text-size": 22,
+            "text-rotation-alignment": "map",
+            "text-keep-upright": false,
+            "text-allow-overlap": false,
+          },
+          paint: {
+            "text-color": ["get", "color"],
+            "text-emissive-strength": 1,
+          },
+        });
+        path._arrowLayerId = arrowLayerId;
       }
     };
 
@@ -719,6 +739,8 @@ export default function Map() {
             // Last vertex removed — clean up the path
             const map = mapRef.current;
             const hitLayerId = `${path.layerId}-hit`;
+            const arrowLayerId = `${path.layerId}-arrows`;
+            if (map.getLayer(arrowLayerId)) map.removeLayer(arrowLayerId);
             if (map.getLayer(hitLayerId)) map.removeLayer(hitLayerId);
             if (map.getLayer(path.layerId)) map.removeLayer(path.layerId);
             if (map.getSource(path.sourceId)) map.removeSource(path.sourceId);
@@ -2159,6 +2181,8 @@ export default function Map() {
     // Remove all paths
     pathsRef.current.forEach((path) => {
       const hitLayerId = `${path.layerId}-hit`;
+      const arrowLayerId = `${path.layerId}-arrows`;
+      if (map.getLayer(arrowLayerId)) map.removeLayer(arrowLayerId);
       if (map.getLayer(hitLayerId)) map.removeLayer(hitLayerId);
       if (map.getLayer(path.layerId)) map.removeLayer(path.layerId);
       if (map.getSource(path.sourceId)) map.removeSource(path.sourceId);
@@ -2354,6 +2378,8 @@ export default function Map() {
     if (!path) return;
     const map = mapRef.current;
     const hitLayerId = `${path.layerId}-hit`;
+    const arrowLayerId = `${path.layerId}-arrows`;
+    if (map.getLayer(arrowLayerId)) map.removeLayer(arrowLayerId);
     if (map.getLayer(hitLayerId)) map.removeLayer(hitLayerId);
     if (map.getLayer(path.layerId)) map.removeLayer(path.layerId);
     if (map.getSource(path.sourceId)) map.removeSource(path.sourceId);
