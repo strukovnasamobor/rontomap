@@ -335,7 +335,8 @@ export default function Map() {
       const source = mapRef.current?.getSource(path.sourceId);
       if (!source) return;
       const coords = path.vertices.map((v) => v.lngLat);
-      source.setData({ type: "Feature", geometry: { type: "LineString", coordinates: coords } });
+      const lineCoords = coords.length >= 2 ? coords : [];
+      source.setData({ type: "Feature", geometry: { type: "LineString", coordinates: lineCoords } });
     };
 
     const computeMidpoint = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
@@ -491,6 +492,22 @@ export default function Map() {
           mapRef.current.getContainer().classList.remove("marker-dragging");
           promoteMidpointToVertex(mpEntry);
         });
+        const midEl = marker.getElement();
+        midEl.addEventListener("contextmenu", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (!path.isFinished) {
+            featureMenuOpenedRef.current = true;
+            setTimeout(() => { featureMenuOpenedRef.current = false; }, 300);
+            pathClickHandledRef.current = true;
+            setTimeout(() => { pathClickHandledRef.current = false; }, 400);
+            const map = mapRef.current;
+            const pos = marker.getLngLat();
+            const point = map.project(pos);
+            const rect = map.getContainer().getBoundingClientRect();
+            setMapClickMenu({ lngLat: pos, x: rect.left + point.x, y: rect.top + point.y, path });
+          }
+        });
         path.midpoints.push(mpEntry);
       }
     };
@@ -506,10 +523,10 @@ export default function Map() {
         if (wasDragged) return;
         const path = vertexEntry.path;
         const verts = path.vertices;
-        if (!path.isFinished && verts.length > 2) {
+        if (!path.isFinished) {
           const idx = verts.indexOf(vertexEntry);
           if (idx < 0) return;
-          if (path.attachedMarkers) {
+          if (path.attachedMarkers && verts.length > 1) {
             const maxSeg = verts.length - 2;
             path.attachedMarkers = path.attachedMarkers.filter((m) => {
               if (idx === 0 && m._segmentIndex === 0) {
@@ -538,10 +555,35 @@ export default function Map() {
           }
           vertexEntry.marker.remove();
           verts.splice(idx, 1);
-          updatePathLine(path);
-          rebuildMidpoints(path);
-          updateVertexStyles(path);
-          updateAttachedMarkers(path);
+          if (verts.length === 0) {
+            // Last vertex removed — clean up the path
+            const map = mapRef.current;
+            const hitLayerId = `${path.layerId}-hit`;
+            if (map.getLayer(hitLayerId)) map.removeLayer(hitLayerId);
+            if (map.getLayer(path.layerId)) map.removeLayer(path.layerId);
+            if (map.getSource(path.sourceId)) map.removeSource(path.sourceId);
+            path.midpoints.forEach((mp) => mp.marker.remove());
+            path.midpoints = [];
+            if (path.attachedMarkers) {
+              path.attachedMarkers.forEach((m) => {
+                m.remove();
+                markersRef.current = markersRef.current.filter((mk) => mk !== m);
+              });
+            }
+            pathsRef.current = pathsRef.current.filter((p) => p !== path);
+            activePathRef.current = null;
+            setPathToast("Click on map to add path points.");
+          } else {
+            updatePathLine(path);
+            rebuildMidpoints(path);
+            updateVertexStyles(path);
+            updateAttachedMarkers(path);
+            if (verts.length < 2) {
+              setPathToast("Click on map to add path points.");
+            } else {
+              setPathToast("Click here to finish path.");
+            }
+          }
         }
       });
       // Right click: open path menu on finished path endpoints
@@ -561,6 +603,14 @@ export default function Map() {
           const point = map.project(pos);
           const rect = map.getContainer().getBoundingClientRect();
           setMapClickMenu({ lngLat: pos, x: rect.left + point.x, y: rect.top + point.y, path, fromVertex: vertexEntry.marker });
+        } else if (!path.isFinished) {
+          pathClickHandledRef.current = true;
+          setTimeout(() => { pathClickHandledRef.current = false; }, 400);
+          const map = mapRef.current;
+          const pos = vertexEntry.marker.getLngLat();
+          const point = map.project(pos);
+          const rect = map.getContainer().getBoundingClientRect();
+          setMapClickMenu({ lngLat: pos, x: rect.left + point.x, y: rect.top + point.y, path });
         }
       });
     };
@@ -1400,6 +1450,9 @@ export default function Map() {
           h.updatePathLine(path);
           h.rebuildMidpoints(path);
           h.updateVertexStyles(path);
+          if (path.vertices.length >= 2) {
+            setPathToast("Click here to finish path.");
+          }
         }
       }, 300);
     });
@@ -1461,6 +1514,9 @@ export default function Map() {
         longPressHandledRef.current = true;
         // Suppress the map click that follows touchend
         if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+        // Stop map from dragging after long press opens menu
+        mapRef.current.dragPan.disable();
+        setTimeout(() => { mapRef.current.dragPan.enable(); }, 0);
 
         const rect = mapRef.current.getContainer().getBoundingClientRect();
         const point = new mapboxgl.Point(
@@ -1768,6 +1824,7 @@ export default function Map() {
         });
       }
       return () => {
+        longPressHandledRef.current = false;
         if (map.getLayer(layerId)) {
           map.setPaintProperty(layerId, "line-width", 3);
           map.setPaintProperty(layerId, "line-opacity", 1);
@@ -1783,6 +1840,7 @@ export default function Map() {
       .addTo(mapRef.current);
     contextDotRef.current = dot;
     return () => {
+      longPressHandledRef.current = false;
       if (contextDotRef.current) {
         contextDotRef.current.remove();
         contextDotRef.current = null;
@@ -2028,7 +2086,7 @@ export default function Map() {
     h.attachFinishHandler(vertex);
     h.updatePathLine(newPath);
     h.updateVertexStyles(newPath);
-    setPathToast("Click here to finish the path.");
+    setPathToast("Click on map to add path points.");
   };
 
   const handleEditPath = () => {
@@ -2057,7 +2115,7 @@ export default function Map() {
     pathHelpersRef.current.updateVertexStyles(path);
     setIsPathMode(true);
     isPathModeRef.current = true;
-    setPathToast("Click here to finish the path.");
+    setPathToast(path.vertices.length >= 2 ? "Click here to finish path." : "Click on map to add path points.");
   };
 
   const handleReversePath = () => {
@@ -2075,6 +2133,7 @@ export default function Map() {
     pathHelpersRef.current.updatePathLine(path);
     pathHelpersRef.current.updateVertexStyles(path);
   };
+
 
   const handleDeletePath = () => {
     const path = mapClickMenu.path;
@@ -2100,6 +2159,7 @@ export default function Map() {
     if (activePathRef.current === path) {
       // Stay in path mode so the next click starts a new path
       activePathRef.current = null;
+      setPathToast("Click on map to add path points.");
     }
   };
 
@@ -2297,7 +2357,7 @@ export default function Map() {
       )}
       {mapClickMenu && (
         <>
-          <div className="marker-menu-overlay" onClick={() => setMapClickMenu(null)} onContextMenu={(e) => {
+          <div className="marker-menu-overlay" onClick={() => { longPressHandledRef.current = false; setMapClickMenu(null); }} onContextMenu={(e) => {
             e.preventDefault();
             if (!mapRef.current) { setMapClickMenu(null); return; }
             const rect = mapRef.current.getContainer().getBoundingClientRect();

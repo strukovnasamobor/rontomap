@@ -35,7 +35,7 @@
 }
 
 /* Locked features: alias cursor */
-.features-locked .mapboxgl-marker,
+.features-locked .mapboxgl-marker:not(.context-dot),
 .features-locked .path-vertex,
 .features-locked .path-midpoint {
   cursor: alias !important;
@@ -185,7 +185,7 @@
   border: 2px solid white;
   border-radius: 50%;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
-  pointer-events: none;
+  cursor: default;
   z-index: 100;
 }
 
@@ -201,8 +201,9 @@
   background: white;
   border-radius: 8px;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.2);
-  overflow: hidden;
+  overflow-y: auto;
   min-width: 160px;
+  max-height: calc(100dvh - 40px);
   transform: translate(-50%, 8px);
 }
 
