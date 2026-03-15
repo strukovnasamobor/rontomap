@@ -722,6 +722,7 @@ export default function Map() {
       respectPrefersReducedMotion: false,
       container: mapContainerRef.current,
       style: mapStyle,
+      attributionControl: false,
       doubleClickZoom: false,
       // @ts-ignore
       center: center,
@@ -1679,6 +1680,8 @@ export default function Map() {
       visualizePitch: true,
     });
     mapRef.current.addControl(nav, "top-right");
+    mapRef.current.addControl(new mapboxgl.ScaleControl({ maxWidth: 100 }), "bottom-right");
+    mapRef.current.addControl(new mapboxgl.AttributionControl({ compact: true }));
 
     // Add custom className to the compass container
     nav._container.classList.add("ctrl-compass-container");
@@ -2460,27 +2463,29 @@ export default function Map() {
         </>
       )}
       {pathToast && (
-        <div className={`path-toast${idMapStyle === "rontomap_streets_dark" ? " path-toast-dark" : ""}`}
-          onClick={() => {
-            const path = activePathRef.current;
-            if (path && !path.isFinished && path.vertices.length > 1) {
-              path.isFinished = true;
-              isPathModeRef.current = false;
-              setIsPathMode(false);
-              pathHelpersRef.current.hideIntermediateVertices(path);
-              path.midpoints.forEach((mp) => mp.marker.remove());
-              path.midpoints = [];
-              setPathToast(null);
-              if (path._wasLocked) {
-                delete path._wasLocked;
-                featuresLockedRef.current = true;
-                setFeaturesLocked(true);
-                applyFeaturesLock(true);
+        <div className={`path-toast${idMapStyle === "rontomap_streets_dark" ? " path-toast-dark" : ""}`}>
+          <span
+            onClick={() => {
+              const path = activePathRef.current;
+              if (path && !path.isFinished && path.vertices.length > 1) {
+                path.isFinished = true;
+                isPathModeRef.current = false;
+                setIsPathMode(false);
+                pathHelpersRef.current.hideIntermediateVertices(path);
+                path.midpoints.forEach((mp) => mp.marker.remove());
+                path.midpoints = [];
+                setPathToast(null);
+                if (path._wasLocked) {
+                  delete path._wasLocked;
+                  featuresLockedRef.current = true;
+                  setFeaturesLocked(true);
+                  applyFeaturesLock(true);
+                }
               }
-            }
-          }}
-          style={{ cursor: isPathMode ? "pointer" : undefined }}>
-          {pathToast}
+            }}
+            style={{ cursor: isPathMode ? "pointer" : undefined }}>
+            {pathToast}
+          </span>
         </div>
       )}
       {isPathMode && (
@@ -2503,7 +2508,7 @@ export default function Map() {
                 }
               }}
             >
-              {mode === null ? "No snap" : mode === "foot" ? "Foot" : mode === "bike" ? "Bike" : "Car"}
+              {mode === null ? "Free" : mode === "foot" ? "Foot" : mode === "bike" ? "Bike" : "Car"}
             </button>
           ))}
         </div>

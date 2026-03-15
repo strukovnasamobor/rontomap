@@ -65,6 +65,16 @@
   right: env(safe-area-inset-right) !important;
 }
 
+.mapboxgl-ctrl-bottom-right {
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: flex-end;
+}
+
+.mapboxgl-ctrl-scale {
+  margin-right: 0px !important;
+}
+
 .mapboxgl-ctrl-group button + button {
   border-top: none !important;
 }
@@ -360,16 +370,14 @@
 .snap-toggle {
   position: fixed;
   bottom: env(safe-area-inset-bottom);
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  gap: 4px;
-  background: white;
-  padding: 4px;
-  border-radius: 6px;
-  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.15);
   z-index: 1000;
-  pointer-events: auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 2px;
+  background: rgba(0, 0, 0, 0.08);
+  padding: 3px;
+  border-radius: 6px;
 }
 
 .snap-toggle button {
@@ -393,7 +401,7 @@
 }
 
 .snap-toggle-dark {
-  background: black;
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .snap-toggle-dark button {
@@ -401,7 +409,7 @@
 }
 
 .snap-toggle-dark button:hover {
-  background: black;
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .snap-toggle-dark button.active {
