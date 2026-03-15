@@ -2,7 +2,7 @@ import "./Map.css";
 import PageFixedLayout from "../components/PageFixedLayout";
 import Fullscreen from "../plugins/Fullscreen";
 import { useIonViewWillEnter, IonAlert } from "@ionic/react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useDoubleTap } from "use-double-tap";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
@@ -49,6 +49,7 @@ export default function Map() {
   const [deleteAllAlert, setDeleteAllAlert] = useState(false);
   const [isPathMode, setIsPathMode] = useState(false);
   const [pathToast, setPathToast] = useState(null);
+  const [snapMode, setSnapMode] = useState(null);
   const isPathModeRef = useRef(false);
   const activePathRef = useRef(null);
   const pathsRef = useRef([]);
@@ -59,6 +60,19 @@ export default function Map() {
   const pathHelpersRef = useRef({});
   const [featuresLocked, setFeaturesLocked] = useState(false);
   const featuresLockedRef = useRef(false);
+
+  const menuRefCallback = useCallback((el) => {
+    if (!el) return;
+    // Reset so the element can expand to its natural size before measuring
+    el.style.maxHeight = "";
+    const rect = el.getBoundingClientRect();
+    const vh = window.innerHeight;
+    const PAD = 8;
+    const spaceBelow = vh - rect.top - PAD;
+    if (rect.height > spaceBelow) {
+      el.style.maxHeight = `${Math.max(spaceBelow, 80)}px`;
+    }
+  }, []);
 
   // Add or update the name label on a marker element
   const updateMarkerLabel = (marker) => {
@@ -334,9 +348,36 @@ export default function Map() {
     const updatePathLine = (path) => {
       const source = mapRef.current?.getSource(path.sourceId);
       if (!source) return;
-      const coords = path.vertices.map((v) => v.lngLat);
+      const coords = path.roadSnap && path.snappedCoords
+        ? [path.vertices[0].lngLat, ...path.snappedCoords, path.vertices[path.vertices.length - 1].lngLat]
+        : path.vertices.map((v) => v.lngLat);
       const lineCoords = coords.length >= 2 ? coords : [];
       source.setData({ type: "Feature", geometry: { type: "LineString", coordinates: lineCoords } });
+    };
+
+    const SNAP_PROFILES = { foot: "walking", bike: "cycling", car: "driving" };
+    const fetchRoadSnap = async (path) => {
+      if (!path.roadSnap || path.vertices.length < 2) {
+        path.snappedCoords = null;
+        updatePathLine(path);
+        return;
+      }
+      const profile = SNAP_PROFILES[path.roadSnap] || "driving";
+      const coords = path.vertices.map((v) => v.lngLat.join(",")).join(";");
+      try {
+        const res = await fetch(
+          `https://api.mapbox.com/directions/v5/mapbox/${profile}/${coords}?geometries=geojson&overview=full&access_token=${mapboxgl.accessToken}`
+        );
+        const data = await res.json();
+        if (data.routes && data.routes.length > 0) {
+          path.snappedCoords = data.routes[0].geometry.coordinates;
+        } else {
+          path.snappedCoords = null;
+        }
+      } catch {
+        path.snappedCoords = null;
+      }
+      updatePathLine(path);
     };
 
     const computeMidpoint = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
@@ -434,6 +475,7 @@ export default function Map() {
         updatePathLine(vertexEntry.path);
         updateAttachedMarkers(vertexEntry.path);
         if (!vertexEntry.path.isFinished) rebuildMidpoints(vertexEntry.path);
+        if (vertexEntry.path.roadSnap) fetchRoadSnap(vertexEntry.path);
       });
     };
 
@@ -467,6 +509,7 @@ export default function Map() {
       rebuildMidpoints(path);
       updateVertexStyles(path);
       updateAttachedMarkers(path);
+      if (path.roadSnap) fetchRoadSnap(path);
     };
 
     const rebuildMidpoints = (path) => {
@@ -578,6 +621,7 @@ export default function Map() {
             rebuildMidpoints(path);
             updateVertexStyles(path);
             updateAttachedMarkers(path);
+            if (path.roadSnap) fetchRoadSnap(path);
             if (verts.length < 2) {
               setPathToast("Click on map to add path points.");
             } else {
@@ -622,7 +666,7 @@ export default function Map() {
     };
 
     pathHelpersRef.current = {
-      ensurePathLayer, updatePathLine, createPathVertex, rebuildMidpoints,
+      ensurePathLayer, updatePathLine, fetchRoadSnap, createPathVertex, rebuildMidpoints,
       attachVertexDragHandler, attachFinishHandler, updateVertexStyles,
       hideIntermediateVertices, showAllVertices, snapToPath, updateAttachedMarkers, getAttachedMarkerPos,
     };
@@ -1450,6 +1494,7 @@ export default function Map() {
           h.updatePathLine(path);
           h.rebuildMidpoints(path);
           h.updateVertexStyles(path);
+          if (path.roadSnap) h.fetchRoadSnap(path);
           if (path.vertices.length >= 2) {
             setPathToast("Click here to finish path.");
           }
@@ -1723,6 +1768,10 @@ export default function Map() {
             updateMarkerLabel(path.vertices[path.vertices.length - 1].marker);
           }
           if (entry.savedView) path.savedView = entry.savedView;
+          if (entry.roadSnap) {
+            path.roadSnap = entry.roadSnap === true ? "car" : entry.roadSnap;
+            h.fetchRoadSnap(path);
+          }
           if (entry.attachedMarkers) {
             path.attachedMarkers = [];
             entry.attachedMarkers.forEach((am) => {
@@ -1921,6 +1970,7 @@ export default function Map() {
       if (startName) pathData.startName = startName;
       if (endName) pathData.endName = endName;
       if (p.savedView) pathData.savedView = p.savedView;
+      if (p.roadSnap) pathData.roadSnap = p.roadSnap;
       if (p.attachedMarkers && p.attachedMarkers.length > 0) {
         pathData.attachedMarkers = p.attachedMarkers.map((m) => {
           const am = { segmentIndex: m._segmentIndex, t: m._t };
@@ -2074,6 +2124,7 @@ export default function Map() {
 
     setIsPathMode(true);
     isPathModeRef.current = true;
+    setSnapMode(null);
 
     const h = pathHelpersRef.current;
     h.ensurePathLayer(newPath);
@@ -2115,6 +2166,7 @@ export default function Map() {
     pathHelpersRef.current.updateVertexStyles(path);
     setIsPathMode(true);
     isPathModeRef.current = true;
+    setSnapMode(path.roadSnap || null);
     setPathToast(path.vertices.length >= 2 ? "Click here to finish path." : "Click on map to add path points.");
   };
 
@@ -2346,7 +2398,7 @@ export default function Map() {
       {markerMenu && (
         <>
           <div className="marker-menu-overlay" onClick={() => setMarkerMenu(null)} onContextMenu={(e) => { e.preventDefault(); setMarkerMenu(null); }} />
-          <div className={`marker-menu${idMapStyle === "rontomap_streets_dark" ? " marker-menu-dark" : ""}`} style={{ left: menuPos.x, top: menuPos.y }} onContextMenu={(e) => e.preventDefault()}>
+          <div key={`${menuPos.x}-${menuPos.y}`} ref={menuRefCallback} className={`marker-menu${idMapStyle === "rontomap_streets_dark" ? " marker-menu-dark" : ""}`} style={{ left: menuPos.x, top: menuPos.y }} onContextMenu={(e) => e.preventDefault()}>
             <button onClick={handleCenterToMarker}>Fly to marker</button>
             <button onClick={handleSetName}>Set name</button>
             <button onClick={handleCopyMarker}>Copy link to marker</button>
@@ -2365,7 +2417,7 @@ export default function Map() {
             const lngLat = mapRef.current.unproject(point);
             setMapClickMenu({ lngLat, x: e.clientX, y: e.clientY });
           }} />
-          <div className={`marker-menu${idMapStyle === "rontomap_streets_dark" ? " marker-menu-dark" : ""}`} style={{ left: mapClickMenu.x, top: mapClickMenu.y }} onContextMenu={(e) => e.preventDefault()}>
+          <div key={`${mapClickMenu.x}-${mapClickMenu.y}`} ref={menuRefCallback} className={`marker-menu${idMapStyle === "rontomap_streets_dark" ? " marker-menu-dark" : ""}`} style={{ left: mapClickMenu.x, top: mapClickMenu.y }} onContextMenu={(e) => e.preventDefault()}>
             {mapClickMenu.path ? (
               <>
                 <button onClick={handleFlyToPath}>Fly to path</button>
@@ -2412,6 +2464,31 @@ export default function Map() {
           }}
           style={{ cursor: isPathMode ? "pointer" : undefined }}>
           {pathToast}
+        </div>
+      )}
+      {isPathMode && (
+        <div className={`snap-toggle${idMapStyle === "rontomap_streets_dark" ? " snap-toggle-dark" : ""}`}>
+          {[null, "foot", "bike", "car"].map((mode) => (
+            <button
+              key={mode ?? "none"}
+              className={snapMode === mode ? "active" : ""}
+              onClick={() => {
+                setSnapMode(mode);
+                const path = activePathRef.current;
+                if (!path) return;
+                path.roadSnap = mode;
+                if (mode) {
+                  pathHelpersRef.current.fetchRoadSnap(path);
+                } else {
+                  path.snappedCoords = null;
+                  pathHelpersRef.current.updatePathLine(path);
+                  if (!path.isFinished) pathHelpersRef.current.rebuildMidpoints(path);
+                }
+              }}
+            >
+              {mode === null ? "No snap" : mode === "foot" ? "Foot" : mode === "bike" ? "Bike" : "Car"}
+            </button>
+          ))}
         </div>
       )}
       <div ref={mapContainerRef} {...bind} className={`map-container${idMapStyle === "rontomap_streets_dark" ? " map-style-dark" : ""}`} />

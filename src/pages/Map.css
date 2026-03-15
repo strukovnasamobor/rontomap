@@ -357,6 +357,58 @@
   color: white;
 }
 
+.snap-toggle {
+  position: fixed;
+  bottom: env(safe-area-inset-bottom);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 4px;
+  background: white;
+  padding: 4px;
+  border-radius: 6px;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.15);
+  z-index: 1000;
+  pointer-events: auto;
+}
+
+.snap-toggle button {
+  border: none;
+  background: none;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+  color: black;
+  white-space: nowrap;
+}
+
+.snap-toggle button:hover {
+  background: #f0f0f0;
+}
+
+.snap-toggle button.active {
+  background: #ff6f00;
+  color: black;
+}
+
+.snap-toggle-dark {
+  background: black;
+}
+
+.snap-toggle-dark button {
+  color: white;
+}
+
+.snap-toggle-dark button:hover {
+  background: black;
+}
+
+.snap-toggle-dark button.active {
+  background: #ff6f00;
+  color: white;
+}
+
 .marker-menu button:disabled {
   opacity: 0.4;
   cursor: default;
