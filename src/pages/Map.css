@@ -75,6 +75,25 @@
   margin-right: 0px !important;
 }
 
+.map-style-dark .mapboxgl-ctrl-scale {
+  background-color: rgba(0, 0, 0, 0.75) !important;
+  border-color: white !important;
+  color: white !important;
+}
+
+.map-style-dark .mapboxgl-ctrl-attrib {
+  background-color: rgba(0, 0, 0, 0.75) !important;
+  color: white !important;
+}
+
+.map-style-dark .mapboxgl-ctrl-attrib a {
+  color: white !important;
+}
+
+.map-style-dark .mapboxgl-ctrl-attrib-button {
+  filter: invert(1) !important;
+}
+
 .mapboxgl-ctrl-group button + button {
   border-top: none !important;
 }
@@ -234,6 +253,7 @@
 
 .marker-menu-dark {
   background: #1a1a1a;
+  scrollbar-color: #555 #1a1a1a;
 }
 
 .marker-menu-dark button {
