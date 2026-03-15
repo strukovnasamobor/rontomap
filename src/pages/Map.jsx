@@ -395,6 +395,7 @@ export default function Map() {
         path.snappedCoords = null;
       }
       updatePathLine(path);
+      updateAttachedMarkers(path);
     };
 
     const computeMidpoint = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
@@ -417,13 +418,42 @@ export default function Map() {
       return { segmentIndex: bestSeg, t: bestT };
     };
 
+    // Closest point on an array of [lng,lat] coords
+    const closestPointOnLine = (line, lngLat) => {
+      const px = lngLat[0], py = lngLat[1];
+      let bestDist = Infinity, bestPos = line[0];
+      for (let i = 0; i < line.length - 1; i++) {
+        const ax = line[i][0], ay = line[i][1];
+        const bx = line[i + 1][0], by = line[i + 1][1];
+        const dx = bx - ax, dy = by - ay;
+        const len2 = dx * dx + dy * dy;
+        let t = len2 === 0 ? 0 : ((px - ax) * dx + (py - ay) * dy) / len2;
+        t = Math.max(0, Math.min(1, t));
+        const cx = ax + t * dx, cy = ay + t * dy;
+        const dist = (px - cx) * (px - cx) + (py - cy) * (py - cy);
+        if (dist < bestDist) { bestDist = dist; bestPos = [cx, cy]; }
+      }
+      return bestPos;
+    };
+
+    const getRenderedLine = (path) => {
+      if (path.roadSnap && path.snappedCoords && path.vertices.length >= 2) {
+        return [path.vertices[0].lngLat, ...path.snappedCoords, path.vertices[path.vertices.length - 1].lngLat];
+      }
+      return path.vertices.map((v) => v.lngLat);
+    };
+
     const getAttachedMarkerPos = (path, am) => {
       const verts = path.vertices;
       const segIdx = am._segmentIndex ?? am.segmentIndex;
       const t = am._t ?? am.t;
       const seg = Math.min(segIdx, verts.length - 2);
       const a = verts[seg].lngLat, b = verts[seg + 1].lngLat;
-      return [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])];
+      const rawPos = [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])];
+
+      if (!path.roadSnap || !path.snappedCoords || verts.length < 2) return rawPos;
+
+      return closestPointOnLine(getRenderedLine(path), rawPos);
     };
 
     const updateAttachedMarkers = (path) => {
@@ -686,6 +716,7 @@ export default function Map() {
       ensurePathLayer, updatePathLine, fetchRoadSnap, createPathVertex, rebuildMidpoints,
       attachVertexDragHandler, attachFinishHandler, updateVertexStyles,
       hideIntermediateVertices, showAllVertices, snapToPath, updateAttachedMarkers, getAttachedMarkerPos,
+      closestPointOnLine, getRenderedLine,
     };
 
     if (mapRef.current) mapRef.current.resize();
@@ -1806,12 +1837,12 @@ export default function Map() {
               }
               m.on("drag", () => {
                 if (!m._attachedPath) return;
-                const p = m.getLngLat();
-                const s = h.snapToPath(m._attachedPath, [p.lng, p.lat]);
+                const p = m.getLngLat(), lngLat = [p.lng, p.lat];
+                const s = h.snapToPath(m._attachedPath, lngLat);
                 m._segmentIndex = s.segmentIndex;
                 m._t = s.t;
-                const newPos = h.getAttachedMarkerPos(m._attachedPath, m);
-                m.setLngLat(newPos);
+                const line = h.getRenderedLine(m._attachedPath);
+                m.setLngLat(h.closestPointOnLine(line, lngLat));
               });
               path.attachedMarkers.push(m);
             });
@@ -2275,21 +2306,19 @@ export default function Map() {
     if (!path || path.vertices.length < 2) return;
     const h = pathHelpersRef.current;
     const snap = h.snapToPath(path, [lngLat.lng, lngLat.lat]);
-    const a = path.vertices[snap.segmentIndex].lngLat;
-    const b = path.vertices[snap.segmentIndex + 1].lngLat;
-    const snappedLngLat = [a[0] + snap.t * (b[0] - a[0]), a[1] + snap.t * (b[1] - a[1])];
-    const marker = createMarkerRef.current(snappedLngLat);
+    const markerPos = h.getAttachedMarkerPos(path, { _segmentIndex: snap.segmentIndex, _t: snap.t });
+    const marker = createMarkerRef.current(markerPos);
     marker._attachedPath = path;
     marker._segmentIndex = snap.segmentIndex;
     marker._t = snap.t;
     marker.on("drag", () => {
       if (!marker._attachedPath) return;
-      const pos = marker.getLngLat();
-      const s = h.snapToPath(marker._attachedPath, [pos.lng, pos.lat]);
+      const p = marker.getLngLat(), lngLat = [p.lng, p.lat];
+      const s = h.snapToPath(marker._attachedPath, lngLat);
       marker._segmentIndex = s.segmentIndex;
       marker._t = s.t;
-      const newPos = h.getAttachedMarkerPos(marker._attachedPath, marker);
-      marker.setLngLat(newPos);
+      const line = h.getRenderedLine(marker._attachedPath);
+      marker.setLngLat(h.closestPointOnLine(line, lngLat));
     });
     if (featuresLockedRef.current) marker.setDraggable(false);
     if (!path.attachedMarkers) path.attachedMarkers = [];
@@ -2504,6 +2533,7 @@ export default function Map() {
                     } else {
                       path.snappedCoords = null;
                       pathHelpersRef.current.updatePathLine(path);
+                      pathHelpersRef.current.updateAttachedMarkers(path);
                       if (!path.isFinished) pathHelpersRef.current.rebuildMidpoints(path);
                     }
                   }}
