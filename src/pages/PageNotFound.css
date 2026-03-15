@@ -1,3 +1,7 @@
 .page-not-found {
   background-color: var(--main-background-color);
 }
+
+.page-not-found .header-logo {
+  max-width: 500px;
+}
