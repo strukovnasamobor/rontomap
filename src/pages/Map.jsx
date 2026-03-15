@@ -47,9 +47,13 @@ export default function Map() {
   const geocoderOpenRef = useRef(false);
   const [nameAlert, setNameAlert] = useState(false);
   const [deleteAllAlert, setDeleteAllAlert] = useState(false);
+  const [deletePathAlert, setDeletePathAlert] = useState(null);
+  const [trackBearingAlert, setTrackBearingAlert] = useState(false);
   const [isPathMode, setIsPathMode] = useState(false);
   const [pathToast, setPathToast] = useState(null);
   const [snapMode, setSnapMode] = useState(null);
+  const [forceMode, setForceMode] = useState(false);
+  const forceModeRef = useRef(false);
   const isPathModeRef = useRef(false);
   const activePathRef = useRef(null);
   const pathsRef = useRef([]);
@@ -302,6 +306,7 @@ export default function Map() {
         e.preventDefault();
         e.stopPropagation();
         if (wasDragged) return;
+        if (isPathModeRef.current) return;
         featureMenuOpenedRef.current = true;
         setTimeout(() => { featureMenuOpenedRef.current = false; }, 300);
         setMenuPos(computeMenuPos(marker));
@@ -320,7 +325,7 @@ export default function Map() {
       if (!map.getSource(path.sourceId)) {
         map.addSource(path.sourceId, {
           type: "geojson",
-          data: { type: "Feature", geometry: { type: "LineString", coordinates: [] } },
+          data: { type: "FeatureCollection", features: [] },
         });
       }
       if (!map.getLayer(path.layerId)) {
@@ -328,7 +333,7 @@ export default function Map() {
           id: path.layerId,
           type: "line",
           source: path.sourceId,
-          paint: { "line-color": "#ff6f00", "line-width": 3, "line-emissive-strength": 1 },
+          paint: { "line-color": ["get", "color"], "line-width": 3, "line-emissive-strength": 1 },
           layout: { "line-cap": "round", "line-join": "round" },
         });
         const hitLayerId = `${path.layerId}-hit`;
@@ -340,59 +345,120 @@ export default function Map() {
           layout: { "line-cap": "round", "line-join": "round" },
         });
         path._hitLayerId = hitLayerId;
-        map.on("mouseenter", hitLayerId, () => { map.getCanvas().style.cursor = "alias"; });
+        map.on("mouseenter", hitLayerId, () => { if (!isPathModeRef.current) map.getCanvas().style.cursor = "alias"; });
         map.on("mouseleave", hitLayerId, () => { map.getCanvas().style.cursor = ""; });
       }
     };
 
+    const makeFeature = (coords, color) => ({
+      type: "Feature",
+      properties: { color },
+      geometry: { type: "LineString", coordinates: coords },
+    });
+
     const updatePathLine = (path) => {
       const source = mapRef.current?.getSource(path.sourceId);
       if (!source) return;
-      const coords = path.roadSnap && path.snappedCoords
-        ? [path.vertices[0].lngLat, ...path.snappedCoords, path.vertices[path.vertices.length - 1].lngLat]
-        : path.vertices.map((v) => v.lngLat);
-      const lineCoords = coords.length >= 2 ? coords : [];
-      source.setData({ type: "Feature", geometry: { type: "LineString", coordinates: lineCoords } });
+
+      if (path.roadSnap && path.snappedSegments) {
+        const features = [];
+        for (const seg of path.snappedSegments) {
+          if (seg.coords.length >= 2) {
+            features.push(makeFeature(seg.coords, seg.type === "direct" ? "#ff0000" : "#ff6f00"));
+          }
+        }
+        source.setData({ type: "FeatureCollection", features });
+      } else {
+        const coords = path.vertices.map((v) => v.lngLat);
+        const features = coords.length >= 2 ? [makeFeature(coords, "#ff6f00")] : [];
+        source.setData({ type: "FeatureCollection", features });
+      }
     };
 
     const SNAP_PROFILES = { foot: "walking", bike: "cycling", car: "driving" };
-    const fetchRoadSnap = async (path) => {
-      if (!path.roadSnap || path.vertices.length < 2) {
-        path.snappedCoords = null;
-        updatePathLine(path);
-        return;
-      }
-      const profile = SNAP_PROFILES[path.roadSnap] || "driving";
-      const verts = path.vertices;
-      const MAX = 25;
 
-      // Split vertices into overlapping batches of 25
+    // Fetch directions for a list of vertices, handling the 25-waypoint batch limit
+    const fetchDirections = async (verts, profile) => {
+      const MAX = 25;
       const batches = [];
       for (let i = 0; i < verts.length; i += MAX - 1) {
         batches.push(verts.slice(i, i + MAX));
         if (i + MAX >= verts.length) break;
       }
+      const allCoords = [];
+      for (const batch of batches) {
+        const coords = batch.map((v) => v.lngLat.join(",")).join(";");
+        const res = await fetch(
+          `https://api.mapbox.com/directions/v5/mapbox/${profile}/${coords}?geometries=geojson&overview=full&access_token=${mapboxgl.accessToken}`
+        );
+        const data = await res.json();
+        if (data.routes && data.routes.length > 0) {
+          const routeCoords = data.routes[0].geometry.coordinates;
+          allCoords.push(...(allCoords.length > 0 ? routeCoords.slice(1) : routeCoords));
+        } else {
+          return null;
+        }
+      }
+      return allCoords;
+    };
+
+    // Build segment runs: consecutive non-force-adjacent pairs are snap runs, force-adjacent are direct
+    const buildSegmentRuns = (vertices) => {
+      const runs = [];
+      let currentRun = [0];
+      for (let i = 1; i < vertices.length; i++) {
+        if (vertices[i - 1].force || vertices[i].force) {
+          if (currentRun.length >= 2) runs.push({ type: "snap", indices: currentRun });
+          runs.push({ type: "direct", indices: [i - 1, i] });
+          currentRun = [i];
+        } else {
+          currentRun.push(i);
+        }
+      }
+      if (currentRun.length >= 2) runs.push({ type: "snap", indices: currentRun });
+      return runs;
+    };
+
+    const fetchRoadSnap = async (path) => {
+      if (!path.roadSnap || path.vertices.length < 2) {
+        path.snappedSegments = null;
+        updatePathLine(path);
+        return;
+      }
+      const profile = SNAP_PROFILES[path.roadSnap] || "driving";
+      const verts = path.vertices;
+      const runs = buildSegmentRuns(verts);
 
       try {
-        const allCoords = [];
-        for (const batch of batches) {
-          const coords = batch.map((v) => v.lngLat.join(",")).join(";");
-          const res = await fetch(
-            `https://api.mapbox.com/directions/v5/mapbox/${profile}/${coords}?geometries=geojson&overview=full&access_token=${mapboxgl.accessToken}`
-          );
-          const data = await res.json();
-          if (data.routes && data.routes.length > 0) {
-            const routeCoords = data.routes[0].geometry.coordinates;
-            allCoords.push(...(allCoords.length > 0 ? routeCoords.slice(1) : routeCoords));
+        const segments = [];
+        for (const run of runs) {
+          if (run.type === "direct") {
+            segments.push({ type: "direct", coords: run.indices.map((i) => verts[i].lngLat) });
           } else {
-            path.snappedCoords = null;
-            updatePathLine(path);
-            return;
+            const runVerts = run.indices.map((i) => verts[i]);
+            const snapped = await fetchDirections(runVerts, profile);
+            if (snapped) {
+              // Add direct red segment from first vertex to snapped start if they differ
+              const first = runVerts[0].lngLat;
+              const last = runVerts[runVerts.length - 1].lngLat;
+              if (first[0] !== snapped[0][0] || first[1] !== snapped[0][1]) {
+                segments.push({ type: "direct", coords: [first, snapped[0]] });
+              }
+              segments.push({ type: "snapped", coords: snapped });
+              // Add direct red segment from snapped end to last vertex if they differ
+              const snappedEnd = snapped[snapped.length - 1];
+              if (last[0] !== snappedEnd[0] || last[1] !== snappedEnd[1]) {
+                segments.push({ type: "direct", coords: [snappedEnd, last] });
+              }
+            } else {
+              // Fallback: render as direct
+              segments.push({ type: "direct", coords: runVerts.map((v) => v.lngLat) });
+            }
           }
         }
-        path.snappedCoords = allCoords;
+        path.snappedSegments = segments;
       } catch {
-        path.snappedCoords = null;
+        path.snappedSegments = null;
       }
       updatePathLine(path);
       updateAttachedMarkers(path);
@@ -437,8 +503,18 @@ export default function Map() {
     };
 
     const getRenderedLine = (path) => {
-      if (path.roadSnap && path.snappedCoords && path.vertices.length >= 2) {
-        return [path.vertices[0].lngLat, ...path.snappedCoords, path.vertices[path.vertices.length - 1].lngLat];
+      if (path.roadSnap && path.snappedSegments) {
+        const all = [];
+        for (const seg of path.snappedSegments) {
+          for (let i = 0; i < seg.coords.length; i++) {
+            if (all.length > 0 && i === 0) {
+              const last = all[all.length - 1];
+              if (last[0] === seg.coords[0][0] && last[1] === seg.coords[0][1]) continue;
+            }
+            all.push(seg.coords[i]);
+          }
+        }
+        return all.length >= 2 ? all : path.vertices.map((v) => v.lngLat);
       }
       return path.vertices.map((v) => v.lngLat);
     };
@@ -451,7 +527,7 @@ export default function Map() {
       const a = verts[seg].lngLat, b = verts[seg + 1].lngLat;
       const rawPos = [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])];
 
-      if (!path.roadSnap || !path.snappedCoords || verts.length < 2) return rawPos;
+      if (!path.roadSnap || !path.snappedSegments || verts.length < 2) return rawPos;
 
       return closestPointOnLine(getRenderedLine(path), rawPos);
     };
@@ -466,7 +542,7 @@ export default function Map() {
 
     const createPathVertex = (lngLat) => {
       const el = document.createElement("div");
-      el.className = "path-vertex";
+      el.className = "path-vertex active-path-feature";
       return new mapboxgl.Marker({ element: el, draggable: true, anchor: "center" })
         .setLngLat(lngLat)
         .addTo(mapRef.current);
@@ -474,7 +550,7 @@ export default function Map() {
 
     const createMidpointMarker = (lngLat) => {
       const el = document.createElement("div");
-      el.className = "path-midpoint";
+      el.className = "path-midpoint active-path-feature";
       return new mapboxgl.Marker({ element: el, draggable: true, anchor: "center" })
         .setLngLat(lngLat)
         .addTo(mapRef.current);
@@ -519,6 +595,10 @@ export default function Map() {
         mapRef.current.getContainer().classList.remove("marker-dragging");
         const pos = vertexEntry.marker.getLngLat();
         vertexEntry.lngLat = [pos.lng, pos.lat];
+        if (forceModeRef.current && vertexEntry.path.roadSnap) {
+          vertexEntry.force = true;
+          updateVertexStyles(vertexEntry.path);
+        }
         updatePathLine(vertexEntry.path);
         updateAttachedMarkers(vertexEntry.path);
         if (!vertexEntry.path.isFinished) rebuildMidpoints(vertexEntry.path);
@@ -549,6 +629,7 @@ export default function Map() {
       }
       const newMarker = createPathVertex([ll.lng, ll.lat]);
       const newVertex = { lngLat: [ll.lng, ll.lat], marker: newMarker, path };
+      if (forceModeRef.current) newVertex.force = true;
       path.vertices.splice(segmentIndex + 1, 0, newVertex);
       attachVertexDragHandler(newVertex);
       attachFinishHandler(newVertex);
@@ -576,7 +657,7 @@ export default function Map() {
             if (j === mpEntry.segmentIndex) coords.push([pos.lng, pos.lat]);
           }
           const source = mapRef.current?.getSource(path.sourceId);
-          if (source) source.setData({ type: "Feature", geometry: { type: "LineString", coordinates: coords } });
+          if (source) source.setData({ type: "FeatureCollection", features: [makeFeature(coords, "#ff6f00")] });
         });
         marker.on("dragend", () => {
           mapRef.current.getContainer().classList.remove("marker-dragging");
@@ -586,17 +667,6 @@ export default function Map() {
         midEl.addEventListener("contextmenu", (e) => {
           e.preventDefault();
           e.stopPropagation();
-          if (!path.isFinished) {
-            featureMenuOpenedRef.current = true;
-            setTimeout(() => { featureMenuOpenedRef.current = false; }, 300);
-            pathClickHandledRef.current = true;
-            setTimeout(() => { pathClickHandledRef.current = false; }, 400);
-            const map = mapRef.current;
-            const pos = marker.getLngLat();
-            const point = map.project(pos);
-            const rect = map.getContainer().getBoundingClientRect();
-            setMapClickMenu({ lngLat: pos, x: rect.left + point.x, y: rect.top + point.y, path });
-          }
         });
         path.midpoints.push(mpEntry);
       }
@@ -682,6 +752,7 @@ export default function Map() {
         e.preventDefault();
         e.stopPropagation();
         if (wasDragged) return;
+        if (isPathModeRef.current) return;
         featureMenuOpenedRef.current = true;
         setTimeout(() => { featureMenuOpenedRef.current = false; }, 300);
         const path = vertexEntry.path;
@@ -694,21 +765,17 @@ export default function Map() {
           const point = map.project(pos);
           const rect = map.getContainer().getBoundingClientRect();
           setMapClickMenu({ lngLat: pos, x: rect.left + point.x, y: rect.top + point.y, path, fromVertex: vertexEntry.marker });
-        } else if (!path.isFinished) {
-          pathClickHandledRef.current = true;
-          setTimeout(() => { pathClickHandledRef.current = false; }, 400);
-          const map = mapRef.current;
-          const pos = vertexEntry.marker.getLngLat();
-          const point = map.project(pos);
-          const rect = map.getContainer().getBoundingClientRect();
-          setMapClickMenu({ lngLat: pos, x: rect.left + point.x, y: rect.top + point.y, path });
         }
       });
     };
 
     const updateVertexStyles = (path) => {
       const verts = path.vertices;
-      verts.forEach((v) => v.marker.getElement().classList.remove("path-vertex-last"));
+      verts.forEach((v) => {
+        const el = v.marker.getElement();
+        el.classList.remove("path-vertex-last", "path-vertex-force");
+        if (v.force) el.classList.add("path-vertex-force");
+      });
       if (verts.length > 0) verts[verts.length - 1].marker.getElement().classList.add("path-vertex-last");
     };
 
@@ -936,22 +1003,38 @@ export default function Map() {
         }
       }
 
-      async _handleTrackBearing() {
-        console.log("_handleTrackBearing");
-        this._trackingLocation = false;
-
-        // Finish path creation if active
+      _finishPathForBearing() {
         if (isPathModeRef.current) {
           isPathModeRef.current = false;
           setIsPathMode(false);
           if (activePathRef.current) {
-            activePathRef.current.isFinished = true;
-            pathHelpersRef.current.hideIntermediateVertices?.(activePathRef.current);
-            activePathRef.current.midpoints.forEach((mp) => mp.marker.remove());
-            activePathRef.current.midpoints = [];
+            const path = activePathRef.current;
+            path.isFinished = true;
+            pathHelpersRef.current.hideIntermediateVertices?.(path);
+            path.midpoints.forEach((mp) => mp.marker.remove());
+            path.midpoints = [];
+            path.vertices.forEach((v) => v.marker.getElement().classList.remove("active-path-feature"));
+            if (path.attachedMarkers) path.attachedMarkers.forEach((m) => m.getElement().classList.remove("active-path-feature"));
+            if (path._wasLocked) {
+              delete path._wasLocked;
+              path.vertices.forEach((v) => v.marker.setDraggable(false));
+              if (path.attachedMarkers) path.attachedMarkers.forEach((m) => m.setDraggable(false));
+            }
           }
           setPathToast("Path saved. You can edit it after stopping bearing tracking.");
           setTimeout(() => { setPathToast(null); }, 3000);
+        }
+      }
+
+      async _handleTrackBearing() {
+        console.log("_handleTrackBearing");
+        this._trackingLocation = false;
+
+        // If editing a path, show alert and wait for confirmation
+        if (isPathModeRef.current) {
+          this.showTrackingBearingIcon();
+          setTrackBearingAlert(true);
+          return;
         }
 
         // Remember the current zoom and pitch to restore them when stopping bearing tracking
@@ -1537,9 +1620,11 @@ export default function Map() {
           const h = pathHelpersRef.current;
           const marker = h.createPathVertex(lngLat);
           const vertex = { lngLat, marker, path };
+          if (forceModeRef.current) vertex.force = true;
           path.vertices.push(vertex);
           h.attachVertexDragHandler(vertex);
           h.attachFinishHandler(vertex);
+          h.updateVertexStyles(path);
           h.updatePathLine(path);
           h.rebuildMidpoints(path);
           h.updateVertexStyles(path);
@@ -1576,6 +1661,7 @@ export default function Map() {
 
     // Right click on map: open context menu
     mapRef.current.on("contextmenu", (e) => {
+      if (isPathModeRef.current) return;
       if (featureMenuOpenedRef.current) return;
       if (geocoderOpenRef.current) return;
       if (rightMouseMoved) { rightMouseMoved = false; return; }
@@ -1604,6 +1690,7 @@ export default function Map() {
       longPressStartPos = { x: touch.clientX, y: touch.clientY };
       longPressTimer = setTimeout(() => {
         longPressTimer = null;
+        if (isPathModeRef.current) return;
         if (featureMenuOpenedRef.current) return;
         longPressHandledRef.current = true;
         // Suppress the map click that follows touchend
@@ -1806,6 +1893,7 @@ export default function Map() {
             const lngLat = [c.long, c.lat];
             const marker = h.createPathVertex(lngLat);
             const vertex = { lngLat, marker, path };
+            if (c.force) vertex.force = true;
             path.vertices.push(vertex);
             h.attachVertexDragHandler(vertex);
             h.attachFinishHandler(vertex);
@@ -1892,6 +1980,15 @@ export default function Map() {
 
   // Keep isPathModeRef in sync with state
   useEffect(() => { isPathModeRef.current = isPathMode; }, [isPathMode]);
+  useEffect(() => { forceModeRef.current = forceMode; }, [forceMode]);
+
+  // Warn before leaving page during path editing
+  useEffect(() => {
+    if (!isPathMode) return;
+    const handler = (e) => { e.preventDefault(); };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [isPathMode]);
 
   // Show/remove temporary dot or glow at context menu location
   useEffect(() => {
@@ -2014,7 +2111,7 @@ export default function Map() {
     const paths = pathsRef.current.map((p, i) => {
       const pathData = {
         id: `p${i + 1}`,
-        coords: p.vertices.map((v) => ({ long: v.lngLat[0], lat: v.lngLat[1] })),
+        coords: p.vertices.map((v) => ({ long: v.lngLat[0], lat: v.lngLat[1], ...(v.force ? { force: true } : {}) })),
       };
       const startName = p.vertices[0]?.marker._markerName;
       const endName = p.vertices[p.vertices.length - 1]?.marker._markerName;
@@ -2147,10 +2244,13 @@ export default function Map() {
 
     // Finish any active unfinished path
     if (activePathRef.current && !activePathRef.current.isFinished) {
-      activePathRef.current.isFinished = true;
-      pathHelpersRef.current.hideIntermediateVertices(activePathRef.current);
-      activePathRef.current.midpoints.forEach((mp) => mp.marker.remove());
-      activePathRef.current.midpoints = [];
+      const prev = activePathRef.current;
+      prev.isFinished = true;
+      pathHelpersRef.current.hideIntermediateVertices(prev);
+      prev.midpoints.forEach((mp) => mp.marker.remove());
+      prev.midpoints = [];
+      prev.vertices.forEach((v) => v.marker.getElement().classList.remove("active-path-feature"));
+      if (prev.attachedMarkers) prev.attachedMarkers.forEach((m) => m.getElement().classList.remove("active-path-feature"));
     }
 
     const id = `path-${Date.now()}`;
@@ -2165,17 +2265,12 @@ export default function Map() {
     pathsRef.current.push(newPath);
     activePathRef.current = newPath;
 
-    // Unlock features for path creation, remember previous state
     newPath._wasLocked = featuresLockedRef.current;
-    if (featuresLockedRef.current) {
-      featuresLockedRef.current = false;
-      setFeaturesLocked(false);
-      applyFeaturesLock(false);
-    }
 
     setIsPathMode(true);
     isPathModeRef.current = true;
     setSnapMode(null);
+    setForceMode(false);
 
     const h = pathHelpersRef.current;
     h.ensurePathLayer(newPath);
@@ -2197,27 +2292,29 @@ export default function Map() {
 
     // Finish any other active unfinished path
     if (activePathRef.current && !activePathRef.current.isFinished && activePathRef.current !== path) {
-      activePathRef.current.isFinished = true;
-      pathHelpersRef.current.hideIntermediateVertices(activePathRef.current);
-      activePathRef.current.midpoints.forEach((mp) => mp.marker.remove());
-      activePathRef.current.midpoints = [];
+      const prev = activePathRef.current;
+      prev.isFinished = true;
+      pathHelpersRef.current.hideIntermediateVertices(prev);
+      prev.midpoints.forEach((mp) => mp.marker.remove());
+      prev.midpoints = [];
+      prev.vertices.forEach((v) => v.marker.getElement().classList.remove("active-path-feature"));
+      if (prev.attachedMarkers) prev.attachedMarkers.forEach((m) => m.getElement().classList.remove("active-path-feature"));
     }
 
     path.isFinished = false;
     activePathRef.current = path;
-    // Unlock features for editing, remember previous state
     path._wasLocked = featuresLockedRef.current;
-    if (featuresLockedRef.current) {
-      featuresLockedRef.current = false;
-      setFeaturesLocked(false);
-      applyFeaturesLock(false);
-    }
     pathHelpersRef.current.showAllVertices(path);
     pathHelpersRef.current.rebuildMidpoints(path);
+    // Enable dragging only for this path's features and tag them
+    path.vertices.forEach((v) => { v.marker.setDraggable(true); v.marker.getElement().classList.add("active-path-feature"); });
+    path.midpoints.forEach((mp) => { mp.marker.setDraggable(true); mp.marker.getElement().classList.add("active-path-feature"); });
+    if (path.attachedMarkers) path.attachedMarkers.forEach((m) => { m.setDraggable(true); m.getElement().classList.add("active-path-feature"); });
     pathHelpersRef.current.updateVertexStyles(path);
     setIsPathMode(true);
     isPathModeRef.current = true;
     setSnapMode(path.roadSnap || null);
+    setForceMode(false);
     setPathToast(path.vertices.length >= 2 ? "Click here to finish path." : "Click on map to add path points.");
   };
 
@@ -2241,7 +2338,20 @@ export default function Map() {
   const handleDeletePath = () => {
     const path = mapClickMenu.path;
     setMapClickMenu(null);
+    setDeletePathAlert(path);
+  };
 
+  const confirmTrackBearing = () => {
+    const ctrl = locationControlRef.current;
+    if (!ctrl) return;
+    ctrl._finishPathForBearing();
+    ctrl.hideTrackingIcons();
+    ctrl._handleTrackBearing();
+  };
+
+  const confirmDeletePath = () => {
+    const path = deletePathAlert;
+    if (!path) return;
     const map = mapRef.current;
     const hitLayerId = `${path.layerId}-hit`;
     if (map.getLayer(hitLayerId)) map.removeLayer(hitLayerId);
@@ -2260,9 +2370,10 @@ export default function Map() {
     pathsRef.current = pathsRef.current.filter((p) => p !== path);
 
     if (activePathRef.current === path) {
-      // Stay in path mode so the next click starts a new path
       activePathRef.current = null;
-      setPathToast("Click on map to add path points.");
+      isPathModeRef.current = false;
+      setIsPathMode(false);
+      setPathToast(null);
     }
   };
 
@@ -2444,6 +2555,26 @@ export default function Map() {
           { text: "Delete", handler: confirmDeleteAllFeatures },
         ]}
       />
+      <IonAlert
+        isOpen={!!deletePathAlert}
+        onDidDismiss={() => setDeletePathAlert(null)}
+        header="Delete path"
+        message="Are you sure you want to delete this path?"
+        buttons={[
+          { text: "Cancel", role: "cancel" },
+          { text: "Delete", handler: confirmDeletePath },
+        ]}
+      />
+      <IonAlert
+        isOpen={trackBearingAlert}
+        onDidDismiss={() => setTrackBearingAlert(false)}
+        header="Start bearing tracking"
+        message="The current path will be saved before starting bearing tracking."
+        buttons={[
+          { text: "Cancel", role: "cancel" },
+          { text: "OK", handler: confirmTrackBearing },
+        ]}
+      />
       {markerMenu && (
         <>
           <div className="marker-menu-overlay" onClick={() => setMarkerMenu(null)} onContextMenu={(e) => { e.preventDefault(); setMarkerMenu(null); }} />
@@ -2505,11 +2636,14 @@ export default function Map() {
                   path.midpoints.forEach((mp) => mp.marker.remove());
                   path.midpoints = [];
                   setPathToast(null);
+                  // Remove active-path-feature class
+                  path.vertices.forEach((v) => v.marker.getElement().classList.remove("active-path-feature"));
+                  if (path.attachedMarkers) path.attachedMarkers.forEach((m) => m.getElement().classList.remove("active-path-feature"));
                   if (path._wasLocked) {
                     delete path._wasLocked;
-                    featuresLockedRef.current = true;
-                    setFeaturesLocked(true);
-                    applyFeaturesLock(true);
+                    // Re-lock this path's features
+                    path.vertices.forEach((v) => v.marker.setDraggable(false));
+                    if (path.attachedMarkers) path.attachedMarkers.forEach((m) => m.setDraggable(false));
                   }
                 }
               }}
@@ -2525,13 +2659,14 @@ export default function Map() {
                   className={snapMode === mode ? "active" : ""}
                   onClick={() => {
                     setSnapMode(mode);
+                    setForceMode(false);
                     const path = activePathRef.current;
                     if (!path) return;
                     path.roadSnap = mode;
                     if (mode) {
                       pathHelpersRef.current.fetchRoadSnap(path);
                     } else {
-                      path.snappedCoords = null;
+                      path.snappedSegments = null;
                       pathHelpersRef.current.updatePathLine(path);
                       pathHelpersRef.current.updateAttachedMarkers(path);
                       if (!path.isFinished) pathHelpersRef.current.rebuildMidpoints(path);
@@ -2541,11 +2676,19 @@ export default function Map() {
                   {mode === null ? "Free" : mode === "foot" ? "Foot" : mode === "bike" ? "Bike" : "Car"}
                 </button>
               ))}
+              <div className="force-divider" />
+              <button
+                className={forceMode ? "force-active" : ""}
+                disabled={!snapMode}
+                onClick={() => setForceMode((f) => !f)}
+              >
+                Force
+              </button>
             </div>
           )}
         </div>
       )}
-      <div ref={mapContainerRef} {...bind} className={`map-container${idMapStyle === "rontomap_streets_dark" ? " map-style-dark" : ""}`} />
+      <div ref={mapContainerRef} {...bind} className={`map-container${idMapStyle === "rontomap_streets_dark" ? " map-style-dark" : ""}${isPathMode ? " path-editing" : ""}${featuresLocked ? " features-locked" : ""}`} />
     </PageFixedLayout>
   );
 }

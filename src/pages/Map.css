@@ -7,14 +7,39 @@
   cursor: default !important;
 }
 
+/* Path editing mode: pointer cursor on map canvas */
+.path-editing .mapboxgl-canvas-container.mapboxgl-interactive {
+  cursor: pointer !important;
+}
+
+/* Path editing mode: all features show pointer by default */
+.path-editing .mapboxgl-marker:not(.context-dot):not(.mapboxgl-user-location) {
+  cursor: pointer !important;
+}
+
+/* Path editing mode: active path's features show grab */
+.path-editing .mapboxgl-marker.active-path-feature:not(.context-dot) {
+  cursor: grab !important;
+}
+
 /* Left click on map or locked features: all-scroll */
-.map-mousedown * {
+.map-mousedown:not(.path-editing) * {
   cursor: all-scroll !important;
 }
 
 /* Left drag on map: all-scroll */
-.map-dragging * {
+.map-dragging:not(.path-editing) * {
   cursor: all-scroll !important;
+}
+
+/* Left drag on map during path editing: all-scroll */
+.map-dragging.path-editing * {
+  cursor: all-scroll !important;
+}
+
+/* But active path features keep grab during path editing drag */
+.map-dragging.path-editing .active-path-feature {
+  cursor: grab !important;
 }
 
 /* Right-click drag (rotation): crosshair */
@@ -28,23 +53,23 @@
 }
 
 /* Unlocked features: grab cursor (overrides all-scroll on mousedown) */
-.map-mousedown .mapboxgl-marker,
-.map-mousedown .path-vertex,
-.map-mousedown .path-midpoint {
+.map-mousedown:not(.path-editing) .mapboxgl-marker,
+.map-mousedown:not(.path-editing) .path-vertex,
+.map-mousedown:not(.path-editing) .path-midpoint {
   cursor: grab !important;
 }
 
 /* Locked features: alias cursor */
-.features-locked .mapboxgl-marker:not(.context-dot),
-.features-locked .path-vertex,
-.features-locked .path-midpoint {
+.features-locked:not(.path-editing) .mapboxgl-marker:not(.context-dot),
+.features-locked:not(.path-editing) .path-vertex,
+.features-locked:not(.path-editing) .path-midpoint {
   cursor: alias !important;
 }
 
 /* Locked features on mousedown: all-scroll (same as map) */
-.map-mousedown.features-locked .mapboxgl-marker,
-.map-mousedown.features-locked .path-vertex,
-.map-mousedown.features-locked .path-midpoint {
+.map-mousedown.features-locked:not(.path-editing) .mapboxgl-marker,
+.map-mousedown.features-locked:not(.path-editing) .path-vertex,
+.map-mousedown.features-locked:not(.path-editing) .path-midpoint {
   cursor: all-scroll !important;
 }
 
@@ -316,6 +341,11 @@
   background: #ff6f00;
 }
 
+.path-vertex.path-vertex-force {
+  background: red !important;
+  border-color: red !important;
+}
+
 /* Path midpoint handle - smaller circle */
 .path-midpoint {
   width: 9px;
@@ -425,6 +455,35 @@
 .snap-toggle button.active {
   background: #ff6f00;
   color: black;
+}
+
+.snap-toggle .force-divider {
+  width: 1px;
+  margin: 6px 0;
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.snap-toggle button.force-active {
+  background: red;
+  color: white;
+}
+
+.snap-toggle button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.snap-toggle button:disabled:hover {
+  background: none;
+}
+
+.path-hud-dark .snap-toggle .force-divider {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.path-hud-dark .snap-toggle button.force-active {
+  background: red;
+  color: white;
 }
 
 .path-hud-dark .snap-toggle {
