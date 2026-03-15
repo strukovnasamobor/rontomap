@@ -363,17 +363,34 @@ export default function Map() {
         return;
       }
       const profile = SNAP_PROFILES[path.roadSnap] || "driving";
-      const coords = path.vertices.map((v) => v.lngLat.join(",")).join(";");
+      const verts = path.vertices;
+      const MAX = 25;
+
+      // Split vertices into overlapping batches of 25
+      const batches = [];
+      for (let i = 0; i < verts.length; i += MAX - 1) {
+        batches.push(verts.slice(i, i + MAX));
+        if (i + MAX >= verts.length) break;
+      }
+
       try {
-        const res = await fetch(
-          `https://api.mapbox.com/directions/v5/mapbox/${profile}/${coords}?geometries=geojson&overview=full&access_token=${mapboxgl.accessToken}`
-        );
-        const data = await res.json();
-        if (data.routes && data.routes.length > 0) {
-          path.snappedCoords = data.routes[0].geometry.coordinates;
-        } else {
-          path.snappedCoords = null;
+        const allCoords = [];
+        for (const batch of batches) {
+          const coords = batch.map((v) => v.lngLat.join(",")).join(";");
+          const res = await fetch(
+            `https://api.mapbox.com/directions/v5/mapbox/${profile}/${coords}?geometries=geojson&overview=full&access_token=${mapboxgl.accessToken}`
+          );
+          const data = await res.json();
+          if (data.routes && data.routes.length > 0) {
+            const routeCoords = data.routes[0].geometry.coordinates;
+            allCoords.push(...(allCoords.length > 0 ? routeCoords.slice(1) : routeCoords));
+          } else {
+            path.snappedCoords = null;
+            updatePathLine(path);
+            return;
+          }
         }
+        path.snappedCoords = allCoords;
       } catch {
         path.snappedCoords = null;
       }
