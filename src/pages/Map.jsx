@@ -2462,55 +2462,57 @@ export default function Map() {
           </div>
         </>
       )}
-      {pathToast && (
-        <div className={`path-toast${idMapStyle === "rontomap_streets_dark" ? " path-toast-dark" : ""}`}>
-          <span
-            onClick={() => {
-              const path = activePathRef.current;
-              if (path && !path.isFinished && path.vertices.length > 1) {
-                path.isFinished = true;
-                isPathModeRef.current = false;
-                setIsPathMode(false);
-                pathHelpersRef.current.hideIntermediateVertices(path);
-                path.midpoints.forEach((mp) => mp.marker.remove());
-                path.midpoints = [];
-                setPathToast(null);
-                if (path._wasLocked) {
-                  delete path._wasLocked;
-                  featuresLockedRef.current = true;
-                  setFeaturesLocked(true);
-                  applyFeaturesLock(true);
-                }
-              }
-            }}
-            style={{ cursor: isPathMode ? "pointer" : undefined }}>
-            {pathToast}
-          </span>
-        </div>
-      )}
-      {isPathMode && (
-        <div className={`snap-toggle${idMapStyle === "rontomap_streets_dark" ? " snap-toggle-dark" : ""}`}>
-          {[null, "foot", "bike", "car"].map((mode) => (
-            <button
-              key={mode ?? "none"}
-              className={snapMode === mode ? "active" : ""}
+      {(pathToast || isPathMode) && (
+        <div className={`path-hud${idMapStyle === "rontomap_streets_dark" ? " path-hud-dark" : ""}`}>
+          {pathToast && (
+            <div className="path-toast"
               onClick={() => {
-                setSnapMode(mode);
                 const path = activePathRef.current;
-                if (!path) return;
-                path.roadSnap = mode;
-                if (mode) {
-                  pathHelpersRef.current.fetchRoadSnap(path);
-                } else {
-                  path.snappedCoords = null;
-                  pathHelpersRef.current.updatePathLine(path);
-                  if (!path.isFinished) pathHelpersRef.current.rebuildMidpoints(path);
+                if (path && !path.isFinished && path.vertices.length > 1) {
+                  path.isFinished = true;
+                  isPathModeRef.current = false;
+                  setIsPathMode(false);
+                  pathHelpersRef.current.hideIntermediateVertices(path);
+                  path.midpoints.forEach((mp) => mp.marker.remove());
+                  path.midpoints = [];
+                  setPathToast(null);
+                  if (path._wasLocked) {
+                    delete path._wasLocked;
+                    featuresLockedRef.current = true;
+                    setFeaturesLocked(true);
+                    applyFeaturesLock(true);
+                  }
                 }
               }}
-            >
-              {mode === null ? "Free" : mode === "foot" ? "Foot" : mode === "bike" ? "Bike" : "Car"}
-            </button>
-          ))}
+              style={{ cursor: isPathMode ? "pointer" : undefined }}>
+              {pathToast}
+            </div>
+          )}
+          {isPathMode && (
+            <div className="snap-toggle">
+              {[null, "foot", "bike", "car"].map((mode) => (
+                <button
+                  key={mode ?? "none"}
+                  className={snapMode === mode ? "active" : ""}
+                  onClick={() => {
+                    setSnapMode(mode);
+                    const path = activePathRef.current;
+                    if (!path) return;
+                    path.roadSnap = mode;
+                    if (mode) {
+                      pathHelpersRef.current.fetchRoadSnap(path);
+                    } else {
+                      path.snappedCoords = null;
+                      pathHelpersRef.current.updatePathLine(path);
+                      if (!path.isFinished) pathHelpersRef.current.rebuildMidpoints(path);
+                    }
+                  }}
+                >
+                  {mode === null ? "Free" : mode === "foot" ? "Foot" : mode === "bike" ? "Bike" : "Car"}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
       <div ref={mapContainerRef} {...bind} className={`map-container${idMapStyle === "rontomap_streets_dark" ? " map-style-dark" : ""}`} />

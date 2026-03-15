@@ -341,49 +341,56 @@
   border-color: #ff6f00;
 }
 
-.path-toast {
+.path-hud {
   position: fixed;
   top: calc(env(safe-area-inset-top) + 10px);
   left: 50%;
   transform: translateX(-50%);
   display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 240px;
+  max-width: calc(100dvw - 100px);
+  gap: 10px;
+  z-index: 1000;
+  pointer-events: auto;
+}
+
+.path-toast {
+  display: flex;
   align-items: center;
   justify-content: center;
+  width: 100%;
   min-height: 36px;
-  width: max-content;
-  max-width: calc(100dvw - 100px);
   background: white;
   color: #333;
   padding: 8px 16px;
   border-radius: 4px;
   text-align: center;
   font-size: 14px;
-  z-index: 1000;
-  pointer-events: auto;
 }
 
-.path-toast-dark {
-  background: #1a1a1a;
+.path-hud-dark .path-toast {
+  background: black;
   color: white;
 }
 
 .snap-toggle {
-  position: fixed;
-  bottom: env(safe-area-inset-bottom);
-  z-index: 1000;
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 2px;
-  background: rgba(0, 0, 0, 0.08);
-  padding: 3px;
+  min-height: 36px;
+  background: white;
   border-radius: 6px;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.15);
 }
 
 .snap-toggle button {
+  flex: 1;
+  width: 60px;
   border: none;
   background: none;
-  padding: 6px 12px;
+  padding: 12px 6px;
   border-radius: 4px;
   font-size: 13px;
   cursor: pointer;
@@ -400,19 +407,20 @@
   color: black;
 }
 
-.snap-toggle-dark {
-  background: rgba(255, 255, 255, 0.12);
+.path-hud-dark .snap-toggle {
+  background: #1a1a1a;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
 }
 
-.snap-toggle-dark button {
+.path-hud-dark .snap-toggle button {
   color: white;
 }
 
-.snap-toggle-dark button:hover {
+.path-hud-dark .snap-toggle button:hover {
   background: rgba(255, 255, 255, 0.1);
 }
 
-.snap-toggle-dark button.active {
+.path-hud-dark .snap-toggle button.active {
   background: #ff6f00;
   color: white;
 }
