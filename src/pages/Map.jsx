@@ -72,6 +72,7 @@ export default function Map() {
   const isEmbeddedRef = useRef(
     new URLSearchParams(window.location.search).get("embedded") === "true"
   );
+  const embeddedActiveRef = useRef(false);
 
   const menuRefCallback = useCallback((el) => {
     if (!el) return;
@@ -849,7 +850,6 @@ export default function Map() {
       style: mapStyle,
       attributionControl: false,
       doubleClickZoom: false,
-      tapDragZoom: false,
       // @ts-ignore
       center: center,
       zoom: zoom,
@@ -937,7 +937,7 @@ export default function Map() {
         this._map.doubleClickZoom.disable();
         this._map.touchZoomRotate.disable();
         this._map.touchPitch.disable();
-        if (this._map.tapDragZoom) this._map.tapDragZoom.disable();
+        if (this._map.touchZoomRotate._tapDragZoom) this._map.touchZoomRotate._tapDragZoom.disable();
       }
 
       enableUserInteractions() {
@@ -949,6 +949,7 @@ export default function Map() {
         this._map.dragRotate.enable();
         this._map.keyboard.enable();
         this._map.touchZoomRotate.enable();
+        if (this._map.touchZoomRotate._tapDragZoom) this._map.touchZoomRotate._tapDragZoom.disable();
         this._map.touchPitch.enable();
       }
 
@@ -1626,6 +1627,35 @@ export default function Map() {
         if (pathClickHandledRef.current) return;
         if (longPressHandledRef.current) { longPressHandledRef.current = false; return; }
 
+        // Embedded mode: toggle map controls on click
+        if (isEmbeddedRef.current) {
+          const map = mapRef.current;
+          if (embeddedActiveRef.current) {
+            map.scrollZoom.disable();
+            map.dragPan.disable();
+            map.dragRotate.disable();
+            map.keyboard.disable();
+            map.touchZoomRotate.disable();
+            map.touchPitch.disable();
+            map.boxZoom.disable();
+            embeddedActiveRef.current = false;
+            setPathToast("Click to interact with the map.");
+            setTimeout(() => { setPathToast(null); }, 2000);
+          } else {
+            map.scrollZoom.enable();
+            map.dragPan.enable();
+            map.dragRotate.enable();
+            map.keyboard.enable();
+            map.touchZoomRotate.enable();
+            map.touchPitch.enable();
+            map.boxZoom.enable();
+            embeddedActiveRef.current = true;
+            setPathToast("Map controls activated.");
+            setTimeout(() => { setPathToast(null); }, 2000);
+          }
+          return;
+        }
+
         // Path mode: add vertex or start new path
         if (isPathModeRef.current) {
           let path = activePathRef.current;
@@ -1884,7 +1914,18 @@ export default function Map() {
     mapRef.current.touchZoomRotate.enable();
 
     // Disable one-tap-then-drag-to-zoom gesture
-    if (mapRef.current.tapDragZoom) mapRef.current.tapDragZoom.disable();
+    if (mapRef.current.touchZoomRotate._tapDragZoom) mapRef.current.touchZoomRotate._tapDragZoom.disable();
+
+    // In embedded mode, disable all map interactions initially
+    if (isEmbeddedRef.current) {
+      mapRef.current.scrollZoom.disable();
+      mapRef.current.dragPan.disable();
+      mapRef.current.dragRotate.disable();
+      mapRef.current.keyboard.disable();
+      mapRef.current.touchZoomRotate.disable();
+      mapRef.current.touchPitch.disable();
+      mapRef.current.boxZoom.disable();
+    }
 
     // Recreate single marker from URL params
     const markerParam = getQueryParams("marker");
