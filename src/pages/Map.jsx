@@ -849,6 +849,7 @@ export default function Map() {
       style: mapStyle,
       attributionControl: false,
       doubleClickZoom: false,
+      tapDragZoom: false,
       // @ts-ignore
       center: center,
       zoom: zoom,
@@ -936,6 +937,7 @@ export default function Map() {
         this._map.doubleClickZoom.disable();
         this._map.touchZoomRotate.disable();
         this._map.touchPitch.disable();
+        if (this._map.tapDragZoom) this._map.tapDragZoom.disable();
       }
 
       enableUserInteractions() {
@@ -1881,6 +1883,9 @@ export default function Map() {
     // Enable pinch-to-zoom and rotate gestures on touch devices
     mapRef.current.touchZoomRotate.enable();
 
+    // Disable one-tap-then-drag-to-zoom gesture
+    if (mapRef.current.tapDragZoom) mapRef.current.tapDragZoom.disable();
+
     // Recreate single marker from URL params
     const markerParam = getQueryParams("marker");
     if (markerParam) {
@@ -2151,7 +2156,7 @@ export default function Map() {
       embedded: "true",
       style: idMapStyle,
     });
-    const iframe = `<iframe width="600" height="350" frameborder="0" allow="fullscreen" src="https://rontomap.web.app/?${params}"></iframe>`;
+    const iframe = `<iframe style="max-width: 600px; max-height: 400px; width: 100%; height: 100%; border: none;" scrolling="no" allow="fullscreen" src="https://rontomap.web.app/?${params}"></iframe>`;
     navigator.clipboard.writeText(iframe);
     setMarkerMenu(null);
     setPathToast("Embedded code copied.");
@@ -2261,7 +2266,7 @@ export default function Map() {
       embedded: "true",
       style: idMapStyle,
     });
-    const iframe = `<iframe width="600" height="350" frameborder="0" allow="fullscreen" src="https://rontomap.web.app/?${params}"></iframe>`;
+    const iframe = `<iframe style="max-width: 600px; max-height: 400px; width: 100%; height: 100%; border: none;" scrolling="no" allow="fullscreen" src="https://rontomap.web.app/?${params}"></iframe>`;
     navigator.clipboard.writeText(iframe);
     setMapClickMenu(null);
     setPathToast("Embedded code copied.");
