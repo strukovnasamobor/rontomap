@@ -64,6 +64,7 @@ export default function Map() {
   const pathHelpersRef = useRef({});
   const [featuresLocked, setFeaturesLocked] = useState(false);
   const featuresLockedRef = useRef(false);
+  const idMapStyleRef = useRef(idMapStyle);
 
   const menuRefCallback = useCallback((el) => {
     if (!el) return;
@@ -356,13 +357,13 @@ export default function Map() {
             "symbol-placement": "line",
             "symbol-spacing": 100,
             "text-field": ">",
-            "text-size": 20,
+            "text-size": 22,
             "text-rotation-alignment": "map",
             "text-keep-upright": false,
             "text-allow-overlap": false,
           },
           paint: {
-            "text-color": "#ffffff",
+            "text-color": "#ff6f00",
             "text-emissive-strength": 1,
           },
         });
@@ -2000,7 +2001,8 @@ export default function Map() {
     });
   }, [mapStyle]);
 
-  // Keep isPathModeRef in sync with state
+  // Keep refs in sync with state
+  useEffect(() => { idMapStyleRef.current = idMapStyle; }, [idMapStyle]);
   useEffect(() => { isPathModeRef.current = isPathMode; }, [isPathMode]);
   useEffect(() => { forceModeRef.current = forceMode; }, [forceMode]);
 
