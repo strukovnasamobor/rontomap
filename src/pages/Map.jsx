@@ -354,15 +354,15 @@ export default function Map() {
           source: path.sourceId,
           layout: {
             "symbol-placement": "line",
-            "symbol-spacing": 50,
-            "text-field": "▶",
-            "text-size": 22,
+            "symbol-spacing": 100,
+            "text-field": ">",
+            "text-size": 20,
             "text-rotation-alignment": "map",
             "text-keep-upright": false,
             "text-allow-overlap": false,
           },
           paint: {
-            "text-color": ["get", "color"],
+            "text-color": "#ffffff",
             "text-emissive-strength": 1,
           },
         });
