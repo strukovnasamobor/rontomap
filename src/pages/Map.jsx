@@ -1810,10 +1810,41 @@ export default function Map() {
     // Focus on user input when search icon is clicked
     const geocoderEl = document.querySelector(".mapboxgl-ctrl-geocoder");
     if (geocoderEl) {
-      geocoderEl.addEventListener("click", () => {
-        const input = geocoderEl.querySelector("input");
-        input?.focus();
-      });
+      if (isEmbeddedRef.current) {
+        // In embedded mode, hide geocoder and show logo link to full Rontomap
+        geocoderEl.style.display = "none";
+
+        const url = new URL(window.location.href);
+        url.searchParams.delete("embedded");
+        url.searchParams.delete("style");
+
+        const logoContainer = document.createElement("div");
+        logoContainer.className = "mapboxgl-ctrl mapboxgl-ctrl-group";
+
+        const logoBtn = document.createElement("button");
+        logoBtn.type = "button";
+        logoBtn.className = "mapboxgl-ctrl-icon";
+        logoBtn.title = "Open in Rontomap";
+        logoBtn.setAttribute("aria-label", "Open in Rontomap");
+        logoBtn.addEventListener("click", () => {
+          window.open(url.toString(), "_blank", "noopener,noreferrer");
+        });
+
+        const logoSpan = document.createElement("span");
+        logoSpan.className = "mapboxgl-ctrl-icon";
+        logoSpan.style.cssText = "background-image: url('/logo512_nobg.png') !important; background-size: 29px 29px !important;";
+
+        logoBtn.appendChild(logoSpan);
+        logoContainer.appendChild(logoBtn);
+
+        const topLeftCtrl = mapRef.current.getContainer().querySelector(".mapboxgl-ctrl-top-left");
+        if (topLeftCtrl) topLeftCtrl.appendChild(logoContainer);
+      } else {
+        geocoderEl.addEventListener("click", () => {
+          const input = geocoderEl.querySelector("input");
+          input?.focus();
+        });
+      }
     }
 
     // Capture geocoder expanded state on mousedown/touchstart (before the geocoder auto-collapses)
@@ -2197,7 +2228,7 @@ export default function Map() {
       embedded: "true",
       style: idMapStyle,
     });
-    const iframe = `<iframe style="max-width: 600px; max-height: 400px; width: 100%; height: 100%; border: none;" scrolling="no" allow="fullscreen" src="https://rontomap.web.app/?${params}"></iframe>`;
+    const iframe = `<iframe style="width: 100%; height: 100%; border: none;" scrolling="no" src="https://rontomap.web.app/?${params}"></iframe>`;
     navigator.clipboard.writeText(iframe);
     setMarkerMenu(null);
     setPathToast("Embedded code copied.");
@@ -2307,7 +2338,7 @@ export default function Map() {
       embedded: "true",
       style: idMapStyle,
     });
-    const iframe = `<iframe style="max-width: 600px; max-height: 400px; width: 100%; height: 100%; border: none;" scrolling="no" allow="fullscreen" src="https://rontomap.web.app/?${params}"></iframe>`;
+    const iframe = `<iframe style="width: 100%; height: 100%; border: none;" scrolling="no" src="https://rontomap.web.app/?${params}"></iframe>`;
     navigator.clipboard.writeText(iframe);
     setMapClickMenu(null);
     setPathToast("Embedded code copied.");
