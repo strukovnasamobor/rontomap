@@ -25,6 +25,10 @@ export default function Map() {
   const markersRef = useRef([]);
   const [fullscreen, setFullscreen] = useState(false);
   const [idMapStyle, setIdMapStyle] = useState(() => {
+    const urlStyle = new URLSearchParams(window.location.search).get("style");
+    if (urlStyle && ["rontomap_streets_light", "rontomap_streets_dark", "rontomap_satellite"].includes(urlStyle)) {
+      return urlStyle;
+    }
     const storedIdMapStyle = localStorage.getItem("rontomap_id_map_style");
     return storedIdMapStyle ? storedIdMapStyle : "rontomap_streets_light";
   });
@@ -65,6 +69,9 @@ export default function Map() {
   const [featuresLocked, setFeaturesLocked] = useState(false);
   const featuresLockedRef = useRef(false);
   const idMapStyleRef = useRef(idMapStyle);
+  const isEmbeddedRef = useRef(
+    new URLSearchParams(window.location.search).get("embedded") === "true"
+  );
 
   const menuRefCallback = useCallback((el) => {
     if (!el) return;
@@ -90,11 +97,6 @@ export default function Map() {
         el.appendChild(label);
       }
       label.textContent = marker._markerName;
-      label.onclick = (e) => {
-        e.stopPropagation();
-        namingMarkerRef.current = marker;
-        setNameAlert(true);
-      };
     } else {
       label?.remove();
     }
@@ -308,6 +310,7 @@ export default function Map() {
         e.stopPropagation();
         if (wasDragged) return;
         if (isPathModeRef.current) return;
+        if (isEmbeddedRef.current) return;
         featureMenuOpenedRef.current = true;
         setTimeout(() => { featureMenuOpenedRef.current = false; }, 300);
         setMenuPos(computeMenuPos(marker));
@@ -776,6 +779,7 @@ export default function Map() {
         e.stopPropagation();
         if (wasDragged) return;
         if (isPathModeRef.current) return;
+        if (isEmbeddedRef.current) return;
         featureMenuOpenedRef.current = true;
         setTimeout(() => { featureMenuOpenedRef.current = false; }, 300);
         const path = vertexEntry.path;
@@ -1685,6 +1689,7 @@ export default function Map() {
     // Right click on map: open context menu
     mapRef.current.on("contextmenu", (e) => {
       if (isPathModeRef.current) return;
+      if (isEmbeddedRef.current) return;
       if (featureMenuOpenedRef.current) return;
       if (geocoderOpenRef.current) return;
       if (rightMouseMoved) { rightMouseMoved = false; return; }
@@ -1715,6 +1720,7 @@ export default function Map() {
         longPressTimer = null;
         if (isPathModeRef.current) return;
         if (featureMenuOpenedRef.current) return;
+        if (isEmbeddedRef.current) return;
         longPressHandledRef.current = true;
         // Suppress the map click that follows touchend
         if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
@@ -1754,8 +1760,10 @@ export default function Map() {
     canvas.addEventListener("touchcancel", () => { clearTimeout(longPressTimer); longPressTimer = null; }, { passive: true });
 
     // Add the geolocate control to the map without adding it to the UI
-    mapRef.current.addControl(geolocateRef.current);
-    geolocateRef.current._container.style.display = "none";
+    if (!isEmbeddedRef.current) {
+      mapRef.current.addControl(geolocateRef.current);
+      geolocateRef.current._container.style.display = "none";
+    }
 
     // Add search control with custom styling
     const geocoder = new MapboxGeocoder({
@@ -1811,9 +1819,10 @@ export default function Map() {
 
     // Initialize custom location control
     locationControlRef.current = new LocationControl(geolocateRef.current, mapRef.current);
-
-    // Add custom location tracking controls to map
     mapRef.current.addControl(locationControlRef.current, "top-right");
+    if (isEmbeddedRef.current) {
+      locationControlRef.current._container.querySelector(".ctrl-location-container").style.display = "none";
+    }
 
     // Add compass icon
     const nav = new mapboxgl.NavigationControl({
@@ -1825,7 +1834,13 @@ export default function Map() {
     mapRef.current.addControl(new mapboxgl.AttributionControl({ compact: true }));
 
     // Add custom className to the compass container
-    nav._container.classList.add("ctrl-compass-container");
+    if (isEmbeddedRef.current) {
+      nav._container.style.position = "absolute";
+      nav._container.style.top = "46px";
+      nav._container.style.right = "0px";
+    } else {
+      nav._container.classList.add("ctrl-compass-container");
+    }
 
     // Enable rotation gestures (right-click drag on desktop, two-finger rotate on mobile)
 
@@ -2118,6 +2133,31 @@ export default function Map() {
     setTimeout(() => { setPathToast(null); }, 1000);
   };
 
+  const handleCopyEmbeddedMarker = () => {
+    const center = mapRef.current.getCenter();
+    const zoom = mapRef.current.getZoom();
+    const bearing = mapRef.current.getBearing();
+    const pitch = mapRef.current.getPitch();
+    const ll = markerMenu.marker.getLngLat();
+    const params = new URLSearchParams({
+      lat: center.lat.toFixed(6),
+      long: center.lng.toFixed(6),
+      zoom: zoom.toFixed(2),
+      bearing: bearing.toFixed(1),
+      pitch: pitch.toFixed(1),
+      marker: markerMenu.marker._markerName
+        ? `${ll.lat.toFixed(6)}-${ll.lng.toFixed(6)}-${encodeURIComponent(markerMenu.marker._markerName)}`
+        : `${ll.lat.toFixed(6)}-${ll.lng.toFixed(6)}`,
+      embedded: "true",
+      style: idMapStyle,
+    });
+    const iframe = `<iframe width="600" height="350" frameborder="0" allow="fullscreen" src="https://rontomap.web.app/?${params}"></iframe>`;
+    navigator.clipboard.writeText(iframe);
+    setMarkerMenu(null);
+    setPathToast("Embedded code copied.");
+    setTimeout(() => { setPathToast(null); }, 1000);
+  };
+
   const handleCopyFeatures = async () => {
     const center = mapRef.current.getCenter();
     const zoom = mapRef.current.getZoom();
@@ -2169,6 +2209,62 @@ export default function Map() {
     navigator.clipboard.writeText(url);
     setMapClickMenu(null);
     setPathToast("Link copied.");
+    setTimeout(() => { setPathToast(null); }, 1000);
+  };
+
+  const handleCopyEmbeddedFeatures = async () => {
+    const center = mapRef.current.getCenter();
+    const zoom = mapRef.current.getZoom();
+    const bearing = mapRef.current.getBearing();
+    const pitch = mapRef.current.getPitch();
+    const freeMarkers = markersRef.current.filter((m) => !m._attachedPath);
+    const markers = freeMarkers.map((m, i) => {
+      const ll = m.getLngLat();
+      return {
+        id: `m${i + 1}`,
+        name: m._markerName || "",
+        pos: [ll.lat, ll.lng],
+      };
+    });
+    const paths = pathsRef.current.map((p, i) => {
+      const pathData = {
+        id: `p${i + 1}`,
+        coords: p.vertices.map((v) => ({ long: v.lngLat[0], lat: v.lngLat[1], ...(v.force ? { force: true } : {}) })),
+      };
+      const startName = p.vertices[0]?.marker._markerName;
+      const endName = p.vertices[p.vertices.length - 1]?.marker._markerName;
+      if (startName) pathData.startName = startName;
+      if (endName) pathData.endName = endName;
+      if (p.savedView) pathData.savedView = p.savedView;
+      if (p.roadSnap) pathData.roadSnap = p.roadSnap;
+      if (p.attachedMarkers && p.attachedMarkers.length > 0) {
+        pathData.attachedMarkers = p.attachedMarkers.map((m) => {
+          const am = { segmentIndex: m._segmentIndex, t: m._t };
+          if (m._markerName) am.name = m._markerName;
+          return am;
+        });
+      }
+      return pathData;
+    });
+    const docRef = await addDoc(collection(db, "featuresCollections"), {
+      created: serverTimestamp(),
+      markers,
+      paths,
+    });
+    const params = new URLSearchParams({
+      lat: center.lat.toFixed(6),
+      long: center.lng.toFixed(6),
+      zoom: zoom.toFixed(2),
+      bearing: bearing.toFixed(1),
+      pitch: pitch.toFixed(1),
+      features_collection: docRef.id,
+      embedded: "true",
+      style: idMapStyle,
+    });
+    const iframe = `<iframe width="600" height="350" frameborder="0" allow="fullscreen" src="https://rontomap.web.app/?${params}"></iframe>`;
+    navigator.clipboard.writeText(iframe);
+    setMapClickMenu(null);
+    setPathToast("Embedded code copied.");
     setTimeout(() => { setPathToast(null); }, 1000);
   };
 
@@ -2486,7 +2582,7 @@ export default function Map() {
   useEffect(() => {
     console.log("useEffect > Show tips");
     const dontShowTips = localStorage.getItem("rontomap_dont_show_tips");
-    if (dontShowTips) {
+    if (dontShowTips || isEmbeddedRef.current) {
       setShowTips(false);
     }
   }, []);
@@ -2610,6 +2706,7 @@ export default function Map() {
             <button onClick={handleCenterToMarker}>Fly to marker</button>
             <button onClick={handleSetName}>Set name</button>
             <button onClick={handleCopyMarker}>Copy link to marker</button>
+            <button onClick={handleCopyEmbeddedMarker}>Copy embedded code</button>
             {markerMenu.marker._attachedPath && <button onClick={handleDetachFromPath}>Detach from path</button>}
             <button onClick={handleDeleteMarker}>Delete marker</button>
           </div>
@@ -2645,6 +2742,7 @@ export default function Map() {
                 <button onClick={handleToggleFeaturesLock}>{featuresLocked ? "Unlock features" : "Lock features"}</button>
                 <button onClick={handleDeleteAllFeatures}>Delete all features</button>
                 <button onClick={handleCopyFeatures}>Copy link to features</button>
+                <button onClick={handleCopyEmbeddedFeatures}>Copy embedded code</button>
               </>
             )}
           </div>
@@ -2716,7 +2814,7 @@ export default function Map() {
           )}
         </div>
       )}
-      <div ref={mapContainerRef} {...bind} className={`map-container${idMapStyle === "rontomap_streets_dark" ? " map-style-dark" : ""}${isPathMode ? " path-editing" : ""}${featuresLocked ? " features-locked" : ""}`} />
+      <div ref={mapContainerRef} {...bind} className={`map-container${idMapStyle === "rontomap_streets_dark" ? " map-style-dark" : ""}${isPathMode ? " path-editing" : ""}${featuresLocked ? " features-locked" : ""}${isEmbeddedRef.current ? " embedded" : ""}`} />
     </PageFixedLayout>
   );
 }

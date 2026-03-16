@@ -66,6 +66,13 @@
   cursor: alias !important;
 }
 
+/* Embedded mode: default cursor on locked features */
+.embedded.features-locked:not(.path-editing) .mapboxgl-marker:not(.context-dot):not(.mapboxgl-user-location),
+.embedded.features-locked:not(.path-editing) .path-vertex,
+.embedded.features-locked:not(.path-editing) .path-midpoint {
+  cursor: default !important;
+}
+
 /* Locked features on mousedown: all-scroll (same as map) */
 .map-mousedown.features-locked:not(.path-editing) .mapboxgl-marker:not(.mapboxgl-user-location),
 .map-mousedown.features-locked:not(.path-editing) .path-vertex,
@@ -98,6 +105,7 @@
 
 .mapboxgl-ctrl-scale {
   margin-right: 0px !important;
+  height: 20px !important;
 }
 
 .map-style-dark .mapboxgl-ctrl-scale {
@@ -212,6 +220,8 @@
 }
 
 .marker-label {
+  width: max-content;
+  max-width: 120px;
   position: absolute;
   top: 100%;
   left: 50%;
@@ -221,9 +231,8 @@
   border-radius: 4px;
   font-size: 12px;
   font-weight: 500;
-  white-space: nowrap;
+  text-align: center;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
-  cursor: pointer;
 }
 
 /* Glow effect on selected features */
