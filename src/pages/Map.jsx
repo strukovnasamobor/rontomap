@@ -73,6 +73,7 @@ export default function Map() {
     new URLSearchParams(window.location.search).get("embedded") === "true"
   );
   const embeddedActiveRef = useRef(false);
+  const embeddedControlsRef = useRef({});
 
   const menuRefCallback = useCallback((el) => {
     if (!el) return;
@@ -1627,34 +1628,8 @@ export default function Map() {
         if (pathClickHandledRef.current) return;
         if (longPressHandledRef.current) { longPressHandledRef.current = false; return; }
 
-        // Embedded mode: toggle map controls on click
-        if (isEmbeddedRef.current) {
-          const map = mapRef.current;
-          if (embeddedActiveRef.current) {
-            map.scrollZoom.disable();
-            map.dragPan.disable();
-            map.dragRotate.disable();
-            map.keyboard.disable();
-            map.touchZoomRotate.disable();
-            map.touchPitch.disable();
-            map.boxZoom.disable();
-            embeddedActiveRef.current = false;
-            setPathToast("Click to interact with the map.");
-            setTimeout(() => { setPathToast(null); }, 2000);
-          } else {
-            map.scrollZoom.enable();
-            map.dragPan.enable();
-            map.dragRotate.enable();
-            map.keyboard.enable();
-            map.touchZoomRotate.enable();
-            map.touchPitch.enable();
-            map.boxZoom.enable();
-            embeddedActiveRef.current = true;
-            setPathToast("Map controls activated.");
-            setTimeout(() => { setPathToast(null); }, 2000);
-          }
-          return;
-        }
+        // Embedded mode: ignore single clicks (toggle is on dblclick)
+        if (isEmbeddedRef.current) return;
 
         // Path mode: add vertex or start new path
         if (isPathModeRef.current) {
@@ -1947,7 +1922,7 @@ export default function Map() {
     // Disable one-tap-then-drag-to-zoom gesture
     if (mapRef.current.touchZoomRotate._tapDragZoom) mapRef.current.touchZoomRotate._tapDragZoom.disable();
 
-    // In embedded mode, disable all map interactions initially
+    // In embedded mode, disable all map interactions initially, hide controls, show toast
     if (isEmbeddedRef.current) {
       mapRef.current.scrollZoom.disable();
       mapRef.current.dragPan.disable();
@@ -1956,6 +1931,49 @@ export default function Map() {
       mapRef.current.touchZoomRotate.disable();
       mapRef.current.touchPitch.disable();
       mapRef.current.boxZoom.disable();
+
+      // Store control references and hide them all initially
+      const container = mapRef.current.getContainer();
+      embeddedControlsRef.current = {
+        nav: nav._container,
+        scale: container.querySelector(".mapboxgl-ctrl-scale")?.parentElement,
+        attribution: container.querySelector(".mapboxgl-ctrl-attrib")?.parentElement,
+        logo: container.querySelector(".mapboxgl-ctrl-top-left .mapboxgl-ctrl-group:last-child"),
+      };
+      Object.values(embeddedControlsRef.current).forEach(el => { if (el) el.style.display = "none"; });
+
+      // Show permanent toast
+      setPathToast("Double click to interact with the map.");
+
+      // Double-click to toggle embedded interactions
+      mapRef.current.on("dblclick", (e) => {
+        e.preventDefault();
+        const map = mapRef.current;
+        const ctrls = embeddedControlsRef.current;
+        if (embeddedActiveRef.current) {
+          map.scrollZoom.disable();
+          map.dragPan.disable();
+          map.dragRotate.disable();
+          map.keyboard.disable();
+          map.touchZoomRotate.disable();
+          map.touchPitch.disable();
+          map.boxZoom.disable();
+          embeddedActiveRef.current = false;
+          Object.values(ctrls).forEach(el => { if (el) el.style.display = "none"; });
+          setPathToast("Double click to interact with the map.");
+        } else {
+          map.scrollZoom.enable();
+          map.dragPan.enable();
+          map.dragRotate.enable();
+          map.keyboard.enable();
+          map.touchZoomRotate.enable();
+          map.touchPitch.enable();
+          map.boxZoom.enable();
+          embeddedActiveRef.current = true;
+          Object.values(ctrls).forEach(el => { if (el) el.style.display = ""; });
+          setPathToast("Double click again to stop interaction.");
+        }
+      });
     }
 
     // Recreate single marker from URL params
