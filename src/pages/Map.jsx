@@ -73,7 +73,8 @@ export default function Map() {
     new URLSearchParams(window.location.search).get("embedded") === "true"
   );
   const embeddedActiveRef = useRef(false);
-  const embeddedControlsRef = useRef({});
+  const embeddedOverlayTimerRef = useRef(null);
+  const [showEmbeddedOverlay, setShowEmbeddedOverlay] = useState(false);
 
   const menuRefCallback = useCallback((el) => {
     if (!el) return;
@@ -1922,58 +1923,96 @@ export default function Map() {
     // Disable one-tap-then-drag-to-zoom gesture
     if (mapRef.current.touchZoomRotate._tapDragZoom) mapRef.current.touchZoomRotate._tapDragZoom.disable();
 
-    // In embedded mode, disable all map interactions initially, hide controls, show toast
+    // Embedded mode interaction restrictions
     if (isEmbeddedRef.current) {
-      mapRef.current.scrollZoom.disable();
-      mapRef.current.dragPan.disable();
-      mapRef.current.dragRotate.disable();
-      mapRef.current.keyboard.disable();
-      mapRef.current.touchZoomRotate.disable();
-      mapRef.current.touchPitch.disable();
-      mapRef.current.boxZoom.disable();
-
-      // Store control references and hide them all initially
+      const isTouchDevice = "ontouchstart" in window || navigator.maxTouchPoints > 0;
       const container = mapRef.current.getContainer();
-      embeddedControlsRef.current = {
-        nav: nav._container,
-        scale: container.querySelector(".mapboxgl-ctrl-scale")?.parentElement,
-        attribution: container.querySelector(".mapboxgl-ctrl-attrib")?.parentElement,
-        logo: container.querySelector(".mapboxgl-ctrl-top-left .mapboxgl-ctrl-group:last-child"),
+
+      const showOverlay = (msg) => {
+        clearTimeout(embeddedOverlayTimerRef.current);
+        setShowEmbeddedOverlay(msg);
+        embeddedOverlayTimerRef.current = setTimeout(() => {
+          setShowEmbeddedOverlay(false);
+        }, 2500);
       };
-      Object.values(embeddedControlsRef.current).forEach(el => { if (el) el.style.display = "none"; });
 
-      // Show permanent toast
-      setPathToast("Double click to interact with the map.");
+      if (isTouchDevice) {
+        // Touch: enable zoom, rotate, pitch — only drag is disabled
+        mapRef.current.dragPan.disable();
+        mapRef.current.keyboard.disable();
 
-      // Double-click to toggle embedded interactions
-      mapRef.current.on("dblclick", (e) => {
-        e.preventDefault();
-        const map = mapRef.current;
-        const ctrls = embeddedControlsRef.current;
-        if (embeddedActiveRef.current) {
-          map.scrollZoom.disable();
-          map.dragPan.disable();
-          map.dragRotate.disable();
-          map.keyboard.disable();
-          map.touchZoomRotate.disable();
-          map.touchPitch.disable();
-          map.boxZoom.disable();
-          embeddedActiveRef.current = false;
-          Object.values(ctrls).forEach(el => { if (el) el.style.display = "none"; });
-          setPathToast("Double click to interact with the map.");
-        } else {
-          map.scrollZoom.enable();
-          map.dragPan.enable();
-          map.dragRotate.enable();
-          map.keyboard.enable();
-          map.touchZoomRotate.enable();
-          map.touchPitch.enable();
-          map.boxZoom.enable();
-          embeddedActiveRef.current = true;
-          Object.values(ctrls).forEach(el => { if (el) el.style.display = ""; });
-          setPathToast("Double click again to stop interaction.");
-        }
-      });
+        // Show overlay when user tries to drag (single-finger touchmove)
+        let touchDragDetected = false;
+        canvas.addEventListener("touchstart", (e) => {
+          if (e.touches.length === 1) touchDragDetected = true;
+          else touchDragDetected = false;
+        }, { passive: true });
+        canvas.addEventListener("touchmove", () => {
+          if (touchDragDetected && !embeddedActiveRef.current) {
+            touchDragDetected = false;
+            showOverlay("Long tap to drag map.");
+          }
+        }, { passive: true });
+        canvas.addEventListener("touchend", () => { touchDragDetected = false; }, { passive: true });
+
+        // Long-tap toggles drag
+        let embeddedLongPressTimer = null;
+        let embeddedLongPressStartPos = null;
+        canvas.addEventListener("touchstart", (e) => {
+          if (e.touches.length !== 1) { clearTimeout(embeddedLongPressTimer); embeddedLongPressTimer = null; return; }
+          const touch = e.touches[0];
+          embeddedLongPressStartPos = { x: touch.clientX, y: touch.clientY };
+          embeddedLongPressTimer = setTimeout(() => {
+            embeddedLongPressTimer = null;
+            if (embeddedActiveRef.current) {
+              // Disable drag
+              mapRef.current.dragPan.disable();
+              setTimeout(() => { mapRef.current.dragPan.disable(); }, 0);
+              embeddedActiveRef.current = false;
+              setPathToast(null);
+            } else {
+              // Enable drag
+              mapRef.current.dragPan.enable();
+              embeddedActiveRef.current = true;
+              setShowEmbeddedOverlay(false);
+              clearTimeout(embeddedOverlayTimerRef.current);
+              setPathToast("Long tap again to stop dragging map.");
+              setTimeout(() => { setPathToast(null); }, 3000);
+            }
+          }, 500);
+        }, { passive: true });
+        canvas.addEventListener("touchmove", (e) => {
+          if (embeddedLongPressTimer && e.touches.length === 1) {
+            const touch = e.touches[0];
+            const dx = touch.clientX - embeddedLongPressStartPos.x;
+            const dy = touch.clientY - embeddedLongPressStartPos.y;
+            if (dx * dx + dy * dy > 100) { clearTimeout(embeddedLongPressTimer); embeddedLongPressTimer = null; }
+          }
+        }, { passive: true });
+        canvas.addEventListener("touchend", () => { clearTimeout(embeddedLongPressTimer); embeddedLongPressTimer = null; }, { passive: true });
+        canvas.addEventListener("touchcancel", () => { clearTimeout(embeddedLongPressTimer); embeddedLongPressTimer = null; }, { passive: true });
+      } else {
+        // Desktop: enable drag, rotate, pitch — scroll zoom requires Ctrl
+        mapRef.current.scrollZoom.disable();
+
+        // Intercept wheel events: allow zoom only when Ctrl is held
+        container.addEventListener("wheel", (e) => {
+          if (e.ctrlKey) {
+            // Allow Ctrl+scroll zoom
+            if (!mapRef.current.scrollZoom._enabled) mapRef.current.scrollZoom.enable();
+          } else {
+            mapRef.current.scrollZoom.disable();
+            showOverlay("Use Ctrl + scroll for zoom or double click for full screen.");
+          }
+        }, { passive: true });
+
+        // Re-disable scrollZoom after Ctrl+scroll ends (small delay for the zoom to register)
+        container.addEventListener("keyup", (e) => {
+          if (e.key === "Control") {
+            setTimeout(() => { mapRef.current.scrollZoom.disable(); }, 100);
+          }
+        });
+      }
     }
 
     // Recreate single marker from URL params
@@ -2246,7 +2285,7 @@ export default function Map() {
       embedded: "true",
       style: idMapStyle,
     });
-    const iframe = `<iframe style="width: 100%; height: 100%; border: none;" scrolling="no" src="https://rontomap.web.app/?${params}"></iframe>`;
+    const iframe = `<iframe style="width: 100%; height: 100%; border: none;" allow="fullscreen" scrolling="no" src="https://rontomap.web.app/?${params}"></iframe>`;
     navigator.clipboard.writeText(iframe);
     setMarkerMenu(null);
     setPathToast("Embedded code copied.");
@@ -2356,7 +2395,7 @@ export default function Map() {
       embedded: "true",
       style: idMapStyle,
     });
-    const iframe = `<iframe style="width: 100%; height: 100%; border: none;" scrolling="no" src="https://rontomap.web.app/?${params}"></iframe>`;
+    const iframe = `<iframe style="width: 100%; height: 100%; border: none;" allow="fullscreen" scrolling="no" src="https://rontomap.web.app/?${params}"></iframe>`;
     navigator.clipboard.writeText(iframe);
     setMapClickMenu(null);
     setPathToast("Embedded code copied.");
@@ -2907,6 +2946,11 @@ export default function Map() {
               </button>
             </div>
           )}
+        </div>
+      )}
+      {showEmbeddedOverlay && (
+        <div className="embedded-overlay">
+          <span>{showEmbeddedOverlay}</span>
         </div>
       )}
       <div ref={mapContainerRef} {...bind} className={`map-container${idMapStyle === "rontomap_streets_dark" ? " map-style-dark" : ""}${isPathMode ? " path-editing" : ""}${featuresLocked ? " features-locked" : ""}${isEmbeddedRef.current ? " embedded" : ""}`} />
