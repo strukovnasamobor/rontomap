@@ -934,7 +934,6 @@ export default function Map() {
         this._map.dragPan.disable();
         this._map.dragRotate.disable();
         this._map.keyboard.disable();
-        this._map.doubleClickZoom.disable();
         this._map.touchZoomRotate.disable();
         this._map.touchPitch.disable();
         if (this._map.touchZoomRotate._tapDragZoom) this._map.touchZoomRotate._tapDragZoom.disable();
@@ -1924,8 +1923,7 @@ export default function Map() {
     // Embedded mode: disable all interactions, right-click/long-press to toggle
     if (isEmbeddedRef.current) {
       const isTouchDevice = "ontouchstart" in window || navigator.maxTouchPoints > 0;
-      const activateMsg = isTouchDevice ? "Long press to interact with map." : "Right click to interact with map.";
-      const deactivateMsg = isTouchDevice ? "Long press to disable interaction with map." : "Right click to disable interaction with map.";
+      const activateMsg = isTouchDevice ? "Long press to lock/unlock map movement." : "Right click to lock/unlock map movement.";
 
       // Disable all interactions initially
       mapRef.current.scrollZoom.disable();
@@ -1950,7 +1948,6 @@ export default function Map() {
           map.touchZoomRotate.disable();
           map.touchPitch.disable();
           map.boxZoom.disable();
-          map.doubleClickZoom.disable();
           embeddedActiveRef.current = false;
           setPathToast(activateMsg);
         } else {
@@ -1960,11 +1957,11 @@ export default function Map() {
           map.dragRotate.enable();
           map.keyboard.enable();
           map.touchZoomRotate.enable();
+          if (map.touchZoomRotate._tapDragZoom) map.touchZoomRotate._tapDragZoom.disable();
           map.touchPitch.enable();
           map.boxZoom.enable();
-          map.doubleClickZoom.enable();
           embeddedActiveRef.current = true;
-          setPathToast(deactivateMsg);
+          setPathToast(null);
         }
       };
 
