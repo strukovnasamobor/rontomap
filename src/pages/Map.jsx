@@ -1965,8 +1965,9 @@ export default function Map() {
         }
       };
 
-      // Desktop: right-click toggles interaction (skip if dragged)
+      // Desktop only: right-click toggles interaction (skip if dragged or touch device)
       mapRef.current.on("contextmenu", () => {
+        if (isTouchDevice) return;
         if (rightMouseMoved) return;
         toggleEmbeddedInteraction();
       });
