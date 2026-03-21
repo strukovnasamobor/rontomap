@@ -1923,7 +1923,7 @@ export default function Map() {
     // Embedded mode: disable all interactions, right-click/long-press to toggle
     if (isEmbeddedRef.current) {
       const isTouchDevice = "ontouchstart" in window || navigator.maxTouchPoints > 0;
-      const activateMsg = isTouchDevice ? "Long press to lock/unlock map movement." : "Right click to lock/unlock map movement.";
+      const activateMsg = isTouchDevice ? "Long press to lock/unlock map." : "Right click to lock/unlock map.";
 
       // Disable all interactions initially
       mapRef.current.scrollZoom.disable();
