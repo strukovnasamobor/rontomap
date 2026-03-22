@@ -418,7 +418,7 @@
   background: #ff0000;
 }
 
-.path-hud {
+.path-actions {
   position: fixed;
   top: calc(env(safe-area-inset-top) + 10px);
   left: 50%;
@@ -524,66 +524,106 @@
   background: none;
 }
 
-.path-hud-dark .snap-toggle .force-divider {
+.path-actions-dark .snap-toggle .force-divider {
   background: rgba(255, 255, 255, 0.2);
 }
 
-.path-hud-dark .snap-toggle button.force-active {
+.path-actions-dark .snap-toggle button.force-active {
   background: red;
   color: white;
 }
 
-.path-hud-dark .snap-toggle {
+.path-actions-dark .snap-toggle {
   background: #1a1a1a;
   box-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
 }
 
-.path-hud-dark .snap-toggle button {
+.path-actions-dark .snap-toggle button {
   color: white;
 }
 
-.path-hud-dark .snap-toggle button:hover {
+.path-actions-dark .snap-toggle button:hover {
   background: rgba(255, 255, 255, 0.1);
 }
 
-.path-hud-dark .snap-toggle button.active {
+.path-actions-dark .snap-toggle button.active {
   background: #ff6f00;
   color: white;
 }
 
-.snap-toggle .action-divider {
-  width: 1px;
-  margin: 6px 0;
-  background: rgba(0, 0, 0, 0.15);
+.path-actions-group {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  min-height: 36px;
+  background: white;
+  border-radius: 6px;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.15);
 }
 
-.path-hud-dark .snap-toggle .action-divider {
-  background: rgba(255, 255, 255, 0.2);
+.path-actions-group button {
+  flex: 1;
+  height: 36px;
+  width: 50px;
+  border: none;
+  background: none;
+  padding: 12px 6px;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+  color: black;
+  white-space: nowrap;
 }
 
-.snap-toggle .save-btn {
+.path-actions-group button:hover {
+  background: #f0f0f0;
+}
+
+.path-actions-group button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.path-actions-group button:disabled:hover {
+  background: none;
+}
+
+.path-actions-group .save-btn {
   color: #4caf50;
   font-weight: 600;
 }
 
-.snap-toggle .save-btn:hover {
+.path-actions-group .save-btn:hover:not(:disabled) {
   background: rgba(76, 175, 80, 0.1);
 }
 
-.path-hud-dark .snap-toggle .save-btn {
-  color: #66bb6a;
-}
-
-.snap-toggle .cancel-btn {
+.path-actions-group .cancel-btn {
   color: #f44336;
   font-weight: 600;
 }
 
-.snap-toggle .cancel-btn:hover {
+.path-actions-group .cancel-btn:hover {
   background: rgba(244, 67, 54, 0.1);
 }
 
-.path-hud-dark .snap-toggle .cancel-btn {
+.path-actions-dark .path-actions-group {
+  background: #1a1a1a;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
+}
+
+.path-actions-dark .path-actions-group button {
+  color: white;
+}
+
+.path-actions-dark .path-actions-group button:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.path-actions-dark .path-actions-group .save-btn {
+  color: #66bb6a;
+}
+
+.path-actions-dark .path-actions-group .cancel-btn {
   color: #ef5350;
 }
 
