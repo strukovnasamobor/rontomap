@@ -2701,6 +2701,7 @@ export default function Map() {
     setPathVertexCount(path.vertices.length);
     setSnapMode(path.roadSnap || null);
     setForceMode(false);
+    if (path.roadSnap) pathHelpersRef.current.fetchRoadSnap(path);
     setToastMsg("Click on map to add path points.");
   };
 
