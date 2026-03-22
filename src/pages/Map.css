@@ -435,12 +435,14 @@
 
 .toast-msg {
   position: fixed;
-  bottom: calc(env(safe-area-inset-bottom) + 5px);
+  bottom: calc(env(safe-area-inset-bottom) + 40px);
   left: 50%;
   transform: translateX(-50%);
   display: flex;
   align-items: center;
   justify-content: center;
+  width: max-content;
+  max-width: calc(100dvw - 20px);
   min-height: 36px;
   background: white;
   color: #333;
@@ -453,9 +455,20 @@
   box-shadow: 0 1px 6px rgba(0, 0, 0, 0.15);
 }
 
+@media (min-width: 768px) {
+  .toast-msg {
+    bottom: calc(env(safe-area-inset-bottom) + 5px);
+    max-width: calc(100dvw - 300px);
+  }
+}
+
 .toast-msg-dark {
   background: black;
   color: white;
+}
+
+.mapboxgl-ctrl-logo {
+  width: 70px !important;
 }
 
 .snap-toggle {
@@ -471,6 +484,7 @@
 .snap-toggle button {
   flex: 1;
   width: 60px;
+  height: 36px;
   border: none;
   background: none;
   padding: 12px 6px;
