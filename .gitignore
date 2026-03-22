@@ -31,3 +31,6 @@ firebase.js
 .google_play/*
 android/app/debug/*
 android/app/release/*
+
+# Local settings
+.claude/settings.local.json
