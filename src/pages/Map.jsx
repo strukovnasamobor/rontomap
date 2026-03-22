@@ -88,12 +88,16 @@ export default function Map() {
   const namingMarkerRef = useRef(null);
   const createMarkerRef = useRef(null);
   const geocoderOpenRef = useRef(false);
+  const geocoderRef = useRef(null);
   const [nameAlert, setNameAlert] = useState(false);
   const [deleteAllAlert, setDeleteAllAlert] = useState(false);
   const [deletePathAlert, setDeletePathAlert] = useState(null);
+  const [cancelPathAlert, setCancelPathAlert] = useState(false);
+  const cancelPathAlertRef = useRef(false);
   const [trackBearingAlert, setTrackBearingAlert] = useState(false);
   const [isPathMode, setIsPathMode] = useState(false);
-  const [pathToast, setPathToast] = useState(null);
+  const [pathVertexCount, setPathVertexCount] = useState(0);
+  const [toastMsg, setToastMsg] = useState(null);
   const [snapMode, setSnapMode] = useState(null);
   const [forceMode, setForceMode] = useState(false);
   const forceModeRef = useRef(false);
@@ -698,6 +702,7 @@ export default function Map() {
       const nextForced = path.vertices[segmentIndex + 1]?.force;
       if (forceModeRef.current || (prevForced && nextForced)) newVertex.force = true;
       path.vertices.splice(segmentIndex + 1, 0, newVertex);
+      setPathVertexCount(path.vertices.length);
       attachVertexDragHandler(newVertex);
       attachFinishHandler(newVertex);
       updatePathLine(path);
@@ -784,6 +789,7 @@ export default function Map() {
           }
           vertexEntry.marker.remove();
           verts.splice(idx, 1);
+          setPathVertexCount(verts.length);
           if (verts.length === 0) {
             // Last vertex removed — clean up the path
             const map = mapRef.current;
@@ -803,7 +809,7 @@ export default function Map() {
             }
             pathsRef.current = pathsRef.current.filter((p) => p !== path);
             activePathRef.current = null;
-            setPathToast("Click on map to add path points.");
+            setToastMsg("Click on map to add path points.");
           } else {
             updatePathLine(path);
             rebuildMidpoints(path);
@@ -811,9 +817,7 @@ export default function Map() {
             updateAttachedMarkers(path);
             if (path.roadSnap) fetchRoadSnap(path);
             if (verts.length < 2) {
-              setPathToast("Click on map to add path points.");
-            } else {
-              setPathToast("Click here to finish path.");
+              setToastMsg("Click on map to add path points.");
             }
           }
         }
@@ -1094,8 +1098,8 @@ export default function Map() {
               if (path.attachedMarkers) path.attachedMarkers.forEach((m) => m.setDraggable(false));
             }
           }
-          setPathToast("Path saved. You can edit it after stopping bearing tracking.");
-          setTimeout(() => { setPathToast(null); }, 3000);
+          setToastMsg("Path saved. You can edit it after stopping bearing tracking.");
+          setTimeout(() => { setToastMsg(null); }, 3000);
         }
       }
 
@@ -1698,6 +1702,7 @@ export default function Map() {
           const vertex = { lngLat, marker, path };
           if (forceModeRef.current) vertex.force = true;
           path.vertices.push(vertex);
+          setPathVertexCount(path.vertices.length);
           h.attachVertexDragHandler(vertex);
           h.attachFinishHandler(vertex);
           h.updateVertexStyles(path);
@@ -1705,9 +1710,6 @@ export default function Map() {
           h.rebuildMidpoints(path);
           h.updateVertexStyles(path);
           if (path.roadSnap) h.fetchRoadSnap(path);
-          if (path.vertices.length >= 2) {
-            setPathToast("Click here to finish path.");
-          }
         }
       }, 300);
     });
@@ -1823,6 +1825,7 @@ export default function Map() {
       collapsed: true,
     });
     mapRef.current.addControl(geocoder, "top-left");
+    geocoderRef.current = geocoder;
 
     // Focus on user input when search icon is clicked
     const geocoderEl = document.querySelector(".mapboxgl-ctrl-geocoder");
@@ -1972,8 +1975,8 @@ export default function Map() {
 
       const showEmbeddedToast = (msg) => {
         clearTimeout(embeddedToastTimerRef.current);
-        setPathToast(msg);
-        embeddedToastTimerRef.current = setTimeout(() => { setPathToast(null); }, 1500);
+        setToastMsg(msg);
+        embeddedToastTimerRef.current = setTimeout(() => { setToastMsg(null); }, 1500);
       };
 
       if (isTouchDevice) {
@@ -2178,6 +2181,75 @@ export default function Map() {
   useEffect(() => { idMapStyleRef.current = idMapStyle; }, [idMapStyle]);
   useEffect(() => { isPathModeRef.current = isPathMode; }, [isPathMode]);
   useEffect(() => { forceModeRef.current = forceMode; }, [forceMode]);
+  useEffect(() => { cancelPathAlertRef.current = cancelPathAlert; }, [cancelPathAlert]);
+
+  // ESC key: close geocoder if open, otherwise cancel path editing (capture phase to run before geocoder's own handler)
+  // Enter key: dismiss cancel alert (continue editing)
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.key === "Enter" && cancelPathAlertRef.current) {
+        e.preventDefault();
+        setCancelPathAlert(false);
+        return;
+      }
+      if (e.key !== "Escape") return;
+      const el = document.querySelector(".mapboxgl-ctrl-geocoder");
+      if (el && !el.classList.contains("mapboxgl-ctrl-geocoder--collapsed")) {
+        e.stopPropagation();
+        e.preventDefault();
+        if (geocoderRef.current) geocoderRef.current.clear();
+        const input = el.querySelector("input");
+        if (input) input.blur();
+        el.classList.add("mapboxgl-ctrl-geocoder--collapsed");
+        geocoderOpenRef.current = false;
+        return;
+      }
+      if (isPathModeRef.current) {
+        e.stopPropagation();
+        e.preventDefault();
+        setCancelPathAlert(true);
+      }
+    };
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, []);
+
+  // WASD keys for map navigation (mirrors arrow key behavior)
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const handler = (e) => {
+      if (e.altKey || e.ctrlKey || e.metaKey) return;
+      const tag = e.target.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || e.target.isContentEditable) return;
+      if (!map.keyboard.isActive() && !map.keyboard.isEnabled()) return;
+
+      const key = e.key.toLowerCase();
+      let xDir = 0, yDir = 0, bearingDir = 0, pitchDir = 0;
+      switch (key) {
+        case "a": e.shiftKey ? (bearingDir = -1) : (xDir = -1); break;
+        case "d": e.shiftKey ? (bearingDir = 1) : (xDir = 1); break;
+        case "w": e.shiftKey ? (pitchDir = 1) : (yDir = -1); break;
+        case "s": e.shiftKey ? (pitchDir = -1) : (yDir = 1); break;
+        default: return;
+      }
+      e.preventDefault();
+      map.easeTo({
+        duration: 300,
+        easeId: "keyboardHandler",
+        easing: (t) => t * (2 - t),
+        zoom: map.getZoom(),
+        bearing: map.getBearing() + bearingDir * 15,
+        pitch: map.getPitch() + pitchDir * 10,
+        offset: [-xDir * 100, -yDir * 100],
+        center: map.getCenter(),
+      }, { originalEvent: e });
+    };
+
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   // Warn before leaving page during path editing
   useEffect(() => {
@@ -2287,8 +2359,8 @@ export default function Map() {
     const url = `https://rontomap.web.app/?${params}`;
     navigator.clipboard.writeText(url);
     setMarkerMenu(null);
-    setPathToast("Link copied.");
-    setTimeout(() => { setPathToast(null); }, 1000);
+    setToastMsg("Link copied.");
+    setTimeout(() => { setToastMsg(null); }, 1000);
   };
 
   const handleCopyEmbeddedMarker = () => {
@@ -2312,8 +2384,8 @@ export default function Map() {
     const iframe = `<iframe style="width: 100%; height: 100%; border: none;" allow="fullscreen" scrolling="no" src="https://rontomap.web.app/?${params}"></iframe>`;
     navigator.clipboard.writeText(iframe);
     setMarkerMenu(null);
-    setPathToast("Embedded code copied.");
-    setTimeout(() => { setPathToast(null); }, 1000);
+    setToastMsg("Embedded code copied.");
+    setTimeout(() => { setToastMsg(null); }, 1000);
   };
 
   const handleCopyFeatures = async () => {
@@ -2367,8 +2439,8 @@ export default function Map() {
     const url = `https://rontomap.web.app/?${params}`;
     navigator.clipboard.writeText(url);
     setMapClickMenu(null);
-    setPathToast("Link copied.");
-    setTimeout(() => { setPathToast(null); }, 1000);
+    setToastMsg("Link copied.");
+    setTimeout(() => { setToastMsg(null); }, 1000);
   };
 
   const handleCopyEmbeddedFeatures = async () => {
@@ -2424,8 +2496,8 @@ export default function Map() {
     const iframe = `<iframe style="width: 100%; height: 100%; border: none;" allow="fullscreen" scrolling="no" src="https://rontomap.web.app/?${params}"></iframe>`;
     navigator.clipboard.writeText(iframe);
     setMapClickMenu(null);
-    setPathToast("Embedded code copied.");
-    setTimeout(() => { setPathToast(null); }, 1000);
+    setToastMsg("Embedded code copied.");
+    setTimeout(() => { setToastMsg(null); }, 1000);
   };
 
   const handleDeleteAllFeatures = () => {
@@ -2561,11 +2633,33 @@ export default function Map() {
     const marker = h.createPathVertex(lngLat);
     const vertex = { lngLat, marker, path: newPath };
     newPath.vertices.push(vertex);
+    setPathVertexCount(1);
     h.attachVertexDragHandler(vertex);
     h.attachFinishHandler(vertex);
     h.updatePathLine(newPath);
     h.updateVertexStyles(newPath);
-    setPathToast("Click on map to add path points.");
+    setToastMsg("Click on map to add path points.");
+  };
+
+  const handleFinishPath = () => {
+    const path = activePathRef.current;
+    if (path && !path.isFinished && path.vertices.length > 1) {
+      path.isFinished = true;
+      isPathModeRef.current = false;
+      setIsPathMode(false);
+      pathHelpersRef.current.hideIntermediateVertices(path);
+      path.midpoints.forEach((mp) => mp.marker.remove());
+      path.midpoints = [];
+      setToastMsg(null);
+      path.vertices.forEach((v) => v.marker.getElement().classList.remove("active-path-feature"));
+      if (path.attachedMarkers) path.attachedMarkers.forEach((m) => m.getElement().classList.remove("active-path-feature"));
+      if (path._wasLocked) {
+        delete path._wasLocked;
+        path.vertices.forEach((v) => v.marker.setDraggable(false));
+        if (path.attachedMarkers) path.attachedMarkers.forEach((m) => m.setDraggable(false));
+      }
+      delete path._preEditSnapshot;
+    }
   };
 
   const handleEditPath = () => {
@@ -2586,6 +2680,15 @@ export default function Map() {
     path.isFinished = false;
     activePathRef.current = path;
     path._wasLocked = featuresLockedRef.current;
+
+    // Snapshot for cancel/revert
+    path._preEditSnapshot = {
+      vertices: path.vertices.map((v) => ({ lngLat: [...v.lngLat], force: v.force || false })),
+      roadSnap: path.roadSnap || null,
+      snappedSegments: path.snappedSegments ? JSON.parse(JSON.stringify(path.snappedSegments)) : null,
+      savedView: path.savedView ? { ...path.savedView } : null,
+    };
+
     pathHelpersRef.current.showAllVertices(path);
     pathHelpersRef.current.rebuildMidpoints(path);
     // Enable dragging only for this path's features and tag them
@@ -2595,9 +2698,10 @@ export default function Map() {
     pathHelpersRef.current.updateVertexStyles(path);
     setIsPathMode(true);
     isPathModeRef.current = true;
+    setPathVertexCount(path.vertices.length);
     setSnapMode(path.roadSnap || null);
     setForceMode(false);
-    setPathToast(path.vertices.length >= 2 ? "Click here to finish path." : "Click on map to add path points.");
+    setToastMsg("Click on map to add path points.");
   };
 
   const handleReversePath = () => {
@@ -2657,8 +2761,80 @@ export default function Map() {
       activePathRef.current = null;
       isPathModeRef.current = false;
       setIsPathMode(false);
-      setPathToast(null);
+      setToastMsg(null);
     }
+  };
+
+  const handleCancelPathRequest = () => {
+    setCancelPathAlert(true);
+  };
+
+  const confirmCancelPath = () => {
+    const path = activePathRef.current;
+    if (!path) return;
+    const h = pathHelpersRef.current;
+    const map = mapRef.current;
+    const snapshot = path._preEditSnapshot;
+
+    if (!snapshot) {
+      // NEW path — delete entirely
+      path.vertices.forEach((v) => v.marker.remove());
+      path.midpoints.forEach((mp) => mp.marker.remove());
+      if (path.attachedMarkers) {
+        path.attachedMarkers.forEach((m) => {
+          m.remove();
+          markersRef.current = markersRef.current.filter((mk) => mk !== m);
+        });
+      }
+      const hitLayerId = `${path.layerId}-hit`;
+      const arrowLayerId = `${path.layerId}-arrows`;
+      if (map.getLayer(arrowLayerId)) map.removeLayer(arrowLayerId);
+      if (map.getLayer(hitLayerId)) map.removeLayer(hitLayerId);
+      if (map.getLayer(path.layerId)) map.removeLayer(path.layerId);
+      if (map.getSource(path.sourceId)) map.removeSource(path.sourceId);
+      pathsRef.current = pathsRef.current.filter((p) => p !== path);
+    } else {
+      // EXISTING path — restore to pre-edit state
+      path.vertices.forEach((v) => v.marker.remove());
+      path.midpoints.forEach((mp) => mp.marker.remove());
+      path.midpoints = [];
+
+      path.vertices = [];
+      snapshot.vertices.forEach((sv) => {
+        const marker = h.createPathVertex(sv.lngLat);
+        const vertex = { lngLat: sv.lngLat, marker, path };
+        if (sv.force) vertex.force = true;
+        path.vertices.push(vertex);
+        h.attachVertexDragHandler(vertex);
+        h.attachFinishHandler(vertex);
+      });
+
+      path.roadSnap = snapshot.roadSnap;
+      path.snappedSegments = snapshot.snappedSegments;
+      path.savedView = snapshot.savedView;
+      path.isFinished = true;
+
+      h.updatePathLine(path);
+      h.hideIntermediateVertices(path);
+      h.updateVertexStyles(path);
+      if (path.attachedMarkers) h.updateAttachedMarkers(path);
+
+      if (path._wasLocked) {
+        delete path._wasLocked;
+        path.vertices.forEach((v) => v.marker.setDraggable(false));
+        if (path.attachedMarkers) path.attachedMarkers.forEach((m) => m.setDraggable(false));
+      }
+      path.vertices.forEach((v) => v.marker.getElement().classList.remove("active-path-feature"));
+      if (path.attachedMarkers) path.attachedMarkers.forEach((m) => m.getElement().classList.remove("active-path-feature"));
+      delete path._preEditSnapshot;
+    }
+
+    activePathRef.current = null;
+    isPathModeRef.current = false;
+    setIsPathMode(false);
+    setToastMsg(null);
+    setSnapMode(null);
+    setForceMode(false);
   };
 
   const handleRecordPathView = () => {
@@ -2672,8 +2848,8 @@ export default function Map() {
       pitch: map.getPitch(),
       bearing: map.getBearing(),
     };
-    setPathToast("Path view recorded.");
-    setTimeout(() => { setPathToast(null); }, 1000);
+    setToastMsg("Path view recorded.");
+    setTimeout(() => { setToastMsg(null); }, 1000);
   };
 
   const handleFlyToPath = () => {
@@ -2850,6 +3026,16 @@ export default function Map() {
         ]}
       />
       <IonAlert
+        isOpen={cancelPathAlert}
+        onDidDismiss={() => setCancelPathAlert(false)}
+        header="Cancel path editing"
+        message="Are you sure you want to cancel? All changes will be lost."
+        buttons={[
+          { text: "Continue editing", role: "cancel" },
+          { text: "Discard changes", handler: confirmCancelPath },
+        ]}
+      />
+      <IonAlert
         isOpen={trackBearingAlert}
         onDidDismiss={() => setTrackBearingAlert(false)}
         header="Start bearing tracking"
@@ -2908,70 +3094,50 @@ export default function Map() {
           </div>
         </>
       )}
-      {(pathToast || isPathMode) && (
+      {isPathMode && (
         <div className={`path-hud${idMapStyle === "rontomap_streets_dark" ? " path-hud-dark" : ""}`}>
-          {pathToast && (
-            <div className="path-toast"
-              onClick={() => {
-                const path = activePathRef.current;
-                if (path && !path.isFinished && path.vertices.length > 1) {
-                  path.isFinished = true;
-                  isPathModeRef.current = false;
-                  setIsPathMode(false);
-                  pathHelpersRef.current.hideIntermediateVertices(path);
-                  path.midpoints.forEach((mp) => mp.marker.remove());
-                  path.midpoints = [];
-                  setPathToast(null);
-                  // Remove active-path-feature class
-                  path.vertices.forEach((v) => v.marker.getElement().classList.remove("active-path-feature"));
-                  if (path.attachedMarkers) path.attachedMarkers.forEach((m) => m.getElement().classList.remove("active-path-feature"));
-                  if (path._wasLocked) {
-                    delete path._wasLocked;
-                    // Re-lock this path's features
-                    path.vertices.forEach((v) => v.marker.setDraggable(false));
-                    if (path.attachedMarkers) path.attachedMarkers.forEach((m) => m.setDraggable(false));
-                  }
-                }
-              }}
-              style={{ cursor: isPathMode ? "pointer" : undefined }}>
-              {pathToast}
-            </div>
-          )}
-          {isPathMode && (
-            <div className="snap-toggle">
-              {[null, "foot", "bike", "car"].map((mode) => (
-                <button
-                  key={mode ?? "none"}
-                  className={snapMode === mode ? "active" : ""}
-                  onClick={() => {
-                    setSnapMode(mode);
-                    setForceMode(false);
-                    const path = activePathRef.current;
-                    if (!path) return;
-                    path.roadSnap = mode;
-                    if (mode) {
-                      pathHelpersRef.current.fetchRoadSnap(path);
-                    } else {
-                      path.snappedSegments = null;
-                      pathHelpersRef.current.updatePathLine(path);
-                      pathHelpersRef.current.updateAttachedMarkers(path);
-                      if (!path.isFinished) pathHelpersRef.current.rebuildMidpoints(path);
-                    }
-                  }}
-                >
-                  {mode === null ? "Free" : mode === "foot" ? "Foot" : mode === "bike" ? "Bike" : "Car"}
-                </button>
-              ))}
-              <div className="force-divider" />
+          <div className="snap-toggle">
+            {[null, "foot", "bike", "car"].map((mode) => (
               <button
-                className={forceMode ? "force-active" : ""}
-                disabled={!snapMode}
-                onClick={() => setForceMode((f) => !f)}
+                key={mode ?? "none"}
+                className={snapMode === mode ? "active" : ""}
+                onClick={() => {
+                  setSnapMode(mode);
+                  setForceMode(false);
+                  const path = activePathRef.current;
+                  if (!path) return;
+                  path.roadSnap = mode;
+                  if (mode) {
+                    pathHelpersRef.current.fetchRoadSnap(path);
+                  } else {
+                    path.snappedSegments = null;
+                    pathHelpersRef.current.updatePathLine(path);
+                    pathHelpersRef.current.updateAttachedMarkers(path);
+                    if (!path.isFinished) pathHelpersRef.current.rebuildMidpoints(path);
+                  }
+                }}
               >
-                Force
+                {mode === null ? "Free" : mode === "foot" ? "Foot" : mode === "bike" ? "Bike" : "Car"}
               </button>
-            </div>
-          )}
+            ))}
+            <div className="force-divider" />
+            <button
+              className={forceMode ? "force-active" : ""}
+              disabled={!snapMode}
+              onClick={() => setForceMode((f) => !f)}
+            >
+              Force
+            </button>
+            <div className="action-divider" />
+            <button className="save-btn" disabled={pathVertexCount < 2} onClick={handleFinishPath}>Save</button>
+            <div className="action-divider" />
+            <button className="cancel-btn" onClick={handleCancelPathRequest}>Cancel</button>
+          </div>
+        </div>
+      )}
+      {toastMsg && (
+        <div className={`toast-msg${idMapStyle === "rontomap_streets_dark" ? " toast-msg-dark" : ""}`}>
+          {toastMsg}
         </div>
       )}
       <div ref={mapContainerRef} {...bind} className={`map-container${idMapStyle === "rontomap_streets_dark" ? " map-style-dark" : ""}${idMapStyle === "rontomap_satellite" ? " map-style-satellite" : ""}${isPathMode ? " path-editing" : ""}${featuresLocked ? " features-locked" : ""}${isEmbeddedRef.current ? " embedded" : ""}`} />

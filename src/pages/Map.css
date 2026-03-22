@@ -80,6 +80,10 @@
   cursor: all-scroll !important;
 }
 
+.mapboxgl-ctrl-top-left {
+  z-index: 1001 !important;
+}
+
 .mapboxgl-ctrl-top-left,
 .mapboxgl-ctrl-top,
 .mapboxgl-ctrl-top-right {
@@ -90,6 +94,7 @@
 .mapboxgl-ctrl-bottom,
 .mapboxgl-ctrl-bottom-right {
   bottom: env(safe-area-inset-bottom) !important;
+  z-index: 1001 !important;
 }
 
 .mapboxgl-ctrl-top-right,
@@ -421,18 +426,21 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  width: 240px;
-  max-width: calc(100dvw - 100px);
+  width: auto;
+  max-width: calc(100dvw - 40px);
   gap: 10px;
   z-index: 1000;
   pointer-events: auto;
 }
 
-.path-toast {
+.toast-msg {
+  position: fixed;
+  bottom: calc(env(safe-area-inset-bottom) + 5px);
+  left: 50%;
+  transform: translateX(-50%);
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 100%;
   min-height: 36px;
   background: white;
   color: #333;
@@ -440,9 +448,12 @@
   border-radius: 4px;
   text-align: center;
   font-size: 14px;
+  z-index: 1000;
+  pointer-events: none;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.15);
 }
 
-.path-hud-dark .path-toast {
+.toast-msg-dark {
   background: black;
   color: white;
 }
@@ -524,6 +535,42 @@
 .path-hud-dark .snap-toggle button.active {
   background: #ff6f00;
   color: white;
+}
+
+.snap-toggle .action-divider {
+  width: 1px;
+  margin: 6px 0;
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.path-hud-dark .snap-toggle .action-divider {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.snap-toggle .save-btn {
+  color: #4caf50;
+  font-weight: 600;
+}
+
+.snap-toggle .save-btn:hover {
+  background: rgba(76, 175, 80, 0.1);
+}
+
+.path-hud-dark .snap-toggle .save-btn {
+  color: #66bb6a;
+}
+
+.snap-toggle .cancel-btn {
+  color: #f44336;
+  font-weight: 600;
+}
+
+.snap-toggle .cancel-btn:hover {
+  background: rgba(244, 67, 54, 0.1);
+}
+
+.path-hud-dark .snap-toggle .cancel-btn {
+  color: #ef5350;
 }
 
 .marker-menu button:disabled {
