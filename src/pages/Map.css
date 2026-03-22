@@ -298,7 +298,8 @@
   background: #2a2a2a;
 }
 
-.map-style-dark .marker-label {
+.map-style-dark .marker-label,
+.map-style-satellite .marker-label {
   background: rgba(0, 0, 0, 0.5);
   color: white;
 }
@@ -398,6 +399,18 @@
 .map-style-dark .path-midpoint {
   background: white;
   border-color: #ff6f00;
+}
+
+.path-midpoint.path-midpoint-forced {
+  border-color: #ff0000;
+}
+
+.path-midpoint.path-midpoint-forced:hover {
+  background: #ff0000;
+}
+
+.path-midpoint.path-midpoint-both-forced {
+  background: #ff0000;
 }
 
 .path-hud {

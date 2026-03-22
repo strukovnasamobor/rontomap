@@ -17,6 +17,45 @@ import { collection, addDoc, doc, getDoc, serverTimestamp } from "firebase/fires
 // Set Mapbox access token
 mapboxgl.accessToken = "pk.eyJ1IjoiYXVyZWxpdXMtemQiLCJhIjoiY21rcXA3cXh2MHNpZDNjcXl1a3MzbW8zciJ9.JO4VSTN6-0vRtWW0YKjlAg";
 
+// Ramer-Douglas-Peucker simplification (~5m tolerance)
+const RDP_TOLERANCE = 0.00005;
+const rdpSimplify = (coords, tolerance) => {
+  if (coords.length <= 2) return coords;
+  const [x1, y1] = coords[0];
+  const [x2, y2] = coords[coords.length - 1];
+  const dx = x2 - x1, dy = y2 - y1;
+  const len2 = dx * dx + dy * dy;
+  let maxDist = 0, maxIdx = 0;
+  for (let i = 1; i < coords.length - 1; i++) {
+    const [px, py] = coords[i];
+    const t = len2 === 0 ? 0 : ((px - x1) * dx + (py - y1) * dy) / len2;
+    const qx = x1 + t * dx, qy = y1 + t * dy;
+    const d = (px - qx) ** 2 + (py - qy) ** 2;
+    if (d > maxDist) { maxDist = d; maxIdx = i; }
+  }
+  if (maxDist > tolerance * tolerance) {
+    const left = rdpSimplify(coords.slice(0, maxIdx + 1), tolerance);
+    const right = rdpSimplify(coords.slice(maxIdx), tolerance);
+    return [...left.slice(0, -1), ...right];
+  }
+  return [coords[0], coords[coords.length - 1]];
+};
+
+// Serialize snappedSegments for Firestore (coords: [[lng,lat]] → [{lng,lat}])
+const serializeSnappedSegments = (segments) =>
+  segments.map((seg) => ({
+    type: seg.type,
+    coords: (seg.type === "snapped" ? rdpSimplify(seg.coords, RDP_TOLERANCE) : seg.coords)
+      .map(([lng, lat]) => ({ lng, lat })),
+  }));
+
+// Deserialize snappedSegments from Firestore ({lng,lat} → [lng,lat])
+const deserializeSnappedSegments = (segments) =>
+  segments.map((seg) => ({
+    type: seg.type,
+    coords: seg.coords.map((c) => [c.lng, c.lat]),
+  }));
+
 export default function Map() {
   const mapRef = useRef(null);
   const mapContainerRef = useRef(null);
@@ -72,7 +111,8 @@ export default function Map() {
   const isEmbeddedRef = useRef(
     new URLSearchParams(window.location.search).get("embedded") === "true"
   );
-  const embeddedActiveRef = useRef(false);
+  const embeddedFocusedRef = useRef(false);
+  const embeddedToastTimerRef = useRef(null);
 
   const menuRefCallback = useCallback((el) => {
     if (!el) return;
@@ -367,7 +407,7 @@ export default function Map() {
             "text-allow-overlap": false,
           },
           paint: {
-            "text-color": "#ff6f00",
+            "text-color": ["get", "color"],
             "text-emissive-strength": 1,
           },
         });
@@ -654,7 +694,9 @@ export default function Map() {
       }
       const newMarker = createPathVertex([ll.lng, ll.lat]);
       const newVertex = { lngLat: [ll.lng, ll.lat], marker: newMarker, path };
-      if (forceModeRef.current) newVertex.force = true;
+      const prevForced = path.vertices[segmentIndex]?.force;
+      const nextForced = path.vertices[segmentIndex + 1]?.force;
+      if (forceModeRef.current || (prevForced && nextForced)) newVertex.force = true;
       path.vertices.splice(segmentIndex + 1, 0, newVertex);
       attachVertexDragHandler(newVertex);
       attachFinishHandler(newVertex);
@@ -672,6 +714,8 @@ export default function Map() {
       for (let i = 0; i < verts.length - 1; i++) {
         const mid = computeMidpoint(verts[i].lngLat, verts[i + 1].lngLat);
         const marker = createMidpointMarker(mid);
+        if (verts[i].force || verts[i + 1].force) marker.getElement().classList.add("path-midpoint-forced");
+        if (verts[i].force && verts[i + 1].force) marker.getElement().classList.add("path-midpoint-both-forced");
         const mpEntry = { marker, segmentIndex: i, path };
         marker.on("dragstart", () => { mapRef.current.getContainer().classList.add("marker-dragging"); });
         marker.on("drag", () => {
@@ -1920,85 +1964,73 @@ export default function Map() {
     // Disable one-tap-then-drag-to-zoom gesture
     if (mapRef.current.touchZoomRotate._tapDragZoom) mapRef.current.touchZoomRotate._tapDragZoom.disable();
 
-    // Embedded mode: disable all interactions, right-click/long-press to toggle
+    // Embedded mode: focus-based interaction gating
     if (isEmbeddedRef.current) {
       const isTouchDevice = "ontouchstart" in window || navigator.maxTouchPoints > 0;
-      const activateMsg = isTouchDevice ? "Long press to lock/unlock map." : "Right click to lock/unlock map.";
+      const map = mapRef.current;
+      const container = map.getContainer();
 
-      // Disable all interactions initially
-      mapRef.current.scrollZoom.disable();
-      mapRef.current.dragPan.disable();
-      mapRef.current.dragRotate.disable();
-      mapRef.current.keyboard.disable();
-      mapRef.current.touchZoomRotate.disable();
-      mapRef.current.touchPitch.disable();
-      mapRef.current.boxZoom.disable();
-
-      // Show permanent activate toast
-      setPathToast(activateMsg);
-
-      const toggleEmbeddedInteraction = () => {
-        const map = mapRef.current;
-        if (embeddedActiveRef.current) {
-          // Disable all interactions
-          map.scrollZoom.disable();
-          map.dragPan.disable();
-          map.dragRotate.disable();
-          map.keyboard.disable();
-          map.touchZoomRotate.disable();
-          map.touchPitch.disable();
-          map.boxZoom.disable();
-          embeddedActiveRef.current = false;
-          setPathToast(activateMsg);
-        } else {
-          // Enable all interactions
-          map.scrollZoom.enable();
-          map.dragPan.enable();
-          map.dragRotate.enable();
-          map.keyboard.enable();
-          map.touchZoomRotate.enable();
-          if (map.touchZoomRotate._tapDragZoom) map.touchZoomRotate._tapDragZoom.disable();
-          map.touchPitch.enable();
-          map.boxZoom.enable();
-          embeddedActiveRef.current = true;
-          setPathToast(null);
-        }
+      const showEmbeddedToast = (msg) => {
+        clearTimeout(embeddedToastTimerRef.current);
+        setPathToast(msg);
+        embeddedToastTimerRef.current = setTimeout(() => { setPathToast(null); }, 1500);
       };
 
-      // Desktop only: right-click toggles interaction (skip if dragged or touch device)
-      mapRef.current.on("contextmenu", () => {
-        if (isTouchDevice) return;
-        if (rightMouseMoved) return;
-        toggleEmbeddedInteraction();
-      });
+      if (isTouchDevice) {
+        // Touch: enable zoom, rotate, pitch — drag gated by focus
+        map.touchZoomRotate.enable();
+        if (map.touchZoomRotate._tapDragZoom) map.touchZoomRotate._tapDragZoom.disable();
+        map.touchPitch.enable();
+        map.dragRotate.enable();
+        map.dragPan.disable();
 
-      // Touch: long-press toggles interaction
-      let embeddedLongPressTimer = null;
-      let embeddedLongPressStartPos = null;
-      canvas.addEventListener("touchstart", (e) => {
-        if (e.touches.length !== 1) { clearTimeout(embeddedLongPressTimer); embeddedLongPressTimer = null; return; }
-        const touch = e.touches[0];
-        embeddedLongPressStartPos = { x: touch.clientX, y: touch.clientY };
-        embeddedLongPressTimer = setTimeout(() => {
-          embeddedLongPressTimer = null;
-          // Stop map from dragging after long press
-          if (embeddedActiveRef.current) {
-            mapRef.current.dragPan.disable();
-            setTimeout(() => { if (embeddedActiveRef.current) mapRef.current.dragPan.enable(); }, 0);
+        // Track focus to enable/disable drag
+        window.addEventListener("focus", () => {
+          embeddedFocusedRef.current = true;
+          map.dragPan.enable();
+        });
+        window.addEventListener("blur", () => {
+          embeddedFocusedRef.current = false;
+          map.dragPan.disable();
+        });
+
+        // Show toast when user tries to drag while unfocused
+        let touchDragDetected = false;
+        canvas.addEventListener("touchstart", (e) => {
+          touchDragDetected = e.touches.length === 1;
+        }, { passive: true });
+        canvas.addEventListener("touchmove", () => {
+          if (touchDragDetected && !embeddedFocusedRef.current) {
+            touchDragDetected = false;
+            showEmbeddedToast("Tap first then drag.");
           }
-          toggleEmbeddedInteraction();
-        }, 500);
-      }, { passive: true });
-      canvas.addEventListener("touchmove", (e) => {
-        if (embeddedLongPressTimer && e.touches.length === 1) {
-          const touch = e.touches[0];
-          const dx = touch.clientX - embeddedLongPressStartPos.x;
-          const dy = touch.clientY - embeddedLongPressStartPos.y;
-          if (dx * dx + dy * dy > 100) { clearTimeout(embeddedLongPressTimer); embeddedLongPressTimer = null; }
-        }
-      }, { passive: true });
-      canvas.addEventListener("touchend", () => { clearTimeout(embeddedLongPressTimer); embeddedLongPressTimer = null; }, { passive: true });
-      canvas.addEventListener("touchcancel", () => { clearTimeout(embeddedLongPressTimer); embeddedLongPressTimer = null; }, { passive: true });
+        }, { passive: true });
+        canvas.addEventListener("touchend", () => { touchDragDetected = false; }, { passive: true });
+      } else {
+        // Desktop: enable drag, rotate, pitch — scroll zoom gated by focus
+        map.dragPan.enable();
+        map.dragRotate.enable();
+        map.keyboard.enable();
+        map.boxZoom.enable();
+        map.scrollZoom.disable();
+
+        // Track focus to enable/disable scroll zoom
+        window.addEventListener("focus", () => {
+          embeddedFocusedRef.current = true;
+          map.scrollZoom.enable();
+        });
+        window.addEventListener("blur", () => {
+          embeddedFocusedRef.current = false;
+          map.scrollZoom.disable();
+        });
+
+        // Show toast when user tries to scroll zoom while unfocused
+        container.addEventListener("wheel", () => {
+          if (!embeddedFocusedRef.current) {
+            showEmbeddedToast("Click first then scroll.");
+          }
+        }, { passive: true });
+      }
     }
 
     // Recreate single marker from URL params
@@ -2067,7 +2099,13 @@ export default function Map() {
           if (entry.savedView) path.savedView = entry.savedView;
           if (entry.roadSnap) {
             path.roadSnap = entry.roadSnap === true ? "car" : entry.roadSnap;
-            h.fetchRoadSnap(path);
+            if (entry.snappedSegments) {
+              path.snappedSegments = deserializeSnappedSegments(entry.snappedSegments);
+              h.updatePathLine(path);
+              h.updateAttachedMarkers(path);
+            } else {
+              h.fetchRoadSnap(path);
+            }
           }
           if (entry.attachedMarkers) {
             path.attachedMarkers = [];
@@ -2303,6 +2341,7 @@ export default function Map() {
       if (endName) pathData.endName = endName;
       if (p.savedView) pathData.savedView = p.savedView;
       if (p.roadSnap) pathData.roadSnap = p.roadSnap;
+      if (p.snappedSegments) pathData.snappedSegments = serializeSnappedSegments(p.snappedSegments);
       if (p.attachedMarkers && p.attachedMarkers.length > 0) {
         pathData.attachedMarkers = p.attachedMarkers.map((m) => {
           const am = { segmentIndex: m._segmentIndex, t: m._t };
@@ -2357,6 +2396,7 @@ export default function Map() {
       if (endName) pathData.endName = endName;
       if (p.savedView) pathData.savedView = p.savedView;
       if (p.roadSnap) pathData.roadSnap = p.roadSnap;
+      if (p.snappedSegments) pathData.snappedSegments = serializeSnappedSegments(p.snappedSegments);
       if (p.attachedMarkers && p.attachedMarkers.length > 0) {
         pathData.attachedMarkers = p.attachedMarkers.map((m) => {
           const am = { segmentIndex: m._segmentIndex, t: m._t };
@@ -2934,7 +2974,7 @@ export default function Map() {
           )}
         </div>
       )}
-      <div ref={mapContainerRef} {...bind} className={`map-container${idMapStyle === "rontomap_streets_dark" ? " map-style-dark" : ""}${isPathMode ? " path-editing" : ""}${featuresLocked ? " features-locked" : ""}${isEmbeddedRef.current ? " embedded" : ""}`} />
+      <div ref={mapContainerRef} {...bind} className={`map-container${idMapStyle === "rontomap_streets_dark" ? " map-style-dark" : ""}${idMapStyle === "rontomap_satellite" ? " map-style-satellite" : ""}${isPathMode ? " path-editing" : ""}${featuresLocked ? " features-locked" : ""}${isEmbeddedRef.current ? " embedded" : ""}`} />
     </PageFixedLayout>
   );
 }
