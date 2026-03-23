@@ -3472,10 +3472,10 @@ export default function Map() {
           >
             <button onClick={handleFlyToMarker}>Fly to marker</button>
             <button onClick={handleCenterToMarker}>Center to marker</button>
-            <button onClick={handleSetNameMarker}>Set name to marker</button>
             <button onClick={handleCopyLinkMarker}>Copy link to marker</button>
             <button onClick={handleCopyEmbedMarker}>Copy embed marker</button>
             {markerMenu.marker._attachedPath && <button onClick={handleDetachFromPath}>Detach from path</button>}
+            <button onClick={handleSetNameMarker}>Set name to marker</button>
             <button onClick={handleRecordMarkerView}>Record marker view</button>
             <button onClick={handleDeleteMarker}>Delete marker</button>
           </div>
@@ -3525,12 +3525,12 @@ export default function Map() {
                 <button onClick={handleCenterHere}>Center here</button>
                 <button onClick={handleAddMarkerFromMenu}>Add marker</button>
                 <button onClick={handleStartPathCreation}>Start path creation</button>
+                <button onClick={handleCopyEmbedFeatures}>Copy embed features</button>
+                <button onClick={handleCopyFeatures}>Copy link to features</button>
                 <button onClick={handleToggleFeaturesLock}>
                   {featuresLocked ? "Unlock positions" : "Lock positions"}
                 </button>
                 <button onClick={handleDeleteAllFeatures}>Delete all features</button>
-                <button onClick={handleCopyEmbedFeatures}>Copy embed features</button>
-                <button onClick={handleCopyFeatures}>Copy link to features</button>
               </>
             )}
           </div>
