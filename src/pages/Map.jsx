@@ -2226,6 +2226,7 @@ export default function Map() {
             m._markerName = entry.name;
             updateMarkerLabel(m);
           }
+          if (entry.savedView) m._savedView = entry.savedView;
         });
         const h = pathHelpersRef.current;
         (data.paths || []).forEach((entry) => {
@@ -2572,11 +2573,46 @@ export default function Map() {
   }, [markerMenu]);
 
   const handleCenterToMarker = () => {
-    mapRef.current.flyTo({ center: markerMenu.marker.getLngLat(), duration: 500 });
+    mapRef.current.easeTo({ center: markerMenu.marker.getLngLat(), duration: 500 });
     setMarkerMenu(null);
   };
 
-  const handleCopyMarker = () => {
+  const handleRecordMarkerView = () => {
+    const marker = markerMenu.marker;
+    setMarkerMenu(null);
+    if (!marker) return;
+    const map = mapRef.current;
+    marker._savedView = {
+      center: map.getCenter().toArray(),
+      zoom: map.getZoom(),
+      pitch: map.getPitch(),
+      bearing: map.getBearing(),
+    };
+    setToastMsg("Marker view recorded.");
+    setTimeout(() => {
+      setToastMsg(null);
+    }, 2000);
+  };
+
+  const handleFlyToMarker = () => {
+    const marker = markerMenu.marker;
+    setMarkerMenu(null);
+    if (!marker) return;
+    const map = mapRef.current;
+    if (marker._savedView) {
+      map.flyTo({
+        center: marker._savedView.center,
+        zoom: marker._savedView.zoom,
+        pitch: marker._savedView.pitch,
+        bearing: marker._savedView.bearing,
+        duration: 1500,
+      });
+    } else {
+      map.flyTo({ center: marker.getLngLat(), zoom: 18, duration: 1500 });
+    }
+  };
+
+  const handleCopyLinkMarker = () => {
     const center = mapRef.current.getCenter();
     const zoom = mapRef.current.getZoom();
     const bearing = mapRef.current.getBearing();
@@ -2595,13 +2631,13 @@ export default function Map() {
     const url = `https://rontomap.web.app/?${params}`;
     navigator.clipboard.writeText(url);
     setMarkerMenu(null);
-    setToastMsg("Link copied.");
+    setToastMsg("Link to marker copied.");
     setTimeout(() => {
       setToastMsg(null);
-    }, 1000);
+    }, 2000);
   };
 
-  const handleCopyEmbeddedMarker = () => {
+  const handleCopyEmbedMarker = () => {
     const center = mapRef.current.getCenter();
     const zoom = mapRef.current.getZoom();
     const bearing = mapRef.current.getBearing();
@@ -2622,10 +2658,10 @@ export default function Map() {
     const iframe = `<iframe style="width: 100%; height: 100%; border: none;" allow="fullscreen" scrolling="no" src="https://rontomap.web.app/?${params}"></iframe>`;
     navigator.clipboard.writeText(iframe);
     setMarkerMenu(null);
-    setToastMsg("Embedded code copied.");
+    setToastMsg("Embed code for marker copied.");
     setTimeout(() => {
       setToastMsg(null);
-    }, 1000);
+    }, 2000);
   };
 
   const handleCopyFeatures = async () => {
@@ -2636,11 +2672,13 @@ export default function Map() {
     const freeMarkers = markersRef.current.filter((m) => !m._attachedPath);
     const markers = freeMarkers.map((m, i) => {
       const ll = m.getLngLat();
-      return {
+      const markerData = {
         id: `m${i + 1}`,
         name: m._markerName || "",
         pos: [ll.lat, ll.lng],
       };
+      if (m._savedView) markerData.savedView = m._savedView;
+      return markerData;
     });
     const paths = pathsRef.current.map((p, i) => {
       const pathData = {
@@ -2679,13 +2717,13 @@ export default function Map() {
     const url = `https://rontomap.web.app/?${params}`;
     navigator.clipboard.writeText(url);
     setMapClickMenu(null);
-    setToastMsg("Link copied.");
+    setToastMsg("Link to features copied.");
     setTimeout(() => {
       setToastMsg(null);
-    }, 1000);
+    }, 2000);
   };
 
-  const handleCopyEmbeddedFeatures = async () => {
+  const handleCopyEmbedFeatures = async () => {
     const center = mapRef.current.getCenter();
     const zoom = mapRef.current.getZoom();
     const bearing = mapRef.current.getBearing();
@@ -2693,11 +2731,13 @@ export default function Map() {
     const freeMarkers = markersRef.current.filter((m) => !m._attachedPath);
     const markers = freeMarkers.map((m, i) => {
       const ll = m.getLngLat();
-      return {
+      const markerData = {
         id: `m${i + 1}`,
         name: m._markerName || "",
         pos: [ll.lat, ll.lng],
       };
+      if (m._savedView) markerData.savedView = m._savedView;
+      return markerData;
     });
     const paths = pathsRef.current.map((p, i) => {
       const pathData = {
@@ -2738,10 +2778,10 @@ export default function Map() {
     const iframe = `<iframe style="width: 100%; height: 100%; border: none;" allow="fullscreen" scrolling="no" src="https://rontomap.web.app/?${params}"></iframe>`;
     navigator.clipboard.writeText(iframe);
     setMapClickMenu(null);
-    setToastMsg("Embedded code copied.");
+    setToastMsg("Embed code for features copied.");
     setTimeout(() => {
       setToastMsg(null);
-    }, 1000);
+    }, 2000);
   };
 
   const handleDeleteAllFeatures = () => {
@@ -2796,14 +2836,14 @@ export default function Map() {
     setMarkerMenu(null);
   };
 
-  const handleSetName = () => {
+  const handleSetNameMarker = () => {
     namingMarkerRef.current = markerMenu.marker;
     setMarkerMenu(null);
     setNameAlert(true);
   };
 
-  const handleFlyToHere = () => {
-    mapRef.current.flyTo({ center: mapClickMenu.lngLat, duration: 500 });
+  const handleCenterHere = () => {
+    mapRef.current.easeTo({ center: mapClickMenu.lngLat, duration: 500 });
     setMapClickMenu(null);
   };
 
@@ -2954,6 +2994,7 @@ export default function Map() {
     if (!path.isFinished) h.rebuildMidpoints(path);
     if (path.attachedMarkers) h.updateAttachedMarkers(path);
     setPathVertexCount(path.vertices.length);
+    setSnapMode(path.roadSnap || null);
   };
 
   const undoPath = () => {
@@ -3200,7 +3241,17 @@ export default function Map() {
     setToastMsg("Path view recorded.");
     setTimeout(() => {
       setToastMsg(null);
-    }, 1000);
+    }, 2000);
+  };
+
+  const handleCenterToPath = () => {
+    const path = mapClickMenu.path;
+    setMapClickMenu(null);
+    if (!path || path.vertices.length === 0) return;
+    const start = path.vertices[0].lngLat;
+    const end = path.vertices[path.vertices.length - 1].lngLat;
+    const center = [(start[0] + end[0]) / 2, (start[1] + end[1]) / 2];
+    mapRef.current.easeTo({ center, duration: 500 });
   };
 
   const handleFlyToPath = () => {
@@ -3217,7 +3268,10 @@ export default function Map() {
         duration: 1500,
       });
     } else if (path.vertices.length > 0) {
-      map.flyTo({ center: path.vertices[0].lngLat, duration: 1500 });
+      const bounds = new mapboxgl.LngLatBounds();
+      path.vertices.forEach((v) => bounds.extend(v.lngLat));
+      const camera = map.cameraForBounds(bounds, { padding: 60 });
+      map.flyTo({ ...camera, duration: 1500 });
     }
   };
 
@@ -3416,11 +3470,13 @@ export default function Map() {
             style={{ left: menuPos.x, top: menuPos.y }}
             onContextMenu={(e) => e.preventDefault()}
           >
-            <button onClick={handleCenterToMarker}>Fly to marker</button>
-            <button onClick={handleSetName}>Set name</button>
-            <button onClick={handleCopyMarker}>Copy link to marker</button>
-            <button onClick={handleCopyEmbeddedMarker}>Copy embedded code</button>
+            <button onClick={handleFlyToMarker}>Fly to marker</button>
+            <button onClick={handleCenterToMarker}>Center to marker</button>
+            <button onClick={handleSetNameMarker}>Set name to marker</button>
+            <button onClick={handleCopyLinkMarker}>Copy link to marker</button>
+            <button onClick={handleCopyEmbedMarker}>Copy embed code</button>
             {markerMenu.marker._attachedPath && <button onClick={handleDetachFromPath}>Detach from path</button>}
+            <button onClick={handleRecordMarkerView}>Record marker view</button>
             <button onClick={handleDeleteMarker}>Delete marker</button>
           </div>
         </>
@@ -3455,25 +3511,26 @@ export default function Map() {
             {mapClickMenu.path ? (
               <>
                 <button onClick={handleFlyToPath}>Fly to path</button>
+                <button onClick={handleCenterToPath}>Center to path</button>
                 <button onClick={handleAddMarkerToPath}>Add marker to path</button>
                 <button onClick={handleEditPath}>Edit path</button>
                 <button onClick={handleReversePath}>Reverse path</button>
-                <button onClick={handleSetPathStartName}>Set name to start</button>
-                <button onClick={handleSetPathEndName}>Set name to end</button>
+                <button onClick={handleSetPathStartName}>Set path start name </button>
+                <button onClick={handleSetPathEndName}>Set path end name</button>
                 <button onClick={handleRecordPathView}>Record path view</button>
                 <button onClick={handleDeletePath}>Delete path</button>
               </>
             ) : (
               <>
-                <button onClick={handleFlyToHere}>Fly to here</button>
+                <button onClick={handleCenterHere}>Center here</button>
                 <button onClick={handleAddMarkerFromMenu}>Add marker</button>
                 <button onClick={handleStartPathCreation}>Start path creation</button>
                 <button onClick={handleToggleFeaturesLock}>
-                  {featuresLocked ? "Unlock features" : "Lock features"}
+                  {featuresLocked ? "Unlock positions" : "Lock positions"}
                 </button>
                 <button onClick={handleDeleteAllFeatures}>Delete all features</button>
+                <button onClick={handleCopyEmbedFeatures}>Copy embed code</button>
                 <button onClick={handleCopyFeatures}>Copy link to features</button>
-                <button onClick={handleCopyEmbeddedFeatures}>Copy embedded code</button>
               </>
             )}
           </div>
