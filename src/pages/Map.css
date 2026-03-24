@@ -559,6 +559,35 @@
   color: black;
 }
 
+.route-info {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: white;
+  padding: 6px 16px;
+  border-radius: 6px;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.15);
+  font-size: 14px;
+  font-weight: 500;
+  color: #333;
+  white-space: nowrap;
+}
+
+.route-info-separator {
+  color: #999;
+}
+
+.path-actions-dark .route-info {
+  background: #1a1a1a;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
+  color: white;
+}
+
+.path-actions-dark .route-info-separator {
+  color: rgba(255, 255, 255, 0.4);
+}
+
 .path-actions-group {
   display: flex;
   flex-wrap: wrap;

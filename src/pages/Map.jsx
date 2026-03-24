@@ -132,6 +132,8 @@ export default function Map() {
   const isNavigationModeRef = useRef(false);
   const [isNavigationTracking, setIsNavigationTracking] = useState(false);
   const isNavigationTrackingRef = useRef(false);
+  const [navRouteDistance, setNavRouteDistance] = useState(null);
+  const [navRouteDuration, setNavRouteDuration] = useState(null);
   const [cancelNavigationAlert, setCancelNavigationAlert] = useState(false);
   const cancelNavigationAlertRef = useRef(false);
   const [featuresLocked, setFeaturesLocked] = useState(false);
@@ -347,6 +349,36 @@ export default function Map() {
     }
   }, [idMapStyle]);
 
+  const haversineDistance = (coords) => {
+    const toRad = (d) => (d * Math.PI) / 180;
+    let total = 0;
+    for (let i = 1; i < coords.length; i++) {
+      const [lon1, lat1] = coords[i - 1];
+      const [lon2, lat2] = coords[i];
+      const dLat = toRad(lat2 - lat1);
+      const dLon = toRad(lon2 - lon1);
+      const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+      total += 6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+    return total;
+  };
+
+  const formatDistance = (meters) => {
+    if (meters == null) return "";
+    if (meters < 1000) return `${Math.round(meters)} m`;
+    return `${(meters / 1000).toFixed(1)} km`;
+  };
+
+  const formatDuration = (seconds) => {
+    if (seconds == null) return "";
+    if (seconds < 60) return "< 1 min";
+    const mins = Math.round(seconds / 60);
+    if (mins < 60) return `${mins} min`;
+    const hrs = Math.floor(mins / 60);
+    const rem = mins % 60;
+    return rem > 0 ? `${hrs} h ${rem} min` : `${hrs} h`;
+  };
+
   // Initialize map and add controls
   useEffect(() => {
     console.log("useEffect > Initialize map");
@@ -480,6 +512,11 @@ export default function Map() {
         const coords = path.vertices.map((v) => v.lngLat);
         const features = coords.length >= 2 ? [makeFeature(coords, mainColor)] : [];
         source.setData({ type: "FeatureCollection", features });
+        // Compute straight-line distance in Free mode for navigation paths
+        if (path.isNavigation && coords.length >= 2) {
+          setNavRouteDistance(haversineDistance(coords));
+          setNavRouteDuration(null);
+        }
       }
 
       // Set dash pattern for navigation foot/bike modes
@@ -507,6 +544,8 @@ export default function Map() {
         if (i + MAX >= verts.length) break;
       }
       const allCoords = [];
+      let totalDistance = 0;
+      let totalDuration = 0;
       for (const batch of batches) {
         const coords = batch.map((v) => v.lngLat.join(",")).join(";");
         const res = await fetch(
@@ -514,13 +553,16 @@ export default function Map() {
         );
         const data = await res.json();
         if (data.routes && data.routes.length > 0) {
-          const routeCoords = data.routes[0].geometry.coordinates;
+          const route = data.routes[0];
+          const routeCoords = route.geometry.coordinates;
           allCoords.push(...(allCoords.length > 0 ? routeCoords.slice(1) : routeCoords));
+          totalDistance += route.distance || 0;
+          totalDuration += route.duration || 0;
         } else {
           return null;
         }
       }
-      return allCoords;
+      return { coords: allCoords, distance: totalDistance, duration: totalDuration };
     };
 
     // Build segment runs: consecutive non-force-adjacent pairs are snap runs, force-adjacent are direct
@@ -543,6 +585,10 @@ export default function Map() {
     const fetchRoadSnap = async (path) => {
       if (!path.roadSnap || path.vertices.length < 2) {
         path.snappedSegments = null;
+        path.routeDistance = null;
+        path.routeDuration = null;
+        setNavRouteDistance(null);
+        setNavRouteDuration(null);
         updatePathLine(path);
         return;
       }
@@ -552,22 +598,26 @@ export default function Map() {
 
       try {
         const segments = [];
+        let pathDistance = 0;
+        let pathDuration = 0;
         for (const run of runs) {
           if (run.type === "direct") {
             segments.push({ type: "direct", coords: run.indices.map((i) => verts[i].lngLat) });
           } else {
             const runVerts = run.indices.map((i) => verts[i]);
-            const snapped = await fetchDirections(runVerts, profile);
-            if (snapped) {
+            const result = await fetchDirections(runVerts, profile);
+            if (result) {
+              pathDistance += result.distance;
+              pathDuration += result.duration;
               // Add direct red segment from first vertex to snapped start if they differ
               const first = runVerts[0].lngLat;
               const last = runVerts[runVerts.length - 1].lngLat;
-              if (first[0] !== snapped[0][0] || first[1] !== snapped[0][1]) {
-                segments.push({ type: "offset", coords: [first, snapped[0]] });
+              if (first[0] !== result.coords[0][0] || first[1] !== result.coords[0][1]) {
+                segments.push({ type: "offset", coords: [first, result.coords[0]] });
               }
-              segments.push({ type: "snapped", coords: snapped });
+              segments.push({ type: "snapped", coords: result.coords });
               // Add offset segment from snapped end to last vertex if they differ
-              const snappedEnd = snapped[snapped.length - 1];
+              const snappedEnd = result.coords[result.coords.length - 1];
               if (last[0] !== snappedEnd[0] || last[1] !== snappedEnd[1]) {
                 segments.push({ type: "offset", coords: [snappedEnd, last] });
               }
@@ -578,8 +628,16 @@ export default function Map() {
           }
         }
         path.snappedSegments = segments;
+        path.routeDistance = pathDistance;
+        path.routeDuration = pathDuration;
+        setNavRouteDistance(pathDistance);
+        setNavRouteDuration(pathDuration);
       } catch {
         path.snappedSegments = null;
+        path.routeDistance = null;
+        path.routeDuration = null;
+        setNavRouteDistance(null);
+        setNavRouteDuration(null);
       }
       updatePathLine(path);
       updateAttachedMarkers(path);
@@ -3096,6 +3154,8 @@ export default function Map() {
       pathRedoStackRef.current = [];
       setCanUndo(false);
       setCanRedo(false);
+      setNavRouteDistance(null);
+      setNavRouteDuration(null);
     }
   };
 
@@ -3348,6 +3408,8 @@ export default function Map() {
     pathPointToastShownRef.current = false;
     setSnapMode(null);
     setForceMode(false);
+    setNavRouteDistance(null);
+    setNavRouteDuration(null);
 
     const h = pathHelpersRef.current;
     h.ensurePathLayer(newPath);
@@ -3443,6 +3505,8 @@ export default function Map() {
     pathRedoStackRef.current = [];
     setCanUndo(false);
     setCanRedo(false);
+    setNavRouteDistance(null);
+    setNavRouteDuration(null);
   };
 
   const confirmTrackBearing = () => {
@@ -3499,6 +3563,8 @@ export default function Map() {
       pathRedoStackRef.current = [];
       setCanUndo(false);
       setCanRedo(false);
+      setNavRouteDistance(null);
+      setNavRouteDuration(null);
       return;
     }
     const h = pathHelpersRef.current;
@@ -3569,6 +3635,8 @@ export default function Map() {
     pathRedoStackRef.current = [];
     setCanUndo(false);
     setCanRedo(false);
+    setNavRouteDistance(null);
+    setNavRouteDuration(null);
   };
 
   const handleRecordPathView = () => {
@@ -3996,6 +4064,17 @@ export default function Map() {
                 </button>
               </div>
             </>
+          )}
+          {navRouteDistance != null && (
+            <div className="route-info">
+              <span>{formatDistance(navRouteDistance)}</span>
+              {navRouteDuration != null && (
+                <>
+                  <span className="route-info-separator">&middot;</span>
+                  <span>{formatDuration(navRouteDuration)}</span>
+                </>
+              )}
+            </div>
           )}
         </div>
       )}
