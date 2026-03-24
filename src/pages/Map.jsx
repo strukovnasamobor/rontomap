@@ -534,6 +534,7 @@ export default function Map() {
     };
 
     const SNAP_PROFILES = { foot: "walking", bike: "cycling", car: "driving" };
+    const AVG_SPEEDS = { foot: 1.4, bike: 4.2, car: 13.9 }; // m/s (~5, ~15, ~50 km/h)
 
     // Fetch directions for a list of vertices, handling the 25-waypoint batch limit
     const fetchDirections = async (verts, profile) => {
@@ -600,9 +601,17 @@ export default function Map() {
         const segments = [];
         let pathDistance = 0;
         let pathDuration = 0;
+        const speed = AVG_SPEEDS[path.roadSnap] || AVG_SPEEDS.car;
+        const addStraightLine = (coords) => {
+          const d = haversineDistance(coords);
+          pathDistance += d;
+          pathDuration += d / speed;
+        };
         for (const run of runs) {
           if (run.type === "direct") {
-            segments.push({ type: "direct", coords: run.indices.map((i) => verts[i].lngLat) });
+            const coords = run.indices.map((i) => verts[i].lngLat);
+            segments.push({ type: "direct", coords });
+            addStraightLine(coords);
           } else {
             const runVerts = run.indices.map((i) => verts[i]);
             const result = await fetchDirections(runVerts, profile);
@@ -613,17 +622,23 @@ export default function Map() {
               const first = runVerts[0].lngLat;
               const last = runVerts[runVerts.length - 1].lngLat;
               if (first[0] !== result.coords[0][0] || first[1] !== result.coords[0][1]) {
-                segments.push({ type: "offset", coords: [first, result.coords[0]] });
+                const offsetCoords = [first, result.coords[0]];
+                segments.push({ type: "offset", coords: offsetCoords });
+                addStraightLine(offsetCoords);
               }
               segments.push({ type: "snapped", coords: result.coords });
               // Add offset segment from snapped end to last vertex if they differ
               const snappedEnd = result.coords[result.coords.length - 1];
               if (last[0] !== snappedEnd[0] || last[1] !== snappedEnd[1]) {
-                segments.push({ type: "offset", coords: [snappedEnd, last] });
+                const offsetCoords = [snappedEnd, last];
+                segments.push({ type: "offset", coords: offsetCoords });
+                addStraightLine(offsetCoords);
               }
             } else {
               // Fallback: render as straight line (not force)
-              segments.push({ type: "fallback", coords: runVerts.map((v) => v.lngLat) });
+              const fallbackCoords = runVerts.map((v) => v.lngLat);
+              segments.push({ type: "fallback", coords: fallbackCoords });
+              addStraightLine(fallbackCoords);
             }
           }
         }
@@ -820,13 +835,12 @@ export default function Map() {
               features.push(makeFeature(seg.coords, mainColor));
             }
           }
-          // Draw live force lines for edges adjacent to dragged vertex
+          // Draw all force lines from current vertex positions
           const forceColor = path.isNavigation ? "#ff0000" : "#6F00FF";
-          if (vi > 0 && (verts[vi - 1].force || vertexEntry.force)) {
-            features.push(makeFeature([verts[vi - 1].lngLat, vertexEntry.lngLat], forceColor));
-          }
-          if (vi < verts.length - 1 && (vertexEntry.force || verts[vi + 1].force)) {
-            features.push(makeFeature([vertexEntry.lngLat, verts[vi + 1].lngLat], forceColor));
+          for (let i = 0; i < verts.length - 1; i++) {
+            if (verts[i].force || verts[i + 1].force) {
+              features.push(makeFeature([verts[i].lngLat, verts[i + 1].lngLat], forceColor));
+            }
           }
           const source = mapRef.current?.getSource(path.sourceId);
           if (source) source.setData({ type: "FeatureCollection", features });
