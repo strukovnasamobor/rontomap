@@ -12,9 +12,9 @@
   cursor: pointer !important;
 }
 
-/* Path editing mode: all features show pointer by default */
-.path-editing .mapboxgl-marker:not(.context-dot):not(.mapboxgl-user-location) {
-  cursor: pointer !important;
+/* Path editing mode: non-active features are click-through so clicks create path points */
+.path-editing .mapboxgl-marker:not(.active-path-feature):not(.context-dot):not(.mapboxgl-user-location) {
+  pointer-events: none !important;
 }
 
 /* Path editing mode: active path's features show grab */

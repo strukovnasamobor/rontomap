@@ -858,9 +858,28 @@ export default function Map() {
           vertexEntry.force = true;
           updateVertexStyles(vertexEntry.path);
         }
-        updatePathLine(vertexEntry.path);
+        if (!vertexEntry.path.roadSnap) updatePathLine(vertexEntry.path);
         updateAttachedMarkers(vertexEntry.path);
-        if (!vertexEntry.path.isFinished) rebuildMidpoints(vertexEntry.path);
+        if (!vertexEntry.path.isFinished) {
+          // Update midpoint force styles in place instead of rebuilding
+          // (positions are already correct from updateAdjacentMidpoints during drag)
+          const path = vertexEntry.path;
+          path.midpoints.forEach((mp) => {
+            const verts = path.vertices;
+            const a = verts[mp.segmentIndex];
+            const b = verts[mp.segmentIndex + 1];
+            if (a?.force || b?.force) {
+              mp.marker.getElement().classList.add("path-midpoint-forced");
+            } else {
+              mp.marker.getElement().classList.remove("path-midpoint-forced");
+            }
+            if (a?.force && b?.force) {
+              mp.marker.getElement().classList.add("path-midpoint-both-forced");
+            } else {
+              mp.marker.getElement().classList.remove("path-midpoint-both-forced");
+            }
+          });
+        }
         if (vertexEntry.path.roadSnap) fetchRoadSnap(vertexEntry.path);
       });
     };
@@ -869,8 +888,6 @@ export default function Map() {
       const { marker, segmentIndex, path } = mpEntry;
       pushPathSnapshot(path);
       const ll = marker.getLngLat();
-      path.midpoints.forEach((mp) => mp.marker.remove());
-      path.midpoints = [];
       // Shift attached markers on the split segment
       if (path.attachedMarkers) {
         path.attachedMarkers.forEach((m) => {
@@ -903,7 +920,7 @@ export default function Map() {
       }
       attachVertexDragHandler(newVertex);
       attachFinishHandler(newVertex);
-      updatePathLine(path);
+      if (!path.roadSnap) updatePathLine(path);
       rebuildMidpoints(path);
       updateVertexStyles(path);
       updateAttachedMarkers(path);
@@ -2486,6 +2503,8 @@ export default function Map() {
           h.updatePathLine(path);
           h.hideIntermediateVertices(path);
           h.updateVertexStyles(path);
+          // Path is finished — remove active-path-feature so cursor shows pointer, not grab
+          path.vertices.forEach((v) => v.marker.getElement().classList.remove("active-path-feature"));
         });
         // Lock features when loaded from URL
         featuresLockedRef.current = true;
@@ -2508,7 +2527,7 @@ export default function Map() {
     const zoom = map.getZoom();
     const bearing = map.getBearing();
     const pitch = map.getPitch();
-    map.setStyle(mapStyle);
+    map.setStyle(mapStyle, { diff: false });
     map.once("style.load", () => {
       map.jumpTo({
         center,
@@ -2519,9 +2538,18 @@ export default function Map() {
       pathsRef.current.forEach((path) => {
         pathHelpersRef.current.ensurePathLayer(path);
         pathHelpersRef.current.updatePathLine(path);
+        pathHelpersRef.current.updateVertexStyles(path);
+        if (!path.isFinished) pathHelpersRef.current.rebuildMidpoints(path);
       });
       if (featuresLockedRef.current) {
         applyFeaturesLock(true);
+      }
+      // Re-enable dragging on the active path being edited
+      const active = activePathRef.current;
+      if (active && !active.isFinished) {
+        active.vertices.forEach((v) => v.marker.setDraggable(true));
+        active.midpoints.forEach((mp) => mp.marker.setDraggable(true));
+        if (active.attachedMarkers) active.attachedMarkers.forEach((m) => m.setDraggable(true));
       }
     });
   }, [mapStyle]);
