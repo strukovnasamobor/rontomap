@@ -1,4 +1,16 @@
-<svg viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg" fill="#333" xmlns:bx="https://boxy-svg.com">
-  <circle id="circle-1" cx="10" cy="10" r="5" style="fill: rgb(255, 111, 0); paint-order: fill; stroke-width: 1;"></circle>
-  <path d="M -4.736 -12.001 L -2.736 -8.001 L -6.736 -8.001 L -4.736 -12.001 Z" bx:shape="triangle -6.736 -12.001 4 4 0.5 0 1@bfa71a95" style="fill: rgb(0, 144, 255); transform-box: fill-box; transform-origin: 50% 50%;" transform="matrix(0, 1, -1, 0, 15.278629, 20.001001)"></path>
+<?xml version="1.0" encoding="utf-8"?>
+<svg 
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <path
+    fill-rule="evenodd"
+    clip-rule="evenodd"
+    d="M12 21C16.9706 21 21 16.9706 21 12C21 7.02944 16.9706 3 12 3C7.02944 3 3 7.02944 3 12C3 16.9706 7.02944 21 12 21ZM12 23C18.0751 23 23 18.0751 23 12C23 5.92487 18.0751 1 12 1C5.92487 1 1 5.92487 1 12C1 18.0751 5.92487 23 12 23Z"
+    fill="rgb(50,50,50"
+  />
+  <path d="M16 12L10 16.3301V7.66987L16 12Z" fill="rgb(50,50,50)" />
 </svg>

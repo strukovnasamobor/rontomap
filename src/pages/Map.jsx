@@ -1457,7 +1457,7 @@ export default function Map() {
                   aria-label="Track User Bearing"
                   data-control="track_bearing"
               >
-                  <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/start_tracking_bearing.svg');background-size: 45px 45px;"></span>
+                  <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/start_tracking_bearing.svg');"></span>
               </button>
               <button
                   class="mapboxgl-ctrl-geolocate hidden"
@@ -1466,7 +1466,7 @@ export default function Map() {
                   aria-label="Tracking User Bearing"
                   data-control="stop_tracking_bearing"
               >
-                  <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/stop_tracking_bearing.svg');background-size: 45px 45px;"></span>
+                  <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/stop_tracking_bearing.svg');"></span>
               </button>
           </div>
           <div class="ctrl-mapstyle-container mapboxgl-ctrl mapboxgl-ctrl-group">
