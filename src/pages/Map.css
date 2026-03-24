@@ -541,6 +541,21 @@
   background: #6f00ff;
 }
 
+.nav-snap-toggle button.force-active {
+  background: #ff0000;
+  color: white;
+}
+.nav-snap-toggle button.force-active:hover {
+  background: #ff0000;
+}
+.path-actions-dark .nav-snap-toggle button.force-active {
+  background: #ff0000;
+  color: white;
+}
+.path-actions-dark .nav-snap-toggle button.force-active:hover {
+  background: #ff0000;
+}
+
 .path-actions-dark .snap-toggle {
   background: #1a1a1a;
   box-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);

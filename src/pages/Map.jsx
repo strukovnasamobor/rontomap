@@ -467,10 +467,10 @@ export default function Map() {
 
       if (path.roadSnap && path.snappedSegments) {
         const features = [];
-        const isNavCar = path.isNavigation && path.roadSnap === "car";
+        const isNav = path.isNavigation;
         for (const seg of path.snappedSegments) {
           if (seg.coords.length >= 2) {
-            const width = isNavCar && seg.type === "snapped" ? 10 : undefined;
+            const width = isNav && seg.type === "snapped" ? (path.roadSnap === "car" ? 10 : (path.roadSnap === "bike" || path.roadSnap === "foot") ? 5 : undefined) : undefined;
             const segColor = seg.type === "direct" ? forceColor : seg.type === "offset" ? forceColor : mainColor;
             features.push(makeFeature(seg.coords, segColor, width));
           }
@@ -1457,7 +1457,7 @@ export default function Map() {
                   aria-label="Track User Bearing"
                   data-control="track_bearing"
               >
-                  <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/start_tracking_bearing.svg');background-size: 45px 45px;"></span>
+                  <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/start_tracking_bearing.svg');background-size: 72px 72px;"></span>
               </button>
               <button
                   class="mapboxgl-ctrl-geolocate hidden"
@@ -1466,7 +1466,7 @@ export default function Map() {
                   aria-label="Tracking User Bearing"
                   data-control="stop_tracking_bearing"
               >
-                  <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/stop_tracking_bearing.svg');background-size: 45px 45px;"></span>
+                  <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/stop_tracking_bearing.svg');background-size: 72px 72px;"></span>
               </button>
           </div>
           <div class="ctrl-mapstyle-container mapboxgl-ctrl mapboxgl-ctrl-group">
