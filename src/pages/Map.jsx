@@ -406,7 +406,7 @@ export default function Map() {
           id: path.layerId,
           type: "line",
           source: path.sourceId,
-          paint: { "line-color": ["get", "color"], "line-width": 3, "line-emissive-strength": 1 },
+          paint: { "line-color": ["get", "color"], "line-width": ["coalesce", ["get", "width"], 3], "line-emissive-strength": 1 },
           layout: { "line-cap": "round", "line-join": "round" },
         });
         const hitLayerId = `${path.layerId}-hit`;
@@ -448,9 +448,9 @@ export default function Map() {
       }
     };
 
-    const makeFeature = (coords, color) => ({
+    const makeFeature = (coords, color, width) => ({
       type: "Feature",
-      properties: { color },
+      properties: { color, ...(width != null && { width }) },
       geometry: { type: "LineString", coordinates: coords },
     });
 
@@ -462,9 +462,11 @@ export default function Map() {
 
       if (path.roadSnap && path.snappedSegments) {
         const features = [];
+        const isNavCar = path.isNavigation && path.roadSnap === "car";
         for (const seg of path.snappedSegments) {
           if (seg.coords.length >= 2) {
-            features.push(makeFeature(seg.coords, seg.type === "direct" ? forceColor : mainColor));
+            const width = isNavCar && seg.type === "snapped" ? 10 : undefined;
+            features.push(makeFeature(seg.coords, seg.type === "direct" ? forceColor : mainColor, width));
           }
         }
         source.setData({ type: "FeatureCollection", features });
@@ -472,6 +474,19 @@ export default function Map() {
         const coords = path.vertices.map((v) => v.lngLat);
         const features = coords.length >= 2 ? [makeFeature(coords, mainColor)] : [];
         source.setData({ type: "FeatureCollection", features });
+      }
+
+      // Set dash pattern for navigation foot/bike modes
+      const map = mapRef.current;
+      if (map && map.getLayer(path.layerId)) {
+        if (path.isNavigation && path.roadSnap === "foot") {
+          map.setLayoutProperty(path.layerId, "line-cap", "round");
+          map.setPaintProperty(path.layerId, "line-dasharray", [0, 3]);
+        } else if (path.isNavigation && path.roadSnap === "bike") {
+          map.setPaintProperty(path.layerId, "line-dasharray", [3, 3]);
+        } else {
+          map.setPaintProperty(path.layerId, "line-dasharray", null);
+        }
       }
     };
 
@@ -2596,7 +2611,7 @@ export default function Map() {
       return () => {
         longPressHandledRef.current = false;
         if (map.getLayer(layerId)) {
-          map.setPaintProperty(layerId, "line-width", 3);
+          map.setPaintProperty(layerId, "line-width", ["coalesce", ["get", "width"], 3]);
           map.setPaintProperty(layerId, "line-opacity", 1);
         }
         glowEls.forEach((el) => el.classList.remove("feature-glow"));
