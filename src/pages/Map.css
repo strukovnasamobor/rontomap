@@ -516,7 +516,7 @@
 
 .snap-toggle button.force-active {
   background: red;
-  color: white;
+  color: black;
 }
 
 .snap-toggle button:disabled {
@@ -629,6 +629,48 @@
 
 .path-actions-dark .path-actions-group .cancel-btn {
   color: #ef5350;
+}
+
+/* Navigation path vertex - blue */
+.nav-path-vertex {
+  border-color: #0090ff;
+}
+.nav-path-vertex.path-vertex-last {
+  background: #0090ff;
+}
+.map-style-dark .nav-path-vertex {
+  border-color: #0090ff;
+}
+.map-style-dark .nav-path-vertex.path-vertex-last {
+  background: #0090ff;
+}
+
+/* Navigation path midpoint - blue */
+.nav-path-midpoint {
+  border-color: #0090ff;
+}
+.map-style-dark .nav-path-midpoint {
+  border-color: #0090ff;
+}
+
+/* Navigation snap toggle - blue active */
+.nav-snap-toggle button.active {
+  background: #0090ff;
+}
+.path-actions-dark .nav-snap-toggle button.active {
+  background: #0090ff;
+}
+
+/* Navigation start button */
+.path-actions-group .start-btn {
+  color: #0090ff;
+  font-weight: 600;
+}
+.path-actions-group .start-btn:hover:not(:disabled) {
+  background: rgba(0, 144, 255, 0.1);
+}
+.path-actions-dark .path-actions-group .start-btn {
+  color: #4db8ff;
 }
 
 .marker-menu button:disabled {
