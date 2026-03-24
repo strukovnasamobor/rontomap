@@ -361,8 +361,8 @@
 }
 
 .path-vertex.path-vertex-force {
-  background: red !important;
-  border-color: red !important;
+  background: #6f00ff !important;
+  border-color: #6f00ff !important;
 }
 
 /* Path midpoint handle - smaller circle */
@@ -411,15 +411,15 @@
 }
 
 .path-midpoint.path-midpoint-forced {
-  border-color: #ff0000;
+  border-color: #6f00ff;
 }
 
 .path-midpoint.path-midpoint-forced:hover {
-  background: #ff0000;
+  background: #6f00ff;
 }
 
 .path-midpoint.path-midpoint-both-forced {
-  background: #ff0000;
+  background: #6f00ff;
 }
 
 .path-actions {
@@ -515,8 +515,8 @@
 }
 
 .snap-toggle button.force-active {
-  background: red;
-  color: black;
+  background: #6f00ff;
+  color: white;
 }
 
 .snap-toggle button:disabled {
@@ -533,8 +533,12 @@
 }
 
 .path-actions-dark .snap-toggle button.force-active {
-  background: red;
+  background: #6f00ff;
   color: white;
+}
+
+.path-actions-dark .snap-toggle button.force-active:hover {
+  background: #6f00ff;
 }
 
 .path-actions-dark .snap-toggle {
@@ -552,7 +556,7 @@
 
 .path-actions-dark .snap-toggle button.active {
   background: #ff6f00;
-  color: white;
+  color: black;
 }
 
 .path-actions-group {
@@ -652,13 +656,47 @@
 .map-style-dark .nav-path-midpoint {
   border-color: #0090ff;
 }
+.map-style-dark .path-midpoint.path-midpoint-forced {
+  border-color: #6f00ff;
+}
+.map-style-dark .path-midpoint.path-midpoint-both-forced {
+  background: #6f00ff;
+}
+
+/* Navigation forced vertex - red */
+.nav-path-vertex.path-vertex-force {
+  background: #ff0000 !important;
+  border-color: #ff0000 !important;
+}
+/* Navigation forced midpoint - red */
+.nav-path-midpoint.path-midpoint-forced {
+  border-color: #ff0000;
+}
+.nav-path-midpoint.path-midpoint-forced:hover {
+  background: #ff0000;
+}
+.nav-path-midpoint.path-midpoint-both-forced {
+  background: #ff0000;
+}
+.map-style-dark .nav-path-vertex.path-vertex-force {
+  background: #ff0000 !important;
+  border-color: #ff0000 !important;
+}
+.map-style-dark .nav-path-midpoint.path-midpoint-forced {
+  border-color: #ff0000;
+}
+.map-style-dark .nav-path-midpoint.path-midpoint-both-forced {
+  background: #ff0000;
+}
 
 /* Navigation snap toggle - blue active */
 .nav-snap-toggle button.active {
   background: #0090ff;
+  color: white;
 }
 .path-actions-dark .nav-snap-toggle button.active {
   background: #0090ff;
+  color: white;
 }
 
 /* Navigation start button */

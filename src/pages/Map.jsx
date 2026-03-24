@@ -59,9 +59,14 @@ const serializeSnappedSegments = (segments) =>
   }));
 
 // Deserialize snappedSegments from Firestore ({lng,lat} → [lng,lat])
+// Remap legacy "direct" correction segments (adjacent to "snapped") to "offset"
 const deserializeSnappedSegments = (segments) =>
-  segments.map((seg) => ({
-    type: seg.type,
+  segments.map((seg, i, arr) => ({
+    type:
+      seg.type === "direct" &&
+      ((i > 0 && arr[i - 1].type === "snapped") || (i < arr.length - 1 && arr[i + 1].type === "snapped"))
+        ? "offset"
+        : seg.type,
     coords: seg.coords.map((c) => [c.lng, c.lat]),
   }));
 
@@ -440,7 +445,7 @@ export default function Map() {
             "text-ignore-placement": true,
           },
           paint: {
-            "text-color": ["get", "color"],
+            "text-color": path.isNavigation ? "#0090ff" : "#ff6f00",
             "text-emissive-strength": 1,
           },
         });
@@ -458,7 +463,7 @@ export default function Map() {
       const source = mapRef.current?.getSource(path.sourceId);
       if (!source) return;
       const mainColor = path.isNavigation ? "#0090ff" : "#ff6f00";
-      const forceColor = path.isNavigation ? "#0050aa" : "#ff0000";
+      const forceColor = path.isNavigation ? "#ff0000" : "#6F00FF";
 
       if (path.roadSnap && path.snappedSegments) {
         const features = [];
@@ -466,7 +471,8 @@ export default function Map() {
         for (const seg of path.snappedSegments) {
           if (seg.coords.length >= 2) {
             const width = isNavCar && seg.type === "snapped" ? 10 : undefined;
-            features.push(makeFeature(seg.coords, seg.type === "direct" ? forceColor : mainColor, width));
+            const segColor = seg.type === "direct" ? forceColor : seg.type === "offset" ? forceColor : mainColor;
+            features.push(makeFeature(seg.coords, segColor, width));
           }
         }
         source.setData({ type: "FeatureCollection", features });
@@ -557,17 +563,17 @@ export default function Map() {
               const first = runVerts[0].lngLat;
               const last = runVerts[runVerts.length - 1].lngLat;
               if (first[0] !== snapped[0][0] || first[1] !== snapped[0][1]) {
-                segments.push({ type: "direct", coords: [first, snapped[0]] });
+                segments.push({ type: "offset", coords: [first, snapped[0]] });
               }
               segments.push({ type: "snapped", coords: snapped });
-              // Add direct red segment from snapped end to last vertex if they differ
+              // Add offset segment from snapped end to last vertex if they differ
               const snappedEnd = snapped[snapped.length - 1];
               if (last[0] !== snappedEnd[0] || last[1] !== snappedEnd[1]) {
-                segments.push({ type: "direct", coords: [snappedEnd, last] });
+                segments.push({ type: "offset", coords: [snappedEnd, last] });
               }
             } else {
-              // Fallback: render as direct
-              segments.push({ type: "direct", coords: runVerts.map((v) => v.lngLat) });
+              // Fallback: render as straight line (not force)
+              segments.push({ type: "fallback", coords: runVerts.map((v) => v.lngLat) });
             }
           }
         }
@@ -577,8 +583,8 @@ export default function Map() {
       }
       updatePathLine(path);
       updateAttachedMarkers(path);
-      // Refit map when navigation path snap changes
-      if (path.isNavigation && mapRef.current) {
+      // Refit map when navigation path snap changes (skip during path editing)
+      if (path.isNavigation && mapRef.current && !isPathModeRef.current) {
         const bounds = new mapboxgl.LngLatBounds();
         if (path.snappedSegments) {
           path.snappedSegments.forEach((seg) => seg.coords.forEach((c) => bounds.extend(c)));
@@ -743,9 +749,34 @@ export default function Map() {
       vertexEntry.marker.on("drag", () => {
         const pos = vertexEntry.marker.getLngLat();
         vertexEntry.lngLat = [pos.lng, pos.lat];
-        updatePathLine(vertexEntry.path);
+        const path = vertexEntry.path;
+        if (vertexEntry.force && path.roadSnap && path.snappedSegments) {
+          // Render stale snapped segments + live force lines from current vertex positions
+          const verts = path.vertices;
+          const vi = verts.indexOf(vertexEntry);
+          const mainColor = path.isNavigation ? "#0090ff" : "#ff6f00";
+          const features = [];
+          // Keep stale snapped/offset segments
+          for (const seg of path.snappedSegments) {
+            if (seg.coords.length >= 2 && seg.type !== "direct") {
+              features.push(makeFeature(seg.coords, mainColor));
+            }
+          }
+          // Draw live force lines for edges adjacent to dragged vertex
+          const forceColor = path.isNavigation ? "#ff0000" : "#6F00FF";
+          if (vi > 0 && (verts[vi - 1].force || vertexEntry.force)) {
+            features.push(makeFeature([verts[vi - 1].lngLat, vertexEntry.lngLat], forceColor));
+          }
+          if (vi < verts.length - 1 && (vertexEntry.force || verts[vi + 1].force)) {
+            features.push(makeFeature([vertexEntry.lngLat, verts[vi + 1].lngLat], forceColor));
+          }
+          const source = mapRef.current?.getSource(path.sourceId);
+          if (source) source.setData({ type: "FeatureCollection", features });
+        } else {
+          updatePathLine(path);
+        }
         updateAdjacentMidpoints(vertexEntry);
-        updateAttachedMarkers(vertexEntry.path);
+        updateAttachedMarkers(path);
       });
       vertexEntry.marker.on("dragend", () => {
         mapRef.current.getContainer().classList.remove("marker-dragging");
@@ -822,14 +853,25 @@ export default function Map() {
         });
         marker.on("drag", () => {
           const pos = marker.getLngLat();
-          const coords = [];
+          const midPt = [pos.lng, pos.lat];
+          const si = mpEntry.segmentIndex;
+          const mainColor = path.isNavigation ? "#0090ff" : "#ff6f00";
+          const forceColor = path.isNavigation ? "#ff0000" : "#6F00FF";
+          const features = [];
+          // Build segments with per-edge coloring
           for (let j = 0; j < verts.length; j++) {
-            coords.push(verts[j].lngLat);
-            if (j === mpEntry.segmentIndex) coords.push([pos.lng, pos.lat]);
+            const from = j === si ? [verts[j].lngLat, midPt] : j === si + 1 ? [midPt, verts[j].lngLat] : null;
+            if (from) {
+              const c = (verts[si].force || verts[si + 1].force) ? forceColor : mainColor;
+              features.push(makeFeature(from, c));
+            }
+            if (j < verts.length - 1 && j !== si) {
+              const c = (verts[j].force || verts[j + 1].force) ? forceColor : mainColor;
+              features.push(makeFeature([verts[j].lngLat, verts[j + 1].lngLat], c));
+            }
           }
           const source = mapRef.current?.getSource(path.sourceId);
-          const dragColor = path.isNavigation ? "#0090ff" : "#ff6f00";
-          if (source) source.setData({ type: "FeatureCollection", features: [makeFeature(coords, dragColor)] });
+          if (source) source.setData({ type: "FeatureCollection", features });
         });
         marker.on("dragend", () => {
           mapRef.current.getContainer().classList.remove("marker-dragging");
@@ -1237,10 +1279,26 @@ export default function Map() {
         this._trackingLocation = false;
 
         // If editing a path (not navigation), show alert and wait for confirmation
-        if (isPathModeRef.current && !isNavigationTrackingRef.current) {
+        if (isPathModeRef.current && !isNavigationTrackingRef.current && !isNavigationModeRef.current) {
           this.showTrackingBearingIcon();
           setTrackBearingAlert(true);
           return;
+        }
+
+        // If in navigation mode, finish path visually and enter navigation tracking
+        if (isNavigationModeRef.current && !isNavigationTrackingRef.current) {
+          const path = activePathRef.current;
+          if (path) {
+            path.isFinished = true;
+            pathHelpersRef.current.hideIntermediateVertices(path);
+            path.midpoints.forEach((mp) => mp.marker.remove());
+            path.midpoints = [];
+            path.vertices.forEach((v) => v.marker.getElement().classList.remove("active-path-feature"));
+          }
+          setIsNavigationTracking(true);
+          isNavigationTrackingRef.current = true;
+          setToastMsg("Click stop icon to leave navigation.");
+          setTimeout(() => setToastMsg(null), 3000);
         }
 
         // Remember the current zoom and pitch to restore them when stopping bearing tracking
@@ -1399,7 +1457,7 @@ export default function Map() {
                   aria-label="Track User Bearing"
                   data-control="track_bearing"
               >
-                  <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/user_tracking_location.svg');"></span>
+                  <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/start_tracking_bearing.svg');background-size: 45px 45px;"></span>
               </button>
               <button
                   class="mapboxgl-ctrl-geolocate hidden"
@@ -1408,7 +1466,7 @@ export default function Map() {
                   aria-label="Tracking User Bearing"
                   data-control="stop_tracking_bearing"
               >
-                  <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/user_tracking_bearing.svg');"></span>
+                  <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/stop_tracking_bearing.svg');background-size: 45px 45px;"></span>
               </button>
           </div>
           <div class="ctrl-mapstyle-container mapboxgl-ctrl mapboxgl-ctrl-group">
@@ -3347,6 +3405,9 @@ export default function Map() {
     const ctrl = locationControlRef.current;
     ctrl.hideTrackingIcons();
     ctrl._handleTrackBearing();
+
+    setToastMsg("Click tracking icon to leave navigation.");
+    setTimeout(() => setToastMsg(null), 3000);
   };
 
   const handleCancelNavigation = () => {
