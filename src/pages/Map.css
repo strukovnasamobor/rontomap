@@ -80,6 +80,10 @@
   cursor: all-scroll !important;
 }
 
+.mapboxgl-canvas-container {
+  -webkit-touch-callout: none;
+}
+
 .mapboxgl-ctrl-top-left {
   z-index: 1001 !important;
 }
@@ -254,18 +258,18 @@
   border-radius: 50%;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
   cursor: default;
-  z-index: 100;
+  z-index: 1002;
 }
 
 .marker-menu-overlay {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: 1002;
 }
 
 .marker-menu {
   position: fixed;
-  z-index: 101;
+  z-index: 1003;
   background: white;
   border-radius: 8px;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.2);
