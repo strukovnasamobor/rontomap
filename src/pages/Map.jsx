@@ -108,6 +108,9 @@ export default function Map() {
   const [deletePathAlert, setDeletePathAlert] = useState(null);
   const [cancelPathAlert, setCancelPathAlert] = useState(false);
   const cancelPathAlertRef = useRef(false);
+  const [circuitAlert, setCircuitAlert] = useState(false);
+  const circuitAlertRef = useRef(false);
+  const pendingCircuitPathRef = useRef(null);
   const [trackBearingAlert, setTrackBearingAlert] = useState(false);
   const [isPathMode, setIsPathMode] = useState(false);
   const [pathVertexCount, setPathVertexCount] = useState(0);
@@ -510,10 +513,11 @@ export default function Map() {
         source.setData({ type: "FeatureCollection", features });
       } else {
         const coords = path.vertices.map((v) => v.lngLat);
+        if (path.isCircuit && coords.length >= 3) coords.push(coords[0]);
         const features = coords.length >= 2 ? [makeFeature(coords, mainColor)] : [];
         source.setData({ type: "FeatureCollection", features });
-        // Compute straight-line distance in Free mode for navigation paths
-        if (path.isNavigation && coords.length >= 2) {
+        // Compute straight-line distance in Free mode for the active path
+        if (path === activePathRef.current && coords.length >= 2) {
           setNavRouteDistance(haversineDistance(coords));
           setNavRouteDuration(null);
         }
@@ -594,7 +598,9 @@ export default function Map() {
         return;
       }
       const profile = SNAP_PROFILES[path.roadSnap] || "driving";
-      const verts = path.vertices;
+      const verts = path.isCircuit
+        ? [...path.vertices, { ...path.vertices[0] }]
+        : path.vertices;
       const runs = buildSegmentRuns(verts);
 
       try {
@@ -881,6 +887,29 @@ export default function Map() {
           });
         }
         if (vertexEntry.path.roadSnap) fetchRoadSnap(vertexEntry.path);
+        // Check if last vertex was dragged near the start — offer to close circuit
+        const cPath = vertexEntry.path;
+        const cVerts = cPath.vertices;
+        if (
+          !cPath.isFinished &&
+          !cPath.isCircuit &&
+          cVerts.length >= 3 &&
+          vertexEntry === cVerts[cVerts.length - 1]
+        ) {
+          const [lon1, lat1] = cVerts[0].lngLat;
+          const [lon2, lat2] = vertexEntry.lngLat;
+          const toRad = (d) => (d * Math.PI) / 180;
+          const dLat = toRad(lat2 - lat1);
+          const dLon = toRad(lon2 - lon1);
+          const a2 =
+            Math.sin(dLat / 2) ** 2 +
+            Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+          const dist = 6371000 * 2 * Math.atan2(Math.sqrt(a2), Math.sqrt(1 - a2));
+          if (dist < 30) {
+            pendingCircuitPathRef.current = cPath;
+            setCircuitAlert(true);
+          }
+        }
       });
     };
 
@@ -996,6 +1025,16 @@ export default function Map() {
         if (!path.isFinished) {
           const idx = verts.indexOf(vertexEntry);
           if (idx < 0) return;
+          // Click on start/end of a circuit → un-circuit (remove closing segment)
+          if (path.isCircuit && (idx === 0 || idx === verts.length - 1)) {
+            pushPathSnapshot(path);
+            path.isCircuit = false;
+            updatePathLine(path);
+            rebuildMidpoints(path);
+            updateVertexStyles(path);
+            if (path.roadSnap) fetchRoadSnap(path);
+            return;
+          }
           pushPathSnapshot(path);
           if (path.attachedMarkers && verts.length > 1) {
             const maxSeg = verts.length - 2;
@@ -2445,6 +2484,7 @@ export default function Map() {
             midpoints: [],
             isFinished: true,
           };
+          if (entry.isCircuit) path.isCircuit = true;
           pathsRef.current.push(path);
           h.ensurePathLayer(path);
           entry.coords.forEach((c) => {
@@ -2570,10 +2610,25 @@ export default function Map() {
   useEffect(() => {
     cancelNavigationAlertRef.current = cancelNavigationAlert;
   }, [cancelNavigationAlert]);
+  useEffect(() => {
+    circuitAlertRef.current = circuitAlert;
+  }, [circuitAlert]);
 
   // Keyboard shortcuts: Ctrl+Z undo, Ctrl+Shift+Z/Ctrl+Y redo, ESC cancel/close geocoder, Enter dismiss alert
   useEffect(() => {
     const handler = (e) => {
+      if (e.key === "Enter" && circuitAlertRef.current) {
+        e.preventDefault();
+        setCircuitAlert(false);
+        confirmCircuit();
+        return;
+      }
+      if (e.key === "Escape" && circuitAlertRef.current) {
+        e.preventDefault();
+        setCircuitAlert(false);
+        pendingCircuitPathRef.current = null;
+        return;
+      }
       if (e.key === "Enter" && cancelNavigationAlertRef.current) {
         e.preventDefault();
         setCancelNavigationAlert(false);
@@ -2931,6 +2986,7 @@ export default function Map() {
       if (p.savedView) pathData.savedView = p.savedView;
       if (p.roadSnap) pathData.roadSnap = p.roadSnap;
       if (p.snappedSegments) pathData.snappedSegments = serializeSnappedSegments(p.snappedSegments);
+      if (p.isCircuit) pathData.isCircuit = true;
       if (p.attachedMarkers && p.attachedMarkers.length > 0) {
         pathData.attachedMarkers = p.attachedMarkers.map((m) => {
           const am = { segmentIndex: m._segmentIndex, t: m._t };
@@ -2990,6 +3046,7 @@ export default function Map() {
       if (p.savedView) pathData.savedView = p.savedView;
       if (p.roadSnap) pathData.roadSnap = p.roadSnap;
       if (p.snappedSegments) pathData.snappedSegments = serializeSnappedSegments(p.snappedSegments);
+      if (p.isCircuit) pathData.isCircuit = true;
       if (p.attachedMarkers && p.attachedMarkers.length > 0) {
         pathData.attachedMarkers = p.attachedMarkers.map((m) => {
           const am = { segmentIndex: m._segmentIndex, t: m._t };
@@ -3205,6 +3262,7 @@ export default function Map() {
     vertices: path.vertices.map((v) => ({ lngLat: [...v.lngLat], force: v.force || false })),
     roadSnap: path.roadSnap || null,
     snappedSegments: path.snappedSegments ? JSON.parse(JSON.stringify(path.snappedSegments)) : null,
+    isCircuit: path.isCircuit || false,
   });
 
   const pushPathSnapshot = (path) => {
@@ -3230,6 +3288,7 @@ export default function Map() {
     });
     path.roadSnap = snapshot.roadSnap;
     path.snappedSegments = snapshot.snappedSegments;
+    path.isCircuit = snapshot.isCircuit || false;
     h.updatePathLine(path);
     h.updateVertexStyles(path);
     if (!path.isFinished) h.rebuildMidpoints(path);
@@ -3288,6 +3347,7 @@ export default function Map() {
       roadSnap: path.roadSnap || null,
       snappedSegments: path.snappedSegments ? JSON.parse(JSON.stringify(path.snappedSegments)) : null,
       savedView: path.savedView ? { ...path.savedView } : null,
+      isCircuit: path.isCircuit || false,
     };
 
     pathHelpersRef.current.showAllVertices(path);
@@ -3313,7 +3373,16 @@ export default function Map() {
     setSnapMode(path.roadSnap || null);
     setForceMode(false);
     pathPointToastShownRef.current = false;
-    if (path.roadSnap) pathHelpersRef.current.fetchRoadSnap(path);
+    if (path.roadSnap) {
+      pathHelpersRef.current.fetchRoadSnap(path);
+    } else if (path.vertices.length >= 2) {
+      const coords = path.vertices.map((v) => v.lngLat);
+      setNavRouteDistance(haversineDistance(coords));
+      setNavRouteDuration(null);
+    } else {
+      setNavRouteDistance(null);
+      setNavRouteDuration(null);
+    }
     setToastMsg("Click on map to add path points.");
     setTimeout(() => {
       setToastMsg(null);
@@ -3593,6 +3662,22 @@ export default function Map() {
     setCancelPathAlert(true);
   };
 
+  const confirmCircuit = () => {
+    const path = pendingCircuitPathRef.current;
+    if (!path) return;
+    pushPathSnapshot(path);
+    path.isCircuit = true;
+    // Snap last vertex to first vertex position
+    const lastV = path.vertices[path.vertices.length - 1];
+    lastV.lngLat = [...path.vertices[0].lngLat];
+    lastV.marker.setLngLat(lastV.lngLat);
+    pathHelpersRef.current.updatePathLine(path);
+    pathHelpersRef.current.rebuildMidpoints(path);
+    pathHelpersRef.current.updateVertexStyles(path);
+    if (path.roadSnap) pathHelpersRef.current.fetchRoadSnap(path);
+    pendingCircuitPathRef.current = null;
+  };
+
   const confirmCancelPath = () => {
     const path = activePathRef.current;
     if (!path) {
@@ -3649,6 +3734,7 @@ export default function Map() {
       path.roadSnap = snapshot.roadSnap;
       path.snappedSegments = snapshot.snappedSegments;
       path.savedView = snapshot.savedView;
+      path.isCircuit = snapshot.isCircuit || false;
       path.isFinished = true;
 
       h.updatePathLine(path);
@@ -3764,7 +3850,7 @@ export default function Map() {
     path.attachedMarkers.push(marker);
   };
 
-  const handleSetPathStartName = () => {
+  const handleSetPathName = () => {
     const path = mapClickMenu.path;
     setMapClickMenu(null);
     if (path && path.vertices.length > 0) {
@@ -3773,14 +3859,6 @@ export default function Map() {
     }
   };
 
-  const handleSetPathEndName = () => {
-    const path = mapClickMenu.path;
-    setMapClickMenu(null);
-    if (path && path.vertices.length > 0) {
-      namingMarkerRef.current = path.vertices[path.vertices.length - 1].marker;
-      setNameAlert(true);
-    }
-  };
 
   // Show tips
   useEffect(() => {
@@ -3906,6 +3984,16 @@ export default function Map() {
         ]}
       />
       <IonAlert
+        isOpen={circuitAlert}
+        onDidDismiss={() => { setCircuitAlert(false); pendingCircuitPathRef.current = null; }}
+        header="Circular path"
+        message="Close this path into a circuit?"
+        buttons={[
+          { text: "No", role: "cancel" },
+          { text: "Yes", handler: confirmCircuit },
+        ]}
+      />
+      <IonAlert
         isOpen={trackBearingAlert}
         onDidDismiss={() => setTrackBearingAlert(false)}
         header="Start bearing tracking"
@@ -3989,8 +4077,7 @@ export default function Map() {
                 <button onClick={handleAddMarkerToPath}>Add marker to path</button>
                 <button onClick={handleEditPath}>Edit path</button>
                 <button onClick={handleReversePath}>Reverse path</button>
-                <button onClick={handleSetPathStartName}>Set path start name </button>
-                <button onClick={handleSetPathEndName}>Set path end name</button>
+                <button onClick={handleSetPathName}>Set path name</button>
                 <button onClick={handleRecordPathView}>Record path view</button>
                 <button onClick={handleDeletePath}>Delete path</button>
               </>
