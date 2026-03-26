@@ -356,12 +356,39 @@
   border-radius: 50%;
 }
 
-.path-vertex-last {
+.path-vertex.path-vertex-intermediate {
   background: #ff6f00;
+  border-color: #ff6f00;
+}
+
+.path-vertex.path-vertex-last {
+  background: white;
+  border-radius: 2px;
+}
+
+.path-vertex.path-vertex-circuit-start {
+  background: white;
+  border-color: #ff6f00;
+  z-index: 3;
+}
+.path-vertex.path-vertex-circuit-start::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 12px;
+  height: 12px;
+  transform: translate(-50%, -50%);
+  border: 2px solid #ff6f00;
+  pointer-events: none;
 }
 
 .path-vertex.path-vertex-force {
   background: #6f00ff !important;
+  border-color: #6f00ff !important;
+}
+.path-vertex.path-vertex-force.path-vertex-last {
+  background: white !important;
   border-color: #6f00ff !important;
 }
 
@@ -369,7 +396,7 @@
 .path-midpoint {
   width: 9px;
   height: 9px;
-  background: white;
+  background: #ff6f00;
   border: 2px solid #ff6f00;
   border-radius: 50%;
   cursor: grab;
@@ -401,16 +428,39 @@
   border-color: #ff6f00;
 }
 
-.map-style-dark .path-vertex-last {
+.map-style-dark .path-vertex.path-vertex-intermediate {
   background: #ff6f00;
+  border-color: #ff6f00;
+}
+
+.map-style-dark .path-vertex.path-vertex-last {
+  background: white;
+  border-radius: 2px;
+}
+
+.map-style-dark .path-vertex.path-vertex-circuit-start {
+  background: white;
+  border-color: #ff6f00;
+}
+.map-style-dark .path-vertex.path-vertex-circuit-start::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 12px;
+  height: 12px;
+  transform: translate(-50%, -50%);
+  border: 2px solid #ff6f00;
+  pointer-events: none;
 }
 
 .map-style-dark .path-midpoint {
-  background: white;
+  background: #ff6f00;
   border-color: #ff6f00;
 }
 
 .path-midpoint.path-midpoint-forced {
+  background: #6f00ff;
   border-color: #6f00ff;
 }
 
@@ -683,24 +733,70 @@
 .nav-path-vertex {
   border-color: #0090ff;
 }
-.nav-path-vertex.path-vertex-last {
+.nav-path-vertex.path-vertex-intermediate {
   background: #0090ff;
+  border-color: #0090ff;
+}
+.nav-path-vertex.path-vertex-last {
+  background: white;
+  border-color: #0090ff;
+  border-radius: 2px;
+}
+.nav-path-vertex.path-vertex-circuit-start {
+  background: white;
+  border-color: #0090ff;
+  z-index: 3;
+}
+.nav-path-vertex.path-vertex-circuit-start::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 12px;
+  height: 12px;
+  transform: translate(-50%, -50%);
+  border: 2px solid #0090ff;
+  pointer-events: none;
 }
 .map-style-dark .nav-path-vertex {
   border-color: #0090ff;
 }
-.map-style-dark .nav-path-vertex.path-vertex-last {
+.map-style-dark .nav-path-vertex.path-vertex-intermediate {
   background: #0090ff;
+  border-color: #0090ff;
+}
+.map-style-dark .nav-path-vertex.path-vertex-last {
+  background: white;
+  border-color: #0090ff;
+  border-radius: 2px;
+}
+.map-style-dark .nav-path-vertex.path-vertex-circuit-start {
+  background: white;
+  border-color: #0090ff;
+}
+.map-style-dark .nav-path-vertex.path-vertex-circuit-start::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 12px;
+  height: 12px;
+  transform: translate(-50%, -50%);
+  border: 2px solid #0090ff;
+  pointer-events: none;
 }
 
 /* Navigation path midpoint - blue */
 .nav-path-midpoint {
+  background: #0090ff;
   border-color: #0090ff;
 }
 .map-style-dark .nav-path-midpoint {
+  background: #0090ff;
   border-color: #0090ff;
 }
 .map-style-dark .path-midpoint.path-midpoint-forced {
+  background: #6f00ff;
   border-color: #6f00ff;
 }
 .map-style-dark .path-midpoint.path-midpoint-both-forced {
@@ -712,8 +808,13 @@
   background: #ff0000 !important;
   border-color: #ff0000 !important;
 }
+.nav-path-vertex.path-vertex-force.path-vertex-last {
+  background: white !important;
+  border-color: #ff0000 !important;
+}
 /* Navigation forced midpoint - red */
 .nav-path-midpoint.path-midpoint-forced {
+  background: #ff0000;
   border-color: #ff0000;
 }
 .nav-path-midpoint.path-midpoint-forced:hover {
@@ -726,7 +827,16 @@
   background: #ff0000 !important;
   border-color: #ff0000 !important;
 }
+.map-style-dark .path-vertex.path-vertex-force.path-vertex-last {
+  background: white !important;
+  border-color: #6f00ff !important;
+}
+.map-style-dark .nav-path-vertex.path-vertex-force.path-vertex-last {
+  background: white !important;
+  border-color: #ff0000 !important;
+}
 .map-style-dark .nav-path-midpoint.path-midpoint-forced {
+  background: #ff0000;
   border-color: #ff0000;
 }
 .map-style-dark .nav-path-midpoint.path-midpoint-both-forced {

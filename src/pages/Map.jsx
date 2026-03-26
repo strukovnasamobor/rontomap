@@ -513,7 +513,7 @@ export default function Map() {
         source.setData({ type: "FeatureCollection", features });
       } else {
         const coords = path.vertices.map((v) => v.lngLat);
-        if (path.isCircuit && coords.length >= 3) coords.push(coords[0]);
+        if (path.isCircuit && coords.length >= 2) coords.push(coords[0]);
         const features = coords.length >= 2 ? [makeFeature(coords, mainColor)] : [];
         source.setData({ type: "FeatureCollection", features });
         // Compute straight-line distance in Free mode for the active path
@@ -797,10 +797,13 @@ export default function Map() {
       const verts = path.vertices;
       const idx = verts.indexOf(vertexEntry);
       if (idx < 0) return;
+      const lastI = verts.length - 1;
       path.midpoints.forEach((mp) => {
-        if (mp.segmentIndex === idx - 1 || mp.segmentIndex === idx) {
+        const isAdjacent = mp.segmentIndex === idx - 1 || mp.segmentIndex === idx
+          || (path.isCircuit && idx === 0 && mp.segmentIndex === lastI);
+        if (isAdjacent) {
           const a = verts[mp.segmentIndex].lngLat;
-          const b = verts[mp.segmentIndex + 1].lngLat;
+          const b = (mp.segmentIndex + 1 < verts.length ? verts[mp.segmentIndex + 1] : verts[0]).lngLat;
           mp.marker.setLngLat(computeMidpoint(a, b));
         }
       });
@@ -808,7 +811,8 @@ export default function Map() {
 
     const hideIntermediateVertices = (path) => {
       path.vertices.forEach((v, i) => {
-        if (i > 0 && i < path.vertices.length - 1) {
+        const isEndpoint = path.isCircuit ? i === 0 : (i === 0 || i === path.vertices.length - 1);
+        if (!isEndpoint) {
           v.marker.getElement().style.display = "none";
         }
       });
@@ -848,6 +852,33 @@ export default function Map() {
               features.push(makeFeature([verts[i].lngLat, verts[i + 1].lngLat], forceColor));
             }
           }
+          // Circuit closing force line
+          if (path.isCircuit && verts.length >= 2) {
+            const last = verts[verts.length - 1], first = verts[0];
+            if (last.force || first.force) {
+              features.push(makeFeature([last.lngLat, first.lngLat], forceColor));
+            }
+          }
+          const source = mapRef.current?.getSource(path.sourceId);
+          if (source) source.setData({ type: "FeatureCollection", features });
+        } else if (path.isCircuit && path.roadSnap && path.snappedSegments) {
+          // Snapped circuit: render stale snapped segments + live closing segment
+          const verts = path.vertices;
+          const mainColor = path.isNavigation ? "#0090ff" : "#ff6f00";
+          const features = [];
+          for (const seg of path.snappedSegments) {
+            if (seg.coords.length >= 2) {
+              const segColor = seg.type === "direct" ? (path.isNavigation ? "#ff0000" : "#6F00FF") : seg.type === "offset" ? (path.isNavigation ? "#ff0000" : "#6F00FF") : mainColor;
+              features.push(makeFeature(seg.coords, segColor));
+            }
+          }
+          // Live closing segment from last vertex to first
+          if (verts.length >= 2) {
+            const last = verts[verts.length - 1], first = verts[0];
+            const forceColor = path.isNavigation ? "#ff0000" : "#6F00FF";
+            const cc = (last.force || first.force) ? forceColor : mainColor;
+            features.push(makeFeature([last.lngLat, first.lngLat], cc));
+          }
           const source = mapRef.current?.getSource(path.sourceId);
           if (source) source.setData({ type: "FeatureCollection", features });
         } else {
@@ -873,7 +904,7 @@ export default function Map() {
           path.midpoints.forEach((mp) => {
             const verts = path.vertices;
             const a = verts[mp.segmentIndex];
-            const b = verts[mp.segmentIndex + 1];
+            const b = mp.segmentIndex + 1 < verts.length ? verts[mp.segmentIndex + 1] : (path.isCircuit ? verts[0] : undefined);
             if (a?.force || b?.force) {
               mp.marker.getElement().classList.add("path-midpoint-forced");
             } else {
@@ -936,7 +967,8 @@ export default function Map() {
       const newMarker = createPathVertex([ll.lng, ll.lat]);
       const newVertex = { lngLat: [ll.lng, ll.lat], marker: newMarker, path };
       const prevForced = path.vertices[segmentIndex]?.force;
-      const nextForced = path.vertices[segmentIndex + 1]?.force;
+      const nextVert = path.vertices[segmentIndex + 1] || (path.isCircuit ? path.vertices[0] : undefined);
+      const nextForced = nextVert?.force;
       if (forceModeRef.current || (prevForced && nextForced)) newVertex.force = true;
       path.vertices.splice(segmentIndex + 1, 0, newVertex);
       setPathVertexCount(path.vertices.length);
@@ -977,17 +1009,64 @@ export default function Map() {
           const forceColor = path.isNavigation ? "#ff0000" : "#6F00FF";
           const features = [];
           // Build segments with per-edge coloring
+          const useForce = !!path.roadSnap;
           for (let j = 0; j < verts.length; j++) {
             const from = j === si ? [verts[j].lngLat, midPt] : j === si + 1 ? [midPt, verts[j].lngLat] : null;
             if (from) {
-              const c = (verts[si].force || verts[si + 1].force) ? forceColor : mainColor;
+              const c = useForce && (verts[si].force || verts[si + 1].force) ? forceColor : mainColor;
               features.push(makeFeature(from, c));
             }
             if (j < verts.length - 1 && j !== si) {
-              const c = (verts[j].force || verts[j + 1].force) ? forceColor : mainColor;
+              const c = useForce && (verts[j].force || verts[j + 1].force) ? forceColor : mainColor;
               features.push(makeFeature([verts[j].lngLat, verts[j + 1].lngLat], c));
             }
           }
+          // Circuit closing segment
+          if (path.isCircuit && verts.length >= 2) {
+            const lastI = verts.length - 1;
+            const c = useForce && (verts[lastI].force || verts[0].force) ? forceColor : mainColor;
+            features.push(makeFeature([verts[lastI].lngLat, verts[0].lngLat], c));
+          }
+          const source = mapRef.current?.getSource(path.sourceId);
+          if (source) source.setData({ type: "FeatureCollection", features });
+        });
+        marker.on("dragend", () => {
+          mapRef.current.getContainer().classList.remove("marker-dragging");
+          promoteMidpointToVertex(mpEntry);
+        });
+        const midEl = marker.getElement();
+        if (path.isNavigation) midEl.classList.add("nav-path-midpoint");
+        midEl.addEventListener("contextmenu", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        });
+        path.midpoints.push(mpEntry);
+      }
+      // Closing segment midpoint for circuit paths
+      if (path.isCircuit && verts.length >= 2) {
+        const lastI = verts.length - 1;
+        const mid = computeMidpoint(verts[lastI].lngLat, verts[0].lngLat);
+        const marker = createMidpointMarker(mid);
+        if (verts[lastI].force || verts[0].force) marker.getElement().classList.add("path-midpoint-forced");
+        if (verts[lastI].force && verts[0].force) marker.getElement().classList.add("path-midpoint-both-forced");
+        const mpEntry = { marker, segmentIndex: lastI, path };
+        marker.on("dragstart", () => {
+          mapRef.current.getContainer().classList.add("marker-dragging");
+        });
+        marker.on("drag", () => {
+          const pos = marker.getLngLat();
+          const midPt = [pos.lng, pos.lat];
+          const mainColor = path.isNavigation ? "#0090ff" : "#ff6f00";
+          const forceColor = path.isNavigation ? "#ff0000" : "#6F00FF";
+          const features = [];
+          const useForce = !!path.roadSnap;
+          for (let j = 0; j < verts.length - 1; j++) {
+            const c = useForce && (verts[j].force || verts[j + 1].force) ? forceColor : mainColor;
+            features.push(makeFeature([verts[j].lngLat, verts[j + 1].lngLat], c));
+          }
+          const cc = useForce && (verts[lastI].force || verts[0].force) ? forceColor : mainColor;
+          features.push(makeFeature([verts[lastI].lngLat, midPt], cc));
+          features.push(makeFeature([midPt, verts[0].lngLat], cc));
           const source = mapRef.current?.getSource(path.sourceId);
           if (source) source.setData({ type: "FeatureCollection", features });
         });
@@ -1133,11 +1212,18 @@ export default function Map() {
       const verts = path.vertices;
       verts.forEach((v) => {
         const el = v.marker.getElement();
-        el.classList.remove("path-vertex-last", "path-vertex-force", "nav-path-vertex");
+        el.classList.remove("path-vertex-last", "path-vertex-circuit-start", "path-vertex-force", "nav-path-vertex", "path-vertex-intermediate");
         if (path.isNavigation) el.classList.add("nav-path-vertex");
         if (v.force) el.classList.add("path-vertex-force");
       });
-      if (verts.length > 0) verts[verts.length - 1].marker.getElement().classList.add("path-vertex-last");
+      if (verts.length > 0 && !path.isCircuit) verts[verts.length - 1].marker.getElement().classList.add("path-vertex-last");
+      if (path.isCircuit && verts.length >= 2) {
+        verts[0].marker.getElement().classList.add("path-vertex-circuit-start");
+        verts[verts.length - 1].marker.getElement().classList.add("path-vertex-intermediate");
+      }
+      for (let i = 1; i < verts.length - 1; i++) {
+        verts[i].marker.getElement().classList.add("path-vertex-intermediate");
+      }
     };
 
     pathHelpersRef.current = {
@@ -3664,13 +3750,13 @@ export default function Map() {
 
   const confirmCircuit = () => {
     const path = pendingCircuitPathRef.current;
-    if (!path) return;
+    if (!path || path.vertices.length < 3) return;
     pushPathSnapshot(path);
     path.isCircuit = true;
-    // Snap last vertex to first vertex position
-    const lastV = path.vertices[path.vertices.length - 1];
-    lastV.lngLat = [...path.vertices[0].lngLat];
-    lastV.marker.setLngLat(lastV.lngLat);
+    // Remove the dropped vertex — the circuit closes from the previous vertex back to start
+    const lastV = path.vertices.pop();
+    lastV.marker.remove();
+    setPathVertexCount(path.vertices.length);
     pathHelpersRef.current.updatePathLine(path);
     pathHelpersRef.current.rebuildMidpoints(path);
     pathHelpersRef.current.updateVertexStyles(path);
