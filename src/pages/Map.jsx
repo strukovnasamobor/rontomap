@@ -2334,6 +2334,23 @@ export default function Map() {
           input?.focus();
         });
       }
+
+      // Disable right-click on geocoder suggestions (block selection + context menu)
+      const blockRightClick = (e) => {
+        if (e.button === 2 && e.target.closest(".mapboxgl-ctrl-geocoder .suggestions")) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+        }
+      };
+      const blockContextMenu = (e) => {
+        if (e.target.closest(".mapboxgl-ctrl-geocoder .suggestions")) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+        }
+      };
+      document.addEventListener("mousedown", blockRightClick, true);
+      document.addEventListener("mouseup", blockRightClick, true);
+      document.addEventListener("contextmenu", blockContextMenu, true);
     }
 
     // Capture geocoder expanded state on mousedown/touchstart (before the geocoder auto-collapses)
