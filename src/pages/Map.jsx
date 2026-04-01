@@ -512,12 +512,30 @@ export default function Map() {
         }
         source.setData({ type: "FeatureCollection", features });
       } else {
-        const coords = path.vertices.map((v) => v.lngLat);
-        if (path.isCircuit && coords.length >= 2) coords.push(coords[0]);
-        const features = coords.length >= 2 ? [makeFeature(coords, mainColor)] : [];
-        source.setData({ type: "FeatureCollection", features });
+        const verts = path.vertices;
+        const hasForce = verts.some((v) => v.force);
+        if (!hasForce) {
+          const coords = verts.map((v) => v.lngLat);
+          if (path.isCircuit && coords.length >= 2) coords.push(coords[0]);
+          const features = coords.length >= 2 ? [makeFeature(coords, mainColor)] : [];
+          source.setData({ type: "FeatureCollection", features });
+        } else {
+          const features = [];
+          for (let i = 0; i < verts.length - 1; i++) {
+            const c = (verts[i].force || verts[i + 1].force) ? forceColor : mainColor;
+            features.push(makeFeature([verts[i].lngLat, verts[i + 1].lngLat], c));
+          }
+          if (path.isCircuit && verts.length >= 2) {
+            const lastI = verts.length - 1;
+            const c = (verts[lastI].force || verts[0].force || path.closingForced) ? forceColor : mainColor;
+            features.push(makeFeature([verts[lastI].lngLat, verts[0].lngLat], c));
+          }
+          source.setData({ type: "FeatureCollection", features });
+        }
         // Compute straight-line distance in Free mode for the active path
-        if (path === activePathRef.current && coords.length >= 2) {
+        if (path === activePathRef.current && verts.length >= 2) {
+          const coords = verts.map((v) => v.lngLat);
+          if (path.isCircuit) coords.push(coords[0]);
           setNavRouteDistance(haversineDistance(coords));
           setNavRouteDuration(null);
         }
@@ -599,7 +617,7 @@ export default function Map() {
       }
       const profile = SNAP_PROFILES[path.roadSnap] || "driving";
       const verts = path.isCircuit
-        ? [...path.vertices, { ...path.vertices[0] }]
+        ? [...path.vertices, { ...path.vertices[0], ...(path.closingForced ? { force: true } : {}) }]
         : path.vertices;
       const runs = buildSegmentRuns(verts);
 
@@ -828,6 +846,10 @@ export default function Map() {
       vertexEntry.marker.on("dragstart", () => {
         mapRef.current.getContainer().classList.add("marker-dragging");
         pushPathSnapshot(vertexEntry.path);
+        if (forceModeRef.current) {
+          vertexEntry.force = true;
+          updateVertexStyles(vertexEntry.path);
+        }
       });
       vertexEntry.marker.on("drag", () => {
         const pos = vertexEntry.marker.getLngLat();
@@ -862,8 +884,7 @@ export default function Map() {
           const source = mapRef.current?.getSource(path.sourceId);
           if (source) source.setData({ type: "FeatureCollection", features });
         } else if (path.isCircuit && path.roadSnap && path.snappedSegments) {
-          // Snapped circuit: render stale snapped segments + live closing segment
-          const verts = path.vertices;
+          // Snapped circuit: render stale snapped segments only (no live closing segment to avoid duplicates)
           const mainColor = path.isNavigation ? "#0090ff" : "#ff6f00";
           const features = [];
           for (const seg of path.snappedSegments) {
@@ -871,13 +892,6 @@ export default function Map() {
               const segColor = seg.type === "direct" ? (path.isNavigation ? "#ff0000" : "#6F00FF") : seg.type === "offset" ? (path.isNavigation ? "#ff0000" : "#6F00FF") : mainColor;
               features.push(makeFeature(seg.coords, segColor));
             }
-          }
-          // Live closing segment from last vertex to first
-          if (verts.length >= 2) {
-            const last = verts[verts.length - 1], first = verts[0];
-            const forceColor = path.isNavigation ? "#ff0000" : "#6F00FF";
-            const cc = (last.force || first.force) ? forceColor : mainColor;
-            features.push(makeFeature([last.lngLat, first.lngLat], cc));
           }
           const source = mapRef.current?.getSource(path.sourceId);
           if (source) source.setData({ type: "FeatureCollection", features });
@@ -891,7 +905,7 @@ export default function Map() {
         mapRef.current.getContainer().classList.remove("marker-dragging");
         const pos = vertexEntry.marker.getLngLat();
         vertexEntry.lngLat = [pos.lng, pos.lat];
-        if (forceModeRef.current && vertexEntry.path.roadSnap) {
+        if (forceModeRef.current) {
           vertexEntry.force = true;
           updateVertexStyles(vertexEntry.path);
         }
@@ -1009,22 +1023,21 @@ export default function Map() {
           const forceColor = path.isNavigation ? "#ff0000" : "#6F00FF";
           const features = [];
           // Build segments with per-edge coloring
-          const useForce = !!path.roadSnap;
+          const dragging = forceModeRef.current || verts[si].force || verts[si + 1].force;
           for (let j = 0; j < verts.length; j++) {
             const from = j === si ? [verts[j].lngLat, midPt] : j === si + 1 ? [midPt, verts[j].lngLat] : null;
             if (from) {
-              const c = useForce && (verts[si].force || verts[si + 1].force) ? forceColor : mainColor;
-              features.push(makeFeature(from, c));
+              features.push(makeFeature(from, dragging ? forceColor : mainColor));
             }
             if (j < verts.length - 1 && j !== si) {
-              const c = useForce && (verts[j].force || verts[j + 1].force) ? forceColor : mainColor;
+              const c = (verts[j].force || verts[j + 1].force) ? forceColor : mainColor;
               features.push(makeFeature([verts[j].lngLat, verts[j + 1].lngLat], c));
             }
           }
           // Circuit closing segment
           if (path.isCircuit && verts.length >= 2) {
             const lastI = verts.length - 1;
-            const c = useForce && (verts[lastI].force || verts[0].force) ? forceColor : mainColor;
+            const c = (verts[lastI].force || verts[0].force || path.closingForced) ? forceColor : mainColor;
             features.push(makeFeature([verts[lastI].lngLat, verts[0].lngLat], c));
           }
           const source = mapRef.current?.getSource(path.sourceId);
@@ -1047,7 +1060,7 @@ export default function Map() {
         const lastI = verts.length - 1;
         const mid = computeMidpoint(verts[lastI].lngLat, verts[0].lngLat);
         const marker = createMidpointMarker(mid);
-        if (verts[lastI].force || verts[0].force) marker.getElement().classList.add("path-midpoint-forced");
+        if (verts[lastI].force || verts[0].force || path.closingForced) marker.getElement().classList.add("path-midpoint-forced");
         if (verts[lastI].force && verts[0].force) marker.getElement().classList.add("path-midpoint-both-forced");
         const mpEntry = { marker, segmentIndex: lastI, path };
         marker.on("dragstart", () => {
@@ -1059,12 +1072,11 @@ export default function Map() {
           const mainColor = path.isNavigation ? "#0090ff" : "#ff6f00";
           const forceColor = path.isNavigation ? "#ff0000" : "#6F00FF";
           const features = [];
-          const useForce = !!path.roadSnap;
           for (let j = 0; j < verts.length - 1; j++) {
-            const c = useForce && (verts[j].force || verts[j + 1].force) ? forceColor : mainColor;
+            const c = (verts[j].force || verts[j + 1].force) ? forceColor : mainColor;
             features.push(makeFeature([verts[j].lngLat, verts[j + 1].lngLat], c));
           }
-          const cc = useForce && (verts[lastI].force || verts[0].force) ? forceColor : mainColor;
+          const cc = (forceModeRef.current || verts[lastI].force || verts[0].force || path.closingForced) ? forceColor : mainColor;
           features.push(makeFeature([verts[lastI].lngLat, midPt], cc));
           features.push(makeFeature([midPt, verts[0].lngLat], cc));
           const source = mapRef.current?.getSource(path.sourceId);
@@ -1212,7 +1224,7 @@ export default function Map() {
       const verts = path.vertices;
       verts.forEach((v) => {
         const el = v.marker.getElement();
-        el.classList.remove("path-vertex-last", "path-vertex-circuit-start", "path-vertex-force", "nav-path-vertex", "path-vertex-intermediate");
+        el.classList.remove("path-vertex-last", "path-vertex-circuit-start", "path-vertex-circuit-end", "path-vertex-force", "nav-path-vertex", "path-vertex-intermediate");
         if (path.isNavigation) el.classList.add("nav-path-vertex");
         if (v.force) el.classList.add("path-vertex-force");
       });
@@ -2115,6 +2127,7 @@ export default function Map() {
               midpoints: [],
               isFinished: false,
             };
+            if (isNavigationModeRef.current) newPath.isNavigation = true;
             pathsRef.current.push(newPath);
             activePathRef.current = newPath;
             pathHelpersRef.current.ensurePathLayer(newPath);
@@ -2307,7 +2320,7 @@ export default function Map() {
         url.searchParams.delete("style");
 
         const logoContainer = document.createElement("div");
-        logoContainer.className = "mapboxgl-ctrl mapboxgl-ctrl-group";
+        logoContainer.className = "mapboxgl-ctrl mapboxgl-ctrl-group rontomap-logo";
 
         const logoBtn = document.createElement("button");
         logoBtn.type = "button";
@@ -2588,6 +2601,8 @@ export default function Map() {
             isFinished: true,
           };
           if (entry.isCircuit) path.isCircuit = true;
+          if (entry.closingForced) path.closingForced = true;
+          if (entry.isNavigation) path.isNavigation = true;
           pathsRef.current.push(path);
           h.ensurePathLayer(path);
           entry.coords.forEach((c) => {
@@ -3090,6 +3105,8 @@ export default function Map() {
       if (p.roadSnap) pathData.roadSnap = p.roadSnap;
       if (p.snappedSegments) pathData.snappedSegments = serializeSnappedSegments(p.snappedSegments);
       if (p.isCircuit) pathData.isCircuit = true;
+      if (p.closingForced) pathData.closingForced = true;
+      if (p.isNavigation) pathData.isNavigation = true;
       if (p.attachedMarkers && p.attachedMarkers.length > 0) {
         pathData.attachedMarkers = p.attachedMarkers.map((m) => {
           const am = { segmentIndex: m._segmentIndex, t: m._t };
@@ -3150,6 +3167,8 @@ export default function Map() {
       if (p.roadSnap) pathData.roadSnap = p.roadSnap;
       if (p.snappedSegments) pathData.snappedSegments = serializeSnappedSegments(p.snappedSegments);
       if (p.isCircuit) pathData.isCircuit = true;
+      if (p.closingForced) pathData.closingForced = true;
+      if (p.isNavigation) pathData.isNavigation = true;
       if (p.attachedMarkers && p.attachedMarkers.length > 0) {
         pathData.attachedMarkers = p.attachedMarkers.map((m) => {
           const am = { segmentIndex: m._segmentIndex, t: m._t };
@@ -3770,6 +3789,7 @@ export default function Map() {
     if (!path || path.vertices.length < 3) return;
     pushPathSnapshot(path);
     path.isCircuit = true;
+    if (forceModeRef.current) path.closingForced = true;
     // Remove the dropped vertex — the circuit closes from the previous vertex back to start
     const lastV = path.vertices.pop();
     lastV.marker.remove();
@@ -3976,6 +3996,7 @@ export default function Map() {
     <PageFixedLayout name="map">
       <IonAlert
         isOpen={showTips}
+        cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
         onDidDismiss={() => setShowTips(false)}
         header="RontoMap"
         message={
@@ -4011,7 +4032,7 @@ export default function Map() {
       ></IonAlert>
       <IonAlert
         isOpen={nameAlert}
-        cssClass={`name-alert${idMapStyle === "rontomap_streets_dark" ? " name-alert-dark" : ""}`}
+        cssClass={`name-alert${idMapStyle === "rontomap_streets_dark" ? " name-alert-dark alert-dark" : ""}`}
         onDidDismiss={() => setNameAlert(false)}
         onDidPresent={() => {
           setTimeout(() => {
@@ -4058,6 +4079,7 @@ export default function Map() {
       />
       <IonAlert
         isOpen={deleteAllAlert}
+        cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
         onDidDismiss={() => setDeleteAllAlert(false)}
         header="Delete all features"
         message="Are you sure you want to delete all markers and paths?"
@@ -4068,6 +4090,7 @@ export default function Map() {
       />
       <IonAlert
         isOpen={!!deletePathAlert}
+        cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
         onDidDismiss={() => setDeletePathAlert(null)}
         header="Delete path"
         message="Are you sure you want to delete this path?"
@@ -4078,6 +4101,7 @@ export default function Map() {
       />
       <IonAlert
         isOpen={cancelPathAlert}
+        cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
         onDidDismiss={() => setCancelPathAlert(false)}
         header="Cancel path editing"
         message="Are you sure you want to cancel? All changes will be lost."
@@ -4088,6 +4112,7 @@ export default function Map() {
       />
       <IonAlert
         isOpen={circuitAlert}
+        cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
         onDidDismiss={() => { setCircuitAlert(false); pendingCircuitPathRef.current = null; }}
         header="Circular path"
         message="Close this path into a circuit?"
@@ -4098,6 +4123,7 @@ export default function Map() {
       />
       <IonAlert
         isOpen={trackBearingAlert}
+        cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
         onDidDismiss={() => setTrackBearingAlert(false)}
         header="Start bearing tracking"
         message="The current path will be saved before starting bearing tracking."
@@ -4108,6 +4134,7 @@ export default function Map() {
       />
       <IonAlert
         isOpen={cancelNavigationAlert}
+        cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
         onDidDismiss={() => setCancelNavigationAlert(false)}
         header="Cancel navigation"
         message="Are you sure you want to cancel navigation?"
@@ -4289,7 +4316,6 @@ export default function Map() {
                 <div className="force-divider" />
                 <button
                   className={forceMode ? "force-active" : ""}
-                  disabled={!snapMode}
                   onClick={() => setForceMode((f) => !f)}
                 >
                   Force

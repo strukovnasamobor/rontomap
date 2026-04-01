@@ -13,7 +13,7 @@
 }
 
 /* Path editing mode: non-active features are click-through so clicks create path points */
-.path-editing .mapboxgl-marker:not(.active-path-feature):not(.context-dot):not(.mapboxgl-user-location) {
+.path-editing .mapboxgl-marker:not(.active-path-feature):not(.context-dot) {
   pointer-events: none !important;
 }
 
@@ -141,9 +141,7 @@
 }
 
 .map-style-dark .mapboxgl-ctrl-scale {
-  background-color: #1a1a1a !important;
-  border-color: white !important;
-  color: white !important;
+  filter: invert(1);
 }
 
 .map-style-dark .mapboxgl-ctrl-attrib {
@@ -168,6 +166,12 @@
 }
 .map-style-dark .mapboxgl-ctrl-group button .mapboxgl-ctrl-icon {
   filter: invert(1) !important;
+}
+.map-style-dark .rontomap-logo button .mapboxgl-ctrl-icon {
+  filter: none !important;
+}
+.map-style-dark .mapboxgl-ctrl-group button.mapboxgl-ctrl-compass  .mapboxgl-ctrl-icon {
+  filter: invert(0.8) !important;
 }
 
 /* Dark mode: search geocoder */
@@ -401,11 +405,29 @@
   color: white !important;
 }
 
-/* Path vertex - white circle */
+.alert-dark .alert-wrapper {
+  background: #1a1a1a !important;
+}
+
+.alert-dark .alert-title,
+.alert-dark .alert-sub-title {
+  color: white !important;
+}
+
+.alert-dark .alert-message {
+  color: rgba(255, 255, 255, 0.7) !important;
+}
+
+.alert-dark .alert-input {
+  background: #2a2a2a !important;
+  color: white !important;
+}
+
+/* Path vertex - solid fill for start/end */
 .path-vertex {
   width: 14px;
   height: 14px;
-  background: white;
+  background: #ff6f00;
   border: 2px solid #ff6f00;
   border-radius: 50%;
   cursor: grab;
@@ -427,46 +449,52 @@
 }
 
 .path-vertex.path-vertex-intermediate {
-  background: #ff6f00;
+  background: white;
   border-color: #ff6f00;
 }
 
 .path-vertex.path-vertex-last {
-  background: white;
+  background: #ff6f00;
+  border-color: #ff6f00;
   border-radius: 2px;
 }
 
-.path-vertex.path-vertex-circuit-start {
-  background: white;
+.path-vertex.path-vertex-circuit-start,
+.path-vertex.path-vertex-circuit-end {
+  background: #ff6f00;
   border-color: #ff6f00;
+  border-radius: 2px;
   z-index: 3;
 }
-.path-vertex.path-vertex-circuit-start::after {
+.path-vertex.path-vertex-circuit-start::after,
+.path-vertex.path-vertex-circuit-end::after {
   content: "";
   position: absolute;
   top: 50%;
   left: 50%;
-  width: 12px;
-  height: 12px;
+  width: 8px;
+  height: 8px;
   transform: translate(-50%, -50%);
-  border: 2px solid #ff6f00;
+  background: white;
+  border-radius: 50%;
   pointer-events: none;
 }
 
 .path-vertex.path-vertex-force {
-  background: #6f00ff !important;
+  background: white !important;
   border-color: #6f00ff !important;
 }
 .path-vertex.path-vertex-force.path-vertex-last {
-  background: white !important;
+  background: #6f00ff !important;
   border-color: #6f00ff !important;
+  border-radius: 2px;
 }
 
 /* Path midpoint handle - smaller circle */
 .path-midpoint {
   width: 9px;
   height: 9px;
-  background: #ff6f00;
+  background: white;
   border: 2px solid #ff6f00;
   border-radius: 50%;
   cursor: grab;
@@ -494,52 +522,44 @@
 }
 
 .map-style-dark .path-vertex {
-  background: white;
+  background: #ff6f00;
   border-color: #ff6f00;
 }
 
 .map-style-dark .path-vertex.path-vertex-intermediate {
-  background: #ff6f00;
+  background: white;
   border-color: #ff6f00;
 }
 
 .map-style-dark .path-vertex.path-vertex-last {
-  background: white;
+  background: #ff6f00;
+  border-color: #ff6f00;
   border-radius: 2px;
 }
 
-.map-style-dark .path-vertex.path-vertex-circuit-start {
-  background: white;
+.map-style-dark .path-vertex.path-vertex-circuit-start,
+.map-style-dark .path-vertex.path-vertex-circuit-end {
+  background: #ff6f00;
   border-color: #ff6f00;
-}
-.map-style-dark .path-vertex.path-vertex-circuit-start::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 12px;
-  height: 12px;
-  transform: translate(-50%, -50%);
-  border: 2px solid #ff6f00;
-  pointer-events: none;
+  border-radius: 2px;
 }
 
 .map-style-dark .path-midpoint {
-  background: #ff6f00;
+  background: white;
   border-color: #ff6f00;
 }
 
 .path-midpoint.path-midpoint-forced {
-  background: #6f00ff;
+  background: white;
   border-color: #6f00ff;
 }
 
 .path-midpoint.path-midpoint-forced:hover {
-  background: #6f00ff;
+  background: white;
 }
 
 .path-midpoint.path-midpoint-both-forced {
-  background: #6f00ff;
+  background: white;
 }
 
 .path-actions {
@@ -801,116 +821,103 @@
 
 /* Navigation path vertex - blue */
 .nav-path-vertex {
+  background: #0090ff;
   border-color: #0090ff;
 }
 .nav-path-vertex.path-vertex-intermediate {
-  background: #0090ff;
+  background: white;
   border-color: #0090ff;
 }
 .nav-path-vertex.path-vertex-last {
-  background: white;
+  background: #0090ff;
   border-color: #0090ff;
   border-radius: 2px;
 }
-.nav-path-vertex.path-vertex-circuit-start {
-  background: white;
+.nav-path-vertex.path-vertex-circuit-start,
+.nav-path-vertex.path-vertex-circuit-end {
+  background: #0090ff;
   border-color: #0090ff;
+  border-radius: 2px;
   z-index: 3;
 }
-.nav-path-vertex.path-vertex-circuit-start::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 12px;
-  height: 12px;
-  transform: translate(-50%, -50%);
-  border: 2px solid #0090ff;
-  pointer-events: none;
-}
 .map-style-dark .nav-path-vertex {
-  border-color: #0090ff;
-}
-.map-style-dark .nav-path-vertex.path-vertex-intermediate {
   background: #0090ff;
   border-color: #0090ff;
 }
-.map-style-dark .nav-path-vertex.path-vertex-last {
+.map-style-dark .nav-path-vertex.path-vertex-intermediate {
   background: white;
+  border-color: #0090ff;
+}
+.map-style-dark .nav-path-vertex.path-vertex-last {
+  background: #0090ff;
   border-color: #0090ff;
   border-radius: 2px;
 }
-.map-style-dark .nav-path-vertex.path-vertex-circuit-start {
-  background: white;
+.map-style-dark .nav-path-vertex.path-vertex-circuit-start,
+.map-style-dark .nav-path-vertex.path-vertex-circuit-end {
+  background: #0090ff;
   border-color: #0090ff;
-}
-.map-style-dark .nav-path-vertex.path-vertex-circuit-start::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 12px;
-  height: 12px;
-  transform: translate(-50%, -50%);
-  border: 2px solid #0090ff;
-  pointer-events: none;
+  border-radius: 2px;
 }
 
 /* Navigation path midpoint - blue */
 .nav-path-midpoint {
-  background: #0090ff;
+  background: white;
   border-color: #0090ff;
 }
 .map-style-dark .nav-path-midpoint {
-  background: #0090ff;
+  background: white;
   border-color: #0090ff;
 }
 .map-style-dark .path-midpoint.path-midpoint-forced {
-  background: #6f00ff;
+  background: white;
   border-color: #6f00ff;
 }
 .map-style-dark .path-midpoint.path-midpoint-both-forced {
-  background: #6f00ff;
+  background: white;
 }
 
 /* Navigation forced vertex - red */
 .nav-path-vertex.path-vertex-force {
-  background: #ff0000 !important;
+  background: white !important;
   border-color: #ff0000 !important;
 }
 .nav-path-vertex.path-vertex-force.path-vertex-last {
-  background: white !important;
+  background: #ff0000 !important;
   border-color: #ff0000 !important;
+  border-radius: 2px;
 }
 /* Navigation forced midpoint - red */
 .nav-path-midpoint.path-midpoint-forced {
-  background: #ff0000;
+  background: white;
   border-color: #ff0000;
 }
 .nav-path-midpoint.path-midpoint-forced:hover {
-  background: #ff0000;
+  background: white;
 }
 .nav-path-midpoint.path-midpoint-both-forced {
-  background: #ff0000;
+  background: white;
 }
 .map-style-dark .nav-path-vertex.path-vertex-force {
-  background: #ff0000 !important;
+  background: white !important;
   border-color: #ff0000 !important;
 }
 .map-style-dark .path-vertex.path-vertex-force.path-vertex-last {
-  background: white !important;
+  background: #6f00ff !important;
   border-color: #6f00ff !important;
+  border-radius: 2px;
 }
 .map-style-dark .nav-path-vertex.path-vertex-force.path-vertex-last {
-  background: white !important;
+  background: #ff0000 !important;
   border-color: #ff0000 !important;
+  border-radius: 2px;
 }
 .map-style-dark .nav-path-midpoint.path-midpoint-forced {
-  background: #ff0000;
+  background: white;
   border-color: #ff0000;
 }
 .map-style-dark .nav-path-midpoint.path-midpoint-both-forced {
-  background: #ff0000;
+  background: white;
 }
 
 /* Navigation snap toggle - blue active */
