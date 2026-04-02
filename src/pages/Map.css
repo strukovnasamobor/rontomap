@@ -967,6 +967,7 @@
 }
 
 .path-actions-group .renavigate-btn {
+  width: fit-content;
   background: #ff6f00;
   color: white;
   border: none;
