@@ -3,7 +3,8 @@ NAVIGATION
 - background tracking and passed path
 
 RECORDING ROUTE
-- dodavanje opcije u glavnom izboriku: kreiraj rutu prateći lokaciju (background tracking)
+- dodavanje opcije u glavnom izboriku: kreiraj rutu prateći lokaciju (background tracking), color #91FF00
+- opcija pretvaranja treacked path in paths
 
 UI REDESIGN
 - left click/tap on feature opens 
@@ -24,7 +25,7 @@ GOALS
 FEATURE UPGRADES
 - features and settings pages
 - offline Maps (Mapbox Android SDK or sw.js)
-- adding GPS tracks from file, convert tracks to paths
+- adding GPS tracks from file
 
 Ver. x.y. (z)
 - change vesrion in build gradle
@@ -82,4 +83,5 @@ COLORS
     - forced midpoints - #ffffff & #ff0011
     - forced segments - #ff0011
     - forced directon arrows - #0091ff
-- passed segments of path - #91FF00
+- tracked path 
+    - segments - #91FF00
