@@ -966,23 +966,6 @@
   color: #0091ff;
 }
 
-.path-actions-group .renavigate-btn {
-  width: fit-content;
-  background: #ff6f00;
-  color: white;
-  border: none;
-  padding: 8px 16px;
-  border-radius: 4px;
-  font-weight: 600;
-  cursor: pointer;
-}
-.path-actions-group .renavigate-btn:hover {
-  background: #e66500;
-}
-.path-actions-dark .path-actions-group .renavigate-btn {
-  background: #ff8f00;
-}
-
 .marker-menu button:disabled {
   opacity: 0.4;
   cursor: default;

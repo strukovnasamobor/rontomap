@@ -145,8 +145,8 @@ export default function Map() {
   const navSplitIndexRef = useRef(0);
   const navSplitTRef = useRef(0);
   const isOffPathRef = useRef(false);
-  const [isOffPath, setIsOffPath] = useState(false);
   const offPathCoordsRef = useRef([]);
+  const isRenavigatingRef = useRef(false);
   const navTotalDistanceRef = useRef(null);
   const [featuresLocked, setFeaturesLocked] = useState(false);
   const featuresLockedRef = useRef(false);
@@ -520,7 +520,7 @@ export default function Map() {
             id: lyrId,
             type: "line",
             source: srcId,
-            paint: { "line-color": "#91FF00", "line-width": ["coalesce", ["get", "width"], 3], "line-emissive-strength": 1 },
+            paint: { "line-color": "#bbbbbb", "line-width": ["coalesce", ["get", "width"], 3], "line-emissive-strength": 1 },
             layout: { "line-cap": "round", "line-join": "round" },
           },
           navPath._arrowLayerId,
@@ -545,8 +545,8 @@ export default function Map() {
       navSplitIndexRef.current = 0;
       navSplitTRef.current = 0;
       isOffPathRef.current = false;
-      setIsOffPath(false);
       offPathCoordsRef.current = [];
+      isRenavigatingRef.current = false;
       navTotalDistanceRef.current = null;
     };
 
@@ -556,7 +556,7 @@ export default function Map() {
       const source = map.getSource(passedPathSourceId.current);
       if (!source) return;
       const width = roadSnap === "car" ? 10 : roadSnap === "bike" || roadSnap === "foot" ? 5 : 3;
-      const features = coords.length >= 2 ? [makeFeature(coords, "#91FF00", width)] : [];
+      const features = coords.length >= 2 ? [makeFeature(coords, "#bbbbbb", width)] : [];
       source.setData({ type: "FeatureCollection", features });
     };
 
@@ -1706,6 +1706,9 @@ export default function Map() {
 
             // If in navigation mode, restore editing UI
             if (isNavigationModeRef.current) {
+              isOffPathRef.current = false;
+              offPathCoordsRef.current = [];
+              isRenavigatingRef.current = false;
               const path = activePathRef.current;
               if (path) {
                 path.isFinished = false;
@@ -2059,7 +2062,6 @@ export default function Map() {
             // User is off-path
             if (!isOffPathRef.current) {
               isOffPathRef.current = true;
-              setIsOffPath(true);
               offPathCoordsRef.current = [
                 passedPathCoordsRef.current.length > 0
                   ? passedPathCoordsRef.current[passedPathCoordsRef.current.length - 1]
@@ -2067,13 +2069,16 @@ export default function Map() {
               ];
             }
             offPathCoordsRef.current.push(userPos);
-            const allPassedCoords = [...passedPathCoordsRef.current, ...offPathCoordsRef.current];
-            h.updatePassedPathLine(allPassedCoords, path.roadSnap);
+            // Auto-renavigate snaps off-path coords and updates display
+
+            if (!isRenavigatingRef.current) {
+              isRenavigatingRef.current = true;
+              handleRenavigate().finally(() => { isRenavigatingRef.current = false; });
+            }
           } else {
             // User is on-path
             if (isOffPathRef.current) {
               isOffPathRef.current = false;
-              setIsOffPath(false);
               offPathCoordsRef.current = [];
             }
 
@@ -3878,8 +3883,8 @@ export default function Map() {
     navSplitIndexRef.current = 0;
     navSplitTRef.current = 0;
     isOffPathRef.current = false;
-    setIsOffPath(false);
     offPathCoordsRef.current = [];
+    isRenavigatingRef.current = false;
     navTotalDistanceRef.current = path.routeDistance ?? null;
 
     // Start bearing tracking
@@ -3912,7 +3917,6 @@ export default function Map() {
     // Snap the off-path segment and merge into passed path
     const offCoords = offPathCoordsRef.current;
     if (path.roadSnap && offCoords.length >= 2) {
-      // Snap the off-path GPS coords to road
       const profile = { foot: "walking", bike: "cycling", car: "driving" }[path.roadSnap] || "driving";
       try {
         const waypoints = offCoords.map((c) => c.join(",")).join(";");
@@ -3921,8 +3925,7 @@ export default function Map() {
         );
         const data = await res.json();
         if (data.routes && data.routes.length > 0) {
-          const snappedOffPath = data.routes[0].geometry.coordinates;
-          passedPathCoordsRef.current = [...passedPathCoordsRef.current, ...snappedOffPath];
+          passedPathCoordsRef.current = [...passedPathCoordsRef.current, ...data.routes[0].geometry.coordinates];
         } else {
           passedPathCoordsRef.current = [...passedPathCoordsRef.current, ...offCoords];
         }
@@ -3935,7 +3938,6 @@ export default function Map() {
 
     // Reset off-path state
     isOffPathRef.current = false;
-    setIsOffPath(false);
     offPathCoordsRef.current = [];
     navSplitIndexRef.current = 0;
     navSplitTRef.current = 0;
@@ -3947,28 +3949,9 @@ export default function Map() {
       h.updatePathLine(path);
     }
 
-    // Update total distance for remaining calculation
+    // Update total distance and passed path display
     navTotalDistanceRef.current = path.routeDistance ?? null;
-
-    // If called from edit mode (stopped bearing), restart navigation tracking
-    if (!isNavigationTrackingRef.current) {
-      path.isFinished = true;
-      h.hideIntermediateVertices(path);
-      path.midpoints.forEach((mp) => mp.marker.remove());
-      path.midpoints = [];
-      path.vertices.forEach((v) => v.marker.getElement().classList.remove("active-path-feature"));
-      setIsNavigationTracking(true);
-      isNavigationTrackingRef.current = true;
-      h.ensurePassedPathLayer(path);
-    }
-
-    // Update passed path display
     h.updatePassedPathLine(passedPathCoordsRef.current, path.roadSnap);
-
-    // Restart bearing tracking if not already tracking
-    if (!ctrl._trackingBearing) {
-      ctrl._handleTrackBearing();
-    }
   };
 
   const handleCancelNavigation = () => {
@@ -4590,13 +4573,6 @@ export default function Map() {
                 </button>
               </div>
             </>
-          )}
-          {isOffPath && (
-            <div className="path-actions-group">
-              <button className="renavigate-btn" onClick={handleRenavigate}>
-                Renavigate
-              </button>
-            </div>
           )}
           {navRouteDistance != null && (
             <div className="route-info">

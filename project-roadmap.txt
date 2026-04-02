@@ -1,5 +1,6 @@
 NAVIGATION
 ? when user goes off navigation path
+? snapped user location in navigation and tracking bearing
 - background tracking and passed path
 
 RECORDING ROUTE
@@ -68,6 +69,7 @@ COLORS
     - forced midpoints - #ffffff & #6f00ff
     - forced segments - #6f00ff
     - forced directon arrows - #ff6f00
+    - passed segments - #91FF00
 - nav paths
     - start point (circle) - #0091ff
     - end point (rectangle) - #0091ff
@@ -83,5 +85,4 @@ COLORS
     - forced midpoints - #ffffff & #ff0011
     - forced segments - #ff0011
     - forced directon arrows - #0091ff
-- tracked path 
-    - segments - #91FF00
+    - passed segments - #bbbbbb
