@@ -139,6 +139,15 @@ export default function Map() {
   const [navRouteDuration, setNavRouteDuration] = useState(null);
   const [cancelNavigationAlert, setCancelNavigationAlert] = useState(false);
   const cancelNavigationAlertRef = useRef(false);
+  const passedPathSourceId = useRef(null);
+  const passedPathLayerId = useRef(null);
+  const passedPathCoordsRef = useRef([]);
+  const navSplitIndexRef = useRef(0);
+  const navSplitTRef = useRef(0);
+  const isOffPathRef = useRef(false);
+  const [isOffPath, setIsOffPath] = useState(false);
+  const offPathCoordsRef = useRef([]);
+  const navTotalDistanceRef = useRef(null);
   const [featuresLocked, setFeaturesLocked] = useState(false);
   const featuresLockedRef = useRef(false);
   const idMapStyleRef = useRef(idMapStyle);
@@ -382,6 +391,12 @@ export default function Map() {
     return rem > 0 ? `${hrs} h ${rem} min` : `${hrs} h`;
   };
 
+  const formatETA = (seconds) => {
+    if (seconds == null) return "";
+    const eta = new Date(Date.now() + seconds * 1000);
+    return eta.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  };
+
   // Initialize map and add controls
   useEffect(() => {
     console.log("useEffect > Initialize map");
@@ -480,12 +495,69 @@ export default function Map() {
             "text-ignore-placement": true,
           },
           paint: {
-            "text-color": path.isNavigation ? "#0090ff" : "#ff6f00",
+            "text-color": path.isNavigation ? "#0091ff" : "#ff6f00",
             "text-emissive-strength": 1,
           },
         });
         path._arrowLayerId = arrowLayerId;
       }
+    };
+
+    const ensurePassedPathLayer = (navPath) => {
+      const map = mapRef.current;
+      if (!map) return;
+      const srcId = "passed-path-source-" + navPath.id;
+      const lyrId = "passed-path-layer-" + navPath.id;
+      if (!map.getSource(srcId)) {
+        map.addSource(srcId, {
+          type: "geojson",
+          data: { type: "FeatureCollection", features: [] },
+        });
+      }
+      if (!map.getLayer(lyrId)) {
+        map.addLayer(
+          {
+            id: lyrId,
+            type: "line",
+            source: srcId,
+            paint: { "line-color": "#91FF00", "line-width": ["coalesce", ["get", "width"], 3], "line-emissive-strength": 1 },
+            layout: { "line-cap": "round", "line-join": "round" },
+          },
+          navPath._arrowLayerId,
+        );
+      }
+      passedPathSourceId.current = srcId;
+      passedPathLayerId.current = lyrId;
+    };
+
+    const removePassedPathLayer = () => {
+      const map = mapRef.current;
+      if (!map) return;
+      if (passedPathLayerId.current && map.getLayer(passedPathLayerId.current)) {
+        map.removeLayer(passedPathLayerId.current);
+      }
+      if (passedPathSourceId.current && map.getSource(passedPathSourceId.current)) {
+        map.removeSource(passedPathSourceId.current);
+      }
+      passedPathSourceId.current = null;
+      passedPathLayerId.current = null;
+      passedPathCoordsRef.current = [];
+      navSplitIndexRef.current = 0;
+      navSplitTRef.current = 0;
+      isOffPathRef.current = false;
+      setIsOffPath(false);
+      offPathCoordsRef.current = [];
+      navTotalDistanceRef.current = null;
+    };
+
+    const updatePassedPathLine = (coords, roadSnap) => {
+      const map = mapRef.current;
+      if (!map || !passedPathSourceId.current) return;
+      const source = map.getSource(passedPathSourceId.current);
+      if (!source) return;
+      const width = roadSnap === "car" ? 10 : roadSnap === "bike" || roadSnap === "foot" ? 5 : 3;
+      const features = coords.length >= 2 ? [makeFeature(coords, "#91FF00", width)] : [];
+      source.setData({ type: "FeatureCollection", features });
     };
 
     const makeFeature = (coords, color, width) => ({
@@ -497,7 +569,7 @@ export default function Map() {
     const updatePathLine = (path) => {
       const source = mapRef.current?.getSource(path.sourceId);
       if (!source) return;
-      const mainColor = path.isNavigation ? "#0090ff" : "#ff6f00";
+      const mainColor = path.isNavigation ? "#0091ff" : "#ff6f00";
       const forceColor = path.isNavigation ? "#ff0000" : "#6F00FF";
 
       if (path.roadSnap && path.snappedSegments) {
@@ -755,6 +827,36 @@ export default function Map() {
       return bestPos;
     };
 
+    const closestPointOnLineWithIndex = (line, lngLat) => {
+      const px = lngLat[0],
+        py = lngLat[1];
+      let bestDist = Infinity,
+        bestPos = line[0],
+        bestIdx = 0,
+        bestT = 0;
+      for (let i = 0; i < line.length - 1; i++) {
+        const ax = line[i][0],
+          ay = line[i][1];
+        const bx = line[i + 1][0],
+          by = line[i + 1][1];
+        const dx = bx - ax,
+          dy = by - ay;
+        const len2 = dx * dx + dy * dy;
+        let t = len2 === 0 ? 0 : ((px - ax) * dx + (py - ay) * dy) / len2;
+        t = Math.max(0, Math.min(1, t));
+        const cx = ax + t * dx,
+          cy = ay + t * dy;
+        const dist = (px - cx) * (px - cx) + (py - cy) * (py - cy);
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestPos = [cx, cy];
+          bestIdx = i;
+          bestT = t;
+        }
+      }
+      return { point: bestPos, segmentIndex: bestIdx, t: bestT, distanceSq: bestDist };
+    };
+
     const getRenderedLine = (path) => {
       if (path.roadSnap && path.snappedSegments) {
         const all = [];
@@ -859,7 +961,7 @@ export default function Map() {
           // Render stale snapped segments + live force lines from current vertex positions
           const verts = path.vertices;
           const vi = verts.indexOf(vertexEntry);
-          const mainColor = path.isNavigation ? "#0090ff" : "#ff6f00";
+          const mainColor = path.isNavigation ? "#0091ff" : "#ff6f00";
           const features = [];
           // Keep stale snapped/offset segments
           for (const seg of path.snappedSegments) {
@@ -885,7 +987,7 @@ export default function Map() {
           if (source) source.setData({ type: "FeatureCollection", features });
         } else if (path.isCircuit && path.roadSnap && path.snappedSegments) {
           // Snapped circuit: render stale snapped segments only (no live closing segment to avoid duplicates)
-          const mainColor = path.isNavigation ? "#0090ff" : "#ff6f00";
+          const mainColor = path.isNavigation ? "#0091ff" : "#ff6f00";
           const features = [];
           for (const seg of path.snappedSegments) {
             if (seg.coords.length >= 2) {
@@ -1019,8 +1121,8 @@ export default function Map() {
           const pos = marker.getLngLat();
           const midPt = [pos.lng, pos.lat];
           const si = mpEntry.segmentIndex;
-          const mainColor = path.isNavigation ? "#0090ff" : "#ff6f00";
-          const forceColor = path.isNavigation ? "#ff0000" : "#6F00FF";
+          const mainColor = path.isNavigation ? "#0091ff" : "#ff6f00";
+          const forceColor = path.isNavigation ? "#ff0011" : "#6F00FF";
           const features = [];
           // Build segments with per-edge coloring
           const dragging = forceModeRef.current || verts[si].force || verts[si + 1].force;
@@ -1069,8 +1171,8 @@ export default function Map() {
         marker.on("drag", () => {
           const pos = marker.getLngLat();
           const midPt = [pos.lng, pos.lat];
-          const mainColor = path.isNavigation ? "#0090ff" : "#ff6f00";
-          const forceColor = path.isNavigation ? "#ff0000" : "#6F00FF";
+          const mainColor = path.isNavigation ? "#0091ff" : "#ff6f00";
+          const forceColor = path.isNavigation ? "#ff0011" : "#6F00FF";
           const features = [];
           for (let j = 0; j < verts.length - 1; j++) {
             const c = (verts[j].force || verts[j + 1].force) ? forceColor : mainColor;
@@ -1253,7 +1355,11 @@ export default function Map() {
       updateAttachedMarkers,
       getAttachedMarkerPos,
       closestPointOnLine,
+      closestPointOnLineWithIndex,
       getRenderedLine,
+      ensurePassedPathLayer,
+      removePassedPathLayer,
+      updatePassedPathLine,
     };
 
     if (mapRef.current) mapRef.current.resize();
@@ -1934,6 +2040,76 @@ export default function Map() {
       locationControlRef.current._lastPostionLat = lat;
       locationControlRef.current._lastPostionLong = long;
       locationControlRef.current._lastPositionBearing = bearing;
+
+      // === Passed Navigation Path Update ===
+      if (isNavigationTrackingRef.current && activePathRef.current?.isNavigation) {
+        const path = activePathRef.current;
+        const h = pathHelpersRef.current;
+        const userPos = [long, lat];
+        const renderedLine = h.getRenderedLine(path);
+
+        if (renderedLine.length >= 2) {
+          const { point, segmentIndex, t: paramT } = h.closestPointOnLineWithIndex(renderedLine, userPos);
+
+          // Off-path detection: 30m threshold
+          const distMeters = haversineDistance([userPos, point]);
+          const OFF_PATH_THRESHOLD = 30;
+
+          if (distMeters > OFF_PATH_THRESHOLD) {
+            // User is off-path
+            if (!isOffPathRef.current) {
+              isOffPathRef.current = true;
+              setIsOffPath(true);
+              offPathCoordsRef.current = [
+                passedPathCoordsRef.current.length > 0
+                  ? passedPathCoordsRef.current[passedPathCoordsRef.current.length - 1]
+                  : point,
+              ];
+            }
+            offPathCoordsRef.current.push(userPos);
+            const allPassedCoords = [...passedPathCoordsRef.current, ...offPathCoordsRef.current];
+            h.updatePassedPathLine(allPassedCoords, path.roadSnap);
+          } else {
+            // User is on-path
+            if (isOffPathRef.current) {
+              isOffPathRef.current = false;
+              setIsOffPath(false);
+              offPathCoordsRef.current = [];
+            }
+
+            // Enforce forward-only split (prevent GPS jitter causing backward jumps)
+            if (
+              segmentIndex > navSplitIndexRef.current ||
+              (segmentIndex === navSplitIndexRef.current && paramT >= navSplitTRef.current)
+            ) {
+              navSplitIndexRef.current = segmentIndex;
+              navSplitTRef.current = paramT;
+            }
+
+            // Build passed coords: all line coords up to split point
+            const si = navSplitIndexRef.current;
+            const st = navSplitTRef.current;
+            const passedCoords = renderedLine.slice(0, si + 1);
+            if (si < renderedLine.length - 1) {
+              const a = renderedLine[si];
+              const b = renderedLine[si + 1];
+              passedCoords.push([a[0] + st * (b[0] - a[0]), a[1] + st * (b[1] - a[1])]);
+            }
+            passedPathCoordsRef.current = passedCoords;
+            h.updatePassedPathLine(passedCoords, path.roadSnap);
+
+            // Update remaining distance/duration display
+            if (navTotalDistanceRef.current != null) {
+              const passedDist = haversineDistance(passedCoords);
+              const remaining = Math.max(0, navTotalDistanceRef.current - passedDist);
+              setNavRouteDistance(remaining);
+              if (path.routeDuration != null && navTotalDistanceRef.current > 0) {
+                setNavRouteDuration(path.routeDuration * (remaining / navTotalDistanceRef.current));
+              }
+            }
+          }
+        }
+      }
     });
 
     // Mouse button down: track left/right for cursor changes
@@ -3696,6 +3872,16 @@ export default function Map() {
     setIsNavigationTracking(true);
     isNavigationTrackingRef.current = true;
 
+    // Initialize passed path layer
+    pathHelpersRef.current.ensurePassedPathLayer(path);
+    passedPathCoordsRef.current = [];
+    navSplitIndexRef.current = 0;
+    navSplitTRef.current = 0;
+    isOffPathRef.current = false;
+    setIsOffPath(false);
+    offPathCoordsRef.current = [];
+    navTotalDistanceRef.current = path.routeDistance ?? null;
+
     // Start bearing tracking
     const ctrl = locationControlRef.current;
     ctrl.hideTrackingIcons();
@@ -3705,11 +3891,63 @@ export default function Map() {
     setTimeout(() => setToastMsg(null), 3000);
   };
 
+  const handleRenavigate = async () => {
+    const path = activePathRef.current;
+    if (!path) return;
+    const ctrl = locationControlRef.current;
+    const userLng = ctrl._lastPostionLong;
+    const userLat = ctrl._lastPostionLat;
+    if (userLat == null || userLng == null) return;
+
+    const userLngLat = [userLng, userLat];
+    const h = pathHelpersRef.current;
+
+    // Update first vertex to user's current position
+    path.vertices[0].lngLat = userLngLat;
+    path.vertices[0].marker.setLngLat(userLngLat);
+
+    // Merge off-path coords into passed path
+    passedPathCoordsRef.current = [...passedPathCoordsRef.current, ...offPathCoordsRef.current];
+
+    // Reset off-path state
+    isOffPathRef.current = false;
+    setIsOffPath(false);
+    offPathCoordsRef.current = [];
+    navSplitIndexRef.current = 0;
+    navSplitTRef.current = 0;
+
+    // Re-snap the path from current position to destination
+    if (path.roadSnap) {
+      await h.fetchRoadSnap(path);
+    } else {
+      h.updatePathLine(path);
+    }
+
+    // Update total distance for remaining calculation
+    navTotalDistanceRef.current = path.routeDistance ?? null;
+
+    // If called from edit mode (stopped bearing), restart navigation tracking
+    if (!isNavigationTrackingRef.current) {
+      path.isFinished = true;
+      h.hideIntermediateVertices(path);
+      path.midpoints.forEach((mp) => mp.marker.remove());
+      path.midpoints = [];
+      path.vertices.forEach((v) => v.marker.getElement().classList.remove("active-path-feature"));
+      setIsNavigationTracking(true);
+      isNavigationTrackingRef.current = true;
+      h.ensurePassedPathLayer(path);
+      h.updatePassedPathLine(passedPathCoordsRef.current, path.roadSnap);
+      ctrl._handleTrackBearing();
+    }
+  };
+
   const handleCancelNavigation = () => {
     setCancelNavigationAlert(true);
   };
 
   const confirmCancelNavigation = () => {
+    pathHelpersRef.current.removePassedPathLayer();
+
     const path = activePathRef.current;
     if (path) {
       path.vertices.forEach((v) => v.marker.remove());
@@ -4323,6 +4561,13 @@ export default function Map() {
               </div>
             </>
           )}
+          {isOffPath && (
+            <div className="path-actions-group">
+              <button className="renavigate-btn" onClick={handleRenavigate}>
+                Renavigate
+              </button>
+            </div>
+          )}
           {navRouteDistance != null && (
             <div className="route-info">
               <span>{formatDistance(navRouteDistance)}</span>
@@ -4330,6 +4575,8 @@ export default function Map() {
                 <>
                   <span className="route-info-separator">&middot;</span>
                   <span>{formatDuration(navRouteDuration)}</span>
+                  <span className="route-info-separator">&middot;</span>
+                  <span>{formatETA(navRouteDuration)}</span>
                 </>
               )}
             </div>

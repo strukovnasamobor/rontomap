@@ -481,10 +481,16 @@
 }
 
 .path-vertex.path-vertex-force {
-  background: white !important;
+  background: #6f00ff !important;
   border-color: #6f00ff !important;
 }
 .path-vertex.path-vertex-force.path-vertex-last {
+  background: #6f00ff !important;
+  border-color: #6f00ff !important;
+  border-radius: 2px;
+}
+.path-vertex.path-vertex-force.path-vertex-circuit-start,
+.path-vertex.path-vertex-force.path-vertex-circuit-end {
   background: #6f00ff !important;
   border-color: #6f00ff !important;
   border-radius: 2px;
@@ -821,53 +827,53 @@
 
 /* Navigation path vertex - blue */
 .nav-path-vertex {
-  background: #0090ff;
-  border-color: #0090ff;
+  background: #0091ff;
+  border-color: #0091ff;
 }
 .nav-path-vertex.path-vertex-intermediate {
   background: white;
-  border-color: #0090ff;
+  border-color: #0091ff;
 }
 .nav-path-vertex.path-vertex-last {
-  background: #0090ff;
-  border-color: #0090ff;
+  background: #0091ff;
+  border-color: #0091ff;
   border-radius: 2px;
 }
 .nav-path-vertex.path-vertex-circuit-start,
 .nav-path-vertex.path-vertex-circuit-end {
-  background: #0090ff;
-  border-color: #0090ff;
+  background: #0091ff;
+  border-color: #0091ff;
   border-radius: 2px;
   z-index: 3;
 }
 .map-style-dark .nav-path-vertex {
-  background: #0090ff;
-  border-color: #0090ff;
+  background: #0091ff;
+  border-color: #0091ff;
 }
 .map-style-dark .nav-path-vertex.path-vertex-intermediate {
   background: white;
-  border-color: #0090ff;
+  border-color: #0091ff;
 }
 .map-style-dark .nav-path-vertex.path-vertex-last {
-  background: #0090ff;
-  border-color: #0090ff;
+  background: #0091ff;
+  border-color: #0091ff;
   border-radius: 2px;
 }
 .map-style-dark .nav-path-vertex.path-vertex-circuit-start,
 .map-style-dark .nav-path-vertex.path-vertex-circuit-end {
-  background: #0090ff;
-  border-color: #0090ff;
+  background: #0091ff;
+  border-color: #0091ff;
   border-radius: 2px;
 }
 
 /* Navigation path midpoint - blue */
 .nav-path-midpoint {
   background: white;
-  border-color: #0090ff;
+  border-color: #0091ff;
 }
 .map-style-dark .nav-path-midpoint {
   background: white;
-  border-color: #0090ff;
+  border-color: #0091ff;
 }
 .map-style-dark .path-midpoint.path-midpoint-forced {
   background: white;
@@ -879,18 +885,24 @@
 
 /* Navigation forced vertex - red */
 .nav-path-vertex.path-vertex-force {
-  background: white !important;
-  border-color: #ff0000 !important;
+  background: #ff0011 !important;
+  border-color: #ff0011 !important;
 }
 .nav-path-vertex.path-vertex-force.path-vertex-last {
-  background: #ff0000 !important;
-  border-color: #ff0000 !important;
+  background: #ff0011 !important;
+  border-color: #ff0011 !important;
+  border-radius: 2px;
+}
+.nav-path-vertex.path-vertex-force.path-vertex-circuit-start,
+.nav-path-vertex.path-vertex-force.path-vertex-circuit-end {
+  background: #ff0011 !important;
+  border-color: #ff0011 !important;
   border-radius: 2px;
 }
 /* Navigation forced midpoint - red */
 .nav-path-midpoint.path-midpoint-forced {
   background: white;
-  border-color: #ff0000;
+  border-color: #ff0011;
 }
 .nav-path-midpoint.path-midpoint-forced:hover {
   background: white;
@@ -899,22 +911,34 @@
   background: white;
 }
 .map-style-dark .nav-path-vertex.path-vertex-force {
-  background: white !important;
-  border-color: #ff0000 !important;
+  background: #ff0011 !important;
+  border-color: #ff0011 !important;
 }
 .map-style-dark .path-vertex.path-vertex-force.path-vertex-last {
   background: #6f00ff !important;
   border-color: #6f00ff !important;
   border-radius: 2px;
 }
+.map-style-dark .path-vertex.path-vertex-force.path-vertex-circuit-start,
+.map-style-dark .path-vertex.path-vertex-force.path-vertex-circuit-end {
+  background: #6f00ff !important;
+  border-color: #6f00ff !important;
+  border-radius: 2px;
+}
 .map-style-dark .nav-path-vertex.path-vertex-force.path-vertex-last {
-  background: #ff0000 !important;
-  border-color: #ff0000 !important;
+  background: #ff0011 !important;
+  border-color: #ff0011 !important;
+  border-radius: 2px;
+}
+.map-style-dark .nav-path-vertex.path-vertex-force.path-vertex-circuit-start,
+.map-style-dark .nav-path-vertex.path-vertex-force.path-vertex-circuit-end {
+  background: #ff0011 !important;
+  border-color: #ff0011 !important;
   border-radius: 2px;
 }
 .map-style-dark .nav-path-midpoint.path-midpoint-forced {
   background: white;
-  border-color: #ff0000;
+  border-color: #ff0011;
 }
 .map-style-dark .nav-path-midpoint.path-midpoint-both-forced {
   background: white;
@@ -922,24 +946,40 @@
 
 /* Navigation snap toggle - blue active */
 .nav-snap-toggle button.active {
-  background: #0090ff;
+  background: #0091ff;
   color: white;
 }
 .path-actions-dark .nav-snap-toggle button.active {
-  background: #0090ff;
+  background: #0091ff;
   color: white;
 }
 
 /* Navigation start button */
 .path-actions-group .start-btn {
-  color: #0090ff;
+  color: #0091ff;
   font-weight: 600;
 }
 .path-actions-group .start-btn:hover:not(:disabled) {
-  background: rgba(0, 144, 255, 0.1);
+  background: rgba(0, 145, 255, 0.1);
 }
 .path-actions-dark .path-actions-group .start-btn {
-  color: #4db8ff;
+  color: #0091ff;
+}
+
+.path-actions-group .renavigate-btn {
+  background: #ff6f00;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 4px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.path-actions-group .renavigate-btn:hover {
+  background: #e66500;
+}
+.path-actions-dark .path-actions-group .renavigate-btn {
+  background: #ff8f00;
 }
 
 .marker-menu button:disabled {

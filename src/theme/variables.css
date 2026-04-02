@@ -17,12 +17,12 @@ https://ionicframework.com/docs/theming/colors
   --ion-color-primary-tint: #ff6f00;
 
   /** secondary **/
-  --ion-color-secondary: #0090ff;
-  --ion-color-secondary-rgb: 0, 144, 255;
+  --ion-color-secondary: #0091ff;
+  --ion-color-secondary-rgb: 0, 145, 255;
   --ion-color-secondary-contrast: #ffffff;
   --ion-color-secondary-contrast-rgb: 255, 255, 255;
-  --ion-color-secondary-shade: #0090ff;
-  --ion-color-secondary-tint: #0090ff;
+  --ion-color-secondary-shade: #0091ff;
+  --ion-color-secondary-tint: #0091ff;
 
   /** tertiary **/
   --ion-color-tertiary: #ff9a00;
