@@ -3902,12 +3902,36 @@ export default function Map() {
     const userLngLat = [userLng, userLat];
     const h = pathHelpersRef.current;
 
-    // Update first vertex to user's current position
-    path.vertices[0].lngLat = userLngLat;
-    path.vertices[0].marker.setLngLat(userLngLat);
+    // Add user's current position as a new first vertex (keep all existing vertices)
+    const newMarker = h.createPathVertex(userLngLat);
+    newMarker.getElement().classList.remove("active-path-feature");
+    if (path.isNavigation) newMarker.getElement().classList.add("nav-path-vertex");
+    path.vertices.unshift({ lngLat: userLngLat, marker: newMarker, force: false });
+    h.updateVertexStyles(path);
 
-    // Merge off-path coords into passed path
-    passedPathCoordsRef.current = [...passedPathCoordsRef.current, ...offPathCoordsRef.current];
+    // Snap the off-path segment and merge into passed path
+    const offCoords = offPathCoordsRef.current;
+    if (path.roadSnap && offCoords.length >= 2) {
+      // Snap the off-path GPS coords to road
+      const profile = { foot: "walking", bike: "cycling", car: "driving" }[path.roadSnap] || "driving";
+      try {
+        const waypoints = offCoords.map((c) => c.join(",")).join(";");
+        const res = await fetch(
+          `https://api.mapbox.com/directions/v5/mapbox/${profile}/${waypoints}?geometries=geojson&overview=full&access_token=${mapboxgl.accessToken}`,
+        );
+        const data = await res.json();
+        if (data.routes && data.routes.length > 0) {
+          const snappedOffPath = data.routes[0].geometry.coordinates;
+          passedPathCoordsRef.current = [...passedPathCoordsRef.current, ...snappedOffPath];
+        } else {
+          passedPathCoordsRef.current = [...passedPathCoordsRef.current, ...offCoords];
+        }
+      } catch {
+        passedPathCoordsRef.current = [...passedPathCoordsRef.current, ...offCoords];
+      }
+    } else {
+      passedPathCoordsRef.current = [...passedPathCoordsRef.current, ...offCoords];
+    }
 
     // Reset off-path state
     isOffPathRef.current = false;
@@ -3916,7 +3940,7 @@ export default function Map() {
     navSplitIndexRef.current = 0;
     navSplitTRef.current = 0;
 
-    // Re-snap the path from current position to destination
+    // Re-snap the full path from current position to destination
     if (path.roadSnap) {
       await h.fetchRoadSnap(path);
     } else {
@@ -3936,7 +3960,13 @@ export default function Map() {
       setIsNavigationTracking(true);
       isNavigationTrackingRef.current = true;
       h.ensurePassedPathLayer(path);
-      h.updatePassedPathLine(passedPathCoordsRef.current, path.roadSnap);
+    }
+
+    // Update passed path display
+    h.updatePassedPathLine(passedPathCoordsRef.current, path.roadSnap);
+
+    // Restart bearing tracking if not already tracking
+    if (!ctrl._trackingBearing) {
       ctrl._handleTrackBearing();
     }
   };

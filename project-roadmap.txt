@@ -1,0 +1,85 @@
+NAVIGATION
+? when user goes off navigation path
+- background tracking and passed path
+
+RECORDING ROUTE
+- dodavanje opcije u glavnom izboriku: kreiraj rutu prateći lokaciju (background tracking)
+
+UI REDESIGN
+- left click/tap on feature opens 
+    - on landscape - left sidebar with feature details (show fly & center & navigate & share options, name, coordinates, pictures, description, show on map)
+    - on portrait - bottom sidebar minimal (show fly & center & navigate & share options, name, coordinates)
+                  - on swipe full bottom sidebar
+- swipe in right edge opens right sidebar
+    - map features list and details, settings and login
+
+- deploy version 1.3. (4), generate functionalities description
+
+===============================================================================
+GOALS
++ free and simple 3D map for orientation and navigation
++ creating and saharing map features (markers and paths)
+- finding and collaborative editing routes
+
+FEATURE UPGRADES
+- features and settings pages
+- offline Maps (Mapbox Android SDK or sw.js)
+- adding GPS tracks from file, convert tracks to paths
+
+Ver. x.y. (z)
+- change vesrion in build gradle
+* upgrades
+- test web (Desk., And. i iOS) + landscape
+- test PWA (Desk., And. i iOS) + landscape
+- test Android
+- Github add tag and upload apk and zipped dist folder
+- Google Play Store new edition
+
+MOUSE - TOUCH ACTIONS
++ left mouse click - tap => interaction
++ double mouse click - double tap => fullscreen enter/exit
++ right mouse click - long tap => main menu open
++ mouse wheel => zoom in/out
++ mouse over locked feature (alias cursor icon)
++ mouse over unlocked feature (grab cursor icon)
++ left mouse click & drag map or locked feaure (all-scroll cursor icon) - touch drag => map drag
++ left mouse click & drag on unlocked feature (grabbing cursor icon) - touch drag => feature drag
++ right mouse click & drag (croosshair cursor icon) => map rotation and tilt camera orbiting
++ mouse wheel click & drag (croosshair cursor icon) => map rotation and tilt camera panning
++ two fingers twisting => map rotation
++ two fingers tilt => map tilt
+
+COLORS
+- context point - #ff6f00 & #ffffff
+- markers - #ffffff & #ff6f00
+- paths
+    - start point (circle) - #ff6f00
+    - end point (rectangle) - #ff6f00
+    - start/end point of circuit path (rectangle with circle inside) - #ff6f00 & #ffffff
+    - points - #ff6f00
+    - midpoints - #ffffff & #ff6f00
+    - segments - #ff6f00
+    - directon arrows - #ff6f00
+    - forced start point (circle) - #6f00ff
+    - forced end point (rectangle) - #6f00ff
+    - forced start/end point of circuit path (rectangle with circle inside) - #6f00ff & #ffffff
+    - forced points - #6f00ff
+    - forced midpoints - #ffffff & #6f00ff
+    - forced segments - #6f00ff
+    - forced directon arrows - #ff6f00
+- nav paths
+    - start point (circle) - #0091ff
+    - end point (rectangle) - #0091ff
+    - start/end point of circuit path (rectangle with circle inside) - #0091ff & #ffffff
+    - points - #0091ff
+    - midpoints - #ffffff & #0091ff
+    - segments - #0091ff
+    - directon arrows - #0091ff
+    - forced start point (circle) - #ff0011
+    - forced end point (rectangle) - #ff0011
+    - forced start/end point of circuit path (rectangle with circle inside) - #ff0011 & #ffffff
+    - forced points - #ff0011
+    - forced midpoints - #ffffff & #ff0011
+    - forced segments - #ff0011
+    - forced directon arrows - #0091ff
+- passed segments of path - #91FF00
