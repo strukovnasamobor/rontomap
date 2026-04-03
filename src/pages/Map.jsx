@@ -10,7 +10,8 @@ import MapboxGeocoder from "@mapbox/mapbox-gl-geocoder";
 import "@mapbox/mapbox-gl-geocoder/dist/mapbox-gl-geocoder.css";
 import { StatusBar } from "@capacitor/status-bar";
 import { Geolocation } from "@capacitor/geolocation";
-import { Capacitor } from "@capacitor/core";
+import { Capacitor, registerPlugin } from "@capacitor/core";
+const BackgroundGeolocation = registerPlugin("BackgroundGeolocation");
 import { App as CapApp } from "@capacitor/app";
 import { db } from "../../firebase";
 import { collection, addDoc, doc, getDoc, serverTimestamp } from "firebase/firestore";
@@ -135,6 +136,11 @@ export default function Map() {
   const isNavigationModeRef = useRef(false);
   const [isNavigationTracking, setIsNavigationTracking] = useState(false);
   const isNavigationTrackingRef = useRef(false);
+  const [isRecordingRoute, setIsRecordingRoute] = useState(false);
+  const isRecordingRouteRef = useRef(false);
+  const recordedPathRef = useRef(null);
+  const recordedCoordsRef = useRef([]);
+  const bgWatcherIdRef = useRef(null);
   const [navRouteDistance, setNavRouteDistance] = useState(null);
   const [navRouteDuration, setNavRouteDuration] = useState(null);
   const [cancelNavigationAlert, setCancelNavigationAlert] = useState(false);
@@ -495,7 +501,7 @@ export default function Map() {
             "text-ignore-placement": true,
           },
           paint: {
-            "text-color": path.isNavigation ? "#0091ff" : "#ff6f00",
+            "text-color": path.isNavigation ? "#0091ff" : path.isRecording ? "#91FF00" : "#ff6f00",
             "text-emissive-strength": 1,
           },
         });
@@ -569,7 +575,7 @@ export default function Map() {
     const updatePathLine = (path) => {
       const source = mapRef.current?.getSource(path.sourceId);
       if (!source) return;
-      const mainColor = path.isNavigation ? "#0091ff" : "#ff6f00";
+      const mainColor = path.isNavigation ? "#0091ff" : path.isRecording ? "#91FF00" : "#ff6f00";
       const forceColor = path.isNavigation ? "#ff0000" : "#6F00FF";
 
       if (path.roadSnap && path.snappedSegments) {
@@ -961,7 +967,7 @@ export default function Map() {
           // Render stale snapped segments + live force lines from current vertex positions
           const verts = path.vertices;
           const vi = verts.indexOf(vertexEntry);
-          const mainColor = path.isNavigation ? "#0091ff" : "#ff6f00";
+          const mainColor = path.isNavigation ? "#0091ff" : path.isRecording ? "#91FF00" : "#ff6f00";
           const features = [];
           // Keep stale snapped/offset segments
           for (const seg of path.snappedSegments) {
@@ -987,7 +993,7 @@ export default function Map() {
           if (source) source.setData({ type: "FeatureCollection", features });
         } else if (path.isCircuit && path.roadSnap && path.snappedSegments) {
           // Snapped circuit: render stale snapped segments only (no live closing segment to avoid duplicates)
-          const mainColor = path.isNavigation ? "#0091ff" : "#ff6f00";
+          const mainColor = path.isNavigation ? "#0091ff" : path.isRecording ? "#91FF00" : "#ff6f00";
           const features = [];
           for (const seg of path.snappedSegments) {
             if (seg.coords.length >= 2) {
@@ -1121,7 +1127,7 @@ export default function Map() {
           const pos = marker.getLngLat();
           const midPt = [pos.lng, pos.lat];
           const si = mpEntry.segmentIndex;
-          const mainColor = path.isNavigation ? "#0091ff" : "#ff6f00";
+          const mainColor = path.isNavigation ? "#0091ff" : path.isRecording ? "#91FF00" : "#ff6f00";
           const forceColor = path.isNavigation ? "#ff0011" : "#6F00FF";
           const features = [];
           // Build segments with per-edge coloring
@@ -1171,7 +1177,7 @@ export default function Map() {
         marker.on("drag", () => {
           const pos = marker.getLngLat();
           const midPt = [pos.lng, pos.lat];
-          const mainColor = path.isNavigation ? "#0091ff" : "#ff6f00";
+          const mainColor = path.isNavigation ? "#0091ff" : path.isRecording ? "#91FF00" : "#ff6f00";
           const forceColor = path.isNavigation ? "#ff0011" : "#6F00FF";
           const features = [];
           for (let j = 0; j < verts.length - 1; j++) {
@@ -1972,6 +1978,33 @@ export default function Map() {
       const lat = e.coords.latitude;
       const bearing = e.coords.heading ? e.coords.heading : mapRef.current.getBearing();
 
+      // Snap user display position to road during navigation tracking
+      const OFF_PATH_THRESHOLD = 30;
+      let displayLong = long, displayLat = lat;
+      let _navSnapResult = null;
+      if (
+        locationControlRef.current.isTrackingBearing() &&
+        isNavigationTrackingRef.current &&
+        activePathRef.current?.isNavigation &&
+        activePathRef.current.roadSnap
+      ) {
+        const _path = activePathRef.current;
+        const _h = pathHelpersRef.current;
+        const _renderedLine = _h.getRenderedLine(_path);
+        if (_renderedLine.length >= 2) {
+          const _result = _h.closestPointOnLineWithIndex(_renderedLine, [long, lat]);
+          const _dist = haversineDistance([[long, lat], _result.point]);
+          if (_dist <= OFF_PATH_THRESHOLD) {
+            displayLong = _result.point[0];
+            displayLat = _result.point[1];
+            _navSnapResult = { ..._result, renderedLine: _renderedLine, distMeters: _dist };
+            if (geolocateRef.current._userLocationDotMarker) {
+              geolocateRef.current._userLocationDotMarker.setLngLat([displayLong, displayLat]);
+            }
+          }
+        }
+      }
+
       // If user is currently moving the map while tracking bearing, do not move the map
       if (locationControlRef.current.isUserMovingMapWhenTrackingBearing()) {
         console.log("Event > geolocate > User is moving the map while tracking bearing, ignoring geolocate event.");
@@ -2019,7 +2052,7 @@ export default function Map() {
         const moveId = ++locationControlRef.current._programmaticMoveId;
         mapRef.current
           .easeTo({
-            center: [long, lat],
+            center: [displayLong, displayLat],
             offset: [0, 120],
             bearing: bearing,
             duration: duration,
@@ -2049,15 +2082,27 @@ export default function Map() {
         const path = activePathRef.current;
         const h = pathHelpersRef.current;
         const userPos = [long, lat];
-        const renderedLine = h.getRenderedLine(path);
+
+        let renderedLine, point, segmentIndex, paramT, distMeters;
+        if (_navSnapResult) {
+          renderedLine = _navSnapResult.renderedLine;
+          point = _navSnapResult.point;
+          segmentIndex = _navSnapResult.segmentIndex;
+          paramT = _navSnapResult.t;
+          distMeters = _navSnapResult.distMeters;
+        } else {
+          renderedLine = h.getRenderedLine(path);
+          if (renderedLine.length < 2) { renderedLine = []; }
+          else {
+            const result = h.closestPointOnLineWithIndex(renderedLine, userPos);
+            point = result.point;
+            segmentIndex = result.segmentIndex;
+            paramT = result.t;
+            distMeters = haversineDistance([userPos, point]);
+          }
+        }
 
         if (renderedLine.length >= 2) {
-          const { point, segmentIndex, t: paramT } = h.closestPointOnLineWithIndex(renderedLine, userPos);
-
-          // Off-path detection: 30m threshold
-          const distMeters = haversineDistance([userPos, point]);
-          const OFF_PATH_THRESHOLD = 30;
-
           if (distMeters > OFF_PATH_THRESHOLD) {
             // User is off-path
             if (!isOffPathRef.current) {
@@ -2113,6 +2158,18 @@ export default function Map() {
               }
             }
           }
+        }
+      }
+
+      // === Route Recording (web only — native uses BackgroundGeolocation watcher) ===
+      if (!Capacitor.isNativePlatform() && isRecordingRouteRef.current && recordedPathRef.current) {
+        recordedCoordsRef.current.push([long, lat]);
+        const source = mapRef.current?.getSource(recordedPathRef.current.sourceId);
+        if (source && recordedCoordsRef.current.length >= 2) {
+          source.setData({
+            type: "FeatureCollection",
+            features: [makeFeature(recordedCoordsRef.current, "#91FF00")],
+          });
         }
       }
     });
@@ -2784,6 +2841,7 @@ export default function Map() {
           if (entry.isCircuit) path.isCircuit = true;
           if (entry.closingForced) path.closingForced = true;
           if (entry.isNavigation) path.isNavigation = true;
+          if (entry.isRecording) path.isRecording = true;
           pathsRef.current.push(path);
           h.ensurePathLayer(path);
           entry.coords.forEach((c) => {
@@ -2906,6 +2964,9 @@ export default function Map() {
   useEffect(() => {
     cancelPathAlertRef.current = cancelPathAlert;
   }, [cancelPathAlert]);
+  useEffect(() => {
+    isRecordingRouteRef.current = isRecordingRoute;
+  }, [isRecordingRoute]);
   useEffect(() => {
     cancelNavigationAlertRef.current = cancelNavigationAlert;
   }, [cancelNavigationAlert]);
@@ -3288,6 +3349,7 @@ export default function Map() {
       if (p.isCircuit) pathData.isCircuit = true;
       if (p.closingForced) pathData.closingForced = true;
       if (p.isNavigation) pathData.isNavigation = true;
+      if (p.isRecording) pathData.isRecording = true;
       if (p.attachedMarkers && p.attachedMarkers.length > 0) {
         pathData.attachedMarkers = p.attachedMarkers.map((m) => {
           const am = { segmentIndex: m._segmentIndex, t: m._t };
@@ -3350,6 +3412,7 @@ export default function Map() {
       if (p.isCircuit) pathData.isCircuit = true;
       if (p.closingForced) pathData.closingForced = true;
       if (p.isNavigation) pathData.isNavigation = true;
+      if (p.isRecording) pathData.isRecording = true;
       if (p.attachedMarkers && p.attachedMarkers.length > 0) {
         pathData.attachedMarkers = p.attachedMarkers.map((m) => {
           const am = { segmentIndex: m._segmentIndex, t: m._t };
@@ -3476,6 +3539,12 @@ export default function Map() {
   };
 
   const handleStartPathCreation = () => {
+    if (isRecordingRouteRef.current) {
+      setMapClickMenu(null);
+      setToastMsg("Stop recording first.");
+      setTimeout(() => setToastMsg(null), 2000);
+      return;
+    }
     const lngLat = [mapClickMenu.lngLat.lng, mapClickMenu.lngLat.lat];
     setMapClickMenu(null);
 
@@ -3531,6 +3600,165 @@ export default function Map() {
     setTimeout(() => {
       setToastMsg(null);
     }, 2000);
+  };
+
+  const handleRecordRoute = async () => {
+    setMapClickMenu(null);
+
+    const ctrl = locationControlRef.current;
+
+    // Finish any active unfinished path
+    if (activePathRef.current && !activePathRef.current.isFinished) {
+      const prev = activePathRef.current;
+      prev.isFinished = true;
+      pathHelpersRef.current.hideIntermediateVertices(prev);
+      prev.midpoints.forEach((mp) => mp.marker.remove());
+      prev.midpoints = [];
+      prev.vertices.forEach((v) => v.marker.getElement().classList.remove("active-path-feature"));
+      if (prev.attachedMarkers)
+        prev.attachedMarkers.forEach((m) => m.getElement().classList.remove("active-path-feature"));
+    }
+
+    // Request location permissions
+    if (Capacitor.isNativePlatform()) {
+      const permissionStatus = await Geolocation.checkPermissions();
+      if (permissionStatus.location !== "granted") {
+        const permissions = await Geolocation.requestPermissions();
+        if (permissions.location !== "granted" && permissions.location !== "limited") {
+          setToastMsg("Location permission denied.");
+          setTimeout(() => setToastMsg(null), 2000);
+          return;
+        }
+      }
+    }
+
+    // Get current user position
+    let userLng = ctrl._lastPostionLong;
+    let userLat = ctrl._lastPostionLat;
+
+    if (userLat == null || userLng == null) {
+      setToastMsg("Getting your location...");
+      try {
+        ctrl._geolocate.trigger();
+        const pos = await new Promise((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(
+            (p) => resolve(p),
+            (err) => reject(err),
+            { enableHighAccuracy: true, timeout: 10000 },
+          );
+        });
+        userLng = pos.coords.longitude;
+        userLat = pos.coords.latitude;
+        ctrl._lastPostionLong = userLng;
+        ctrl._lastPostionLat = userLat;
+      } catch (err) {
+        setToastMsg("Could not get your location.");
+        setTimeout(() => setToastMsg(null), 2000);
+        return;
+      }
+    } else {
+      ctrl._geolocate.trigger();
+    }
+
+    setToastMsg(null);
+
+    // Create the recording path
+    const id = `rec-${Date.now()}`;
+    const newPath = {
+      id,
+      sourceId: `path-line-source-${id}`,
+      layerId: `path-line-layer-${id}`,
+      vertices: [],
+      midpoints: [],
+      isFinished: false,
+      isRecording: true,
+    };
+    pathsRef.current.push(newPath);
+    recordedPathRef.current = newPath;
+    recordedCoordsRef.current = [[userLng, userLat]];
+
+    const h = pathHelpersRef.current;
+    h.ensurePathLayer(newPath);
+
+    // Activate wake lock for continuous GPS
+    await ctrl._requestWakeLock();
+
+    setIsRecordingRoute(true);
+
+    // On native platforms, start a background geolocation watcher
+    // that keeps tracking even when the app is backgrounded
+    if (Capacitor.isNativePlatform()) {
+      const watcherId = await BackgroundGeolocation.addWatcher(
+        {
+          backgroundTitle: "RontoMap",
+          backgroundMessage: "Recording your route...",
+          requestPermissions: true,
+          stale: false,
+          distanceFilter: 5,
+        },
+        (location, error) => {
+          if (error) return;
+          if (!location || !isRecordingRouteRef.current || !recordedPathRef.current) return;
+          const coord = [location.longitude, location.latitude];
+          recordedCoordsRef.current.push(coord);
+          const source = mapRef.current?.getSource(recordedPathRef.current.sourceId);
+          if (source && recordedCoordsRef.current.length >= 2) {
+            source.setData({
+              type: "FeatureCollection",
+              features: [makeFeature(recordedCoordsRef.current, "#91FF00")],
+            });
+          }
+        },
+      );
+      bgWatcherIdRef.current = watcherId;
+    }
+
+    setToastMsg("Recording route...");
+    setTimeout(() => setToastMsg(null), 3000);
+  };
+
+  const handleStopRecording = () => {
+    setMapClickMenu(null);
+
+    if (!recordedPathRef.current) return;
+
+    const path = recordedPathRef.current;
+    const h = pathHelpersRef.current;
+    const coords = recordedCoordsRef.current;
+
+    // Apply RDP simplification to reduce point density
+    const simplified = coords.length >= 2 ? rdpSimplify(coords, RDP_TOLERANCE) : coords;
+
+    // Create proper vertex objects from simplified coordinates
+    simplified.forEach((coord, i) => {
+      const marker = h.createPathVertex(coord);
+      marker.setDraggable(false);
+      marker.getElement().classList.remove("active-path-feature");
+      // Hide intermediate vertices, show only start and end
+      if (i > 0 && i < simplified.length - 1) {
+        marker.getElement().style.display = "none";
+      }
+      path.vertices.push({ lngLat: coord, marker, path });
+    });
+
+    path.isFinished = true;
+    h.updatePathLine(path);
+
+    // Stop background watcher on native platforms
+    if (bgWatcherIdRef.current != null) {
+      BackgroundGeolocation.removeWatcher({ id: bgWatcherIdRef.current });
+      bgWatcherIdRef.current = null;
+    }
+
+    // Release wake lock
+    locationControlRef.current?._releaseWakeLock();
+
+    setIsRecordingRoute(false);
+    recordedPathRef.current = null;
+    recordedCoordsRef.current = [];
+
+    setToastMsg("Route recorded.");
+    setTimeout(() => setToastMsg(null), 3000);
   };
 
   const handleFinishPath = () => {
@@ -3708,6 +3936,23 @@ export default function Map() {
     pathHelpersRef.current.updateVertexStyles(path);
   };
 
+  const handleConvertToFeaturePath = () => {
+    const path = mapClickMenu.path;
+    setMapClickMenu(null);
+    if (!path) return;
+
+    delete path.isRecording;
+    pathHelpersRef.current.updatePathLine(path);
+
+    const map = mapRef.current;
+    if (map && path._arrowLayerId && map.getLayer(path._arrowLayerId)) {
+      map.setPaintProperty(path._arrowLayerId, "text-color", "#ff6f00");
+    }
+
+    setToastMsg("Converted to feature path.");
+    setTimeout(() => setToastMsg(null), 2000);
+  };
+
   const handleDeletePath = () => {
     const path = mapClickMenu.path;
     setMapClickMenu(null);
@@ -3737,6 +3982,11 @@ export default function Map() {
   };
 
   const startNavigation = async (destinationLngLat) => {
+    // Auto-stop recording before starting navigation
+    if (isRecordingRouteRef.current) {
+      handleStopRecording();
+    }
+
     const ctrl = locationControlRef.current;
 
     // Finish any active unfinished path
@@ -4455,11 +4705,18 @@ export default function Map() {
                 <button onClick={handleFlyToPath}>Fly to path</button>
                 <button onClick={handleCenterToPath}>Center to path</button>
                 <button onClick={handleNavigateToPath}>Navigate to path</button>
-                <button onClick={handleAddMarkerToPath}>Add marker to path</button>
-                <button onClick={handleEditPath}>Edit path</button>
-                <button onClick={handleReversePath}>Reverse path</button>
+                {!mapClickMenu.path.isRecording && (
+                  <>
+                    <button onClick={handleAddMarkerToPath}>Add marker to path</button>
+                    <button onClick={handleEditPath}>Edit path</button>
+                    <button onClick={handleReversePath}>Reverse path</button>
+                  </>
+                )}
                 <button onClick={handleSetPathName}>Set path name</button>
                 <button onClick={handleRecordPathView}>Record path view</button>
+                {mapClickMenu.path.isRecording && (
+                  <button onClick={handleConvertToFeaturePath}>Converto to feature path</button>
+                )}
                 <button onClick={handleDeletePath}>Delete path</button>
               </>
             ) : (
@@ -4468,6 +4725,11 @@ export default function Map() {
                 <button onClick={handleNavigateHere}>Navigate here</button>
                 <button onClick={handleAddMarkerFromMenu}>Add marker</button>
                 <button onClick={handleStartPathCreation}>Start path creation</button>
+                {isRecordingRoute ? (
+                  <button onClick={handleStopRecording}>Stop recording</button>
+                ) : (
+                  <button onClick={handleRecordRoute}>Record route</button>
+                )}
                 <button onClick={handleCopyEmbedFeatures}>Copy embed features</button>
                 <button onClick={handleCopyFeatures}>Copy link to features</button>
                 <button onClick={handleToggleFeaturesLock}>
