@@ -687,18 +687,18 @@
   background: #6f00ff;
 }
 
-.nav-snap-toggle button.force-active {
+.route-snap-toggle button.force-active {
   background: #ff0000;
   color: white;
 }
-.nav-snap-toggle button.force-active:hover {
+.route-snap-toggle button.force-active:hover {
   background: #ff0000;
 }
-.path-actions-dark .nav-snap-toggle button.force-active {
+.path-actions-dark .route-snap-toggle button.force-active {
   background: #ff0000;
   color: white;
 }
-.path-actions-dark .nav-snap-toggle button.force-active:hover {
+.path-actions-dark .route-snap-toggle button.force-active:hover {
   background: #ff0000;
 }
 
@@ -825,53 +825,53 @@
   color: #ef5350;
 }
 
-/* Navigation path vertex - blue */
-.nav-path-vertex {
+/* Route path vertex - blue */
+.route-path-vertex {
   background: #0091ff;
   border-color: #0091ff;
 }
-.nav-path-vertex.path-vertex-intermediate {
+.route-path-vertex.path-vertex-intermediate {
   background: white;
   border-color: #0091ff;
 }
-.nav-path-vertex.path-vertex-last {
+.route-path-vertex.path-vertex-last {
   background: #0091ff;
   border-color: #0091ff;
   border-radius: 2px;
 }
-.nav-path-vertex.path-vertex-circuit-start,
-.nav-path-vertex.path-vertex-circuit-end {
+.route-path-vertex.path-vertex-circuit-start,
+.route-path-vertex.path-vertex-circuit-end {
   background: #0091ff;
   border-color: #0091ff;
   border-radius: 2px;
   z-index: 3;
 }
-.map-style-dark .nav-path-vertex {
+.map-style-dark .route-path-vertex {
   background: #0091ff;
   border-color: #0091ff;
 }
-.map-style-dark .nav-path-vertex.path-vertex-intermediate {
+.map-style-dark .route-path-vertex.path-vertex-intermediate {
   background: white;
   border-color: #0091ff;
 }
-.map-style-dark .nav-path-vertex.path-vertex-last {
+.map-style-dark .route-path-vertex.path-vertex-last {
   background: #0091ff;
   border-color: #0091ff;
   border-radius: 2px;
 }
-.map-style-dark .nav-path-vertex.path-vertex-circuit-start,
-.map-style-dark .nav-path-vertex.path-vertex-circuit-end {
+.map-style-dark .route-path-vertex.path-vertex-circuit-start,
+.map-style-dark .route-path-vertex.path-vertex-circuit-end {
   background: #0091ff;
   border-color: #0091ff;
   border-radius: 2px;
 }
 
-/* Navigation path midpoint - blue */
-.nav-path-midpoint {
+/* Route path midpoint - blue */
+.route-path-midpoint {
   background: white;
   border-color: #0091ff;
 }
-.map-style-dark .nav-path-midpoint {
+.map-style-dark .route-path-midpoint {
   background: white;
   border-color: #0091ff;
 }
@@ -883,34 +883,34 @@
   background: white;
 }
 
-/* Navigation forced vertex - red */
-.nav-path-vertex.path-vertex-force {
+/* Route forced vertex - red */
+.route-path-vertex.path-vertex-force {
   background: #ff0011 !important;
   border-color: #ff0011 !important;
 }
-.nav-path-vertex.path-vertex-force.path-vertex-last {
-  background: #ff0011 !important;
-  border-color: #ff0011 !important;
-  border-radius: 2px;
-}
-.nav-path-vertex.path-vertex-force.path-vertex-circuit-start,
-.nav-path-vertex.path-vertex-force.path-vertex-circuit-end {
+.route-path-vertex.path-vertex-force.path-vertex-last {
   background: #ff0011 !important;
   border-color: #ff0011 !important;
   border-radius: 2px;
 }
-/* Navigation forced midpoint - red */
-.nav-path-midpoint.path-midpoint-forced {
+.route-path-vertex.path-vertex-force.path-vertex-circuit-start,
+.route-path-vertex.path-vertex-force.path-vertex-circuit-end {
+  background: #ff0011 !important;
+  border-color: #ff0011 !important;
+  border-radius: 2px;
+}
+/* Route forced midpoint - red */
+.route-path-midpoint.path-midpoint-forced {
   background: white;
   border-color: #ff0011;
 }
-.nav-path-midpoint.path-midpoint-forced:hover {
+.route-path-midpoint.path-midpoint-forced:hover {
   background: white;
 }
-.nav-path-midpoint.path-midpoint-both-forced {
+.route-path-midpoint.path-midpoint-both-forced {
   background: white;
 }
-.map-style-dark .nav-path-vertex.path-vertex-force {
+.map-style-dark .route-path-vertex.path-vertex-force {
   background: #ff0011 !important;
   border-color: #ff0011 !important;
 }
@@ -925,36 +925,78 @@
   border-color: #6f00ff !important;
   border-radius: 2px;
 }
-.map-style-dark .nav-path-vertex.path-vertex-force.path-vertex-last {
+.map-style-dark .route-path-vertex.path-vertex-force.path-vertex-last {
   background: #ff0011 !important;
   border-color: #ff0011 !important;
   border-radius: 2px;
 }
-.map-style-dark .nav-path-vertex.path-vertex-force.path-vertex-circuit-start,
-.map-style-dark .nav-path-vertex.path-vertex-force.path-vertex-circuit-end {
+.map-style-dark .route-path-vertex.path-vertex-force.path-vertex-circuit-start,
+.map-style-dark .route-path-vertex.path-vertex-force.path-vertex-circuit-end {
   background: #ff0011 !important;
   border-color: #ff0011 !important;
   border-radius: 2px;
 }
-.map-style-dark .nav-path-midpoint.path-midpoint-forced {
+
+/* Track path vertex - blue */
+.track-path-vertex {
+  background: #0000ff;
+  border-color: #0000ff;
+}
+.track-path-vertex.path-vertex-intermediate {
+  background: white;
+  border-color: #0000ff;
+}
+.track-path-vertex.path-vertex-last {
+  background: #0000ff;
+  border-color: #0000ff;
+  border-radius: 2px;
+}
+.track-path-vertex.path-vertex-circuit-start,
+.track-path-vertex.path-vertex-circuit-end {
+  background: #0000ff;
+  border-color: #0000ff;
+  border-radius: 2px;
+  z-index: 3;
+}
+.map-style-dark .track-path-vertex {
+  background: #0000ff;
+  border-color: #0000ff;
+}
+.map-style-dark .track-path-vertex.path-vertex-intermediate {
+  background: white;
+  border-color: #0000ff;
+}
+.map-style-dark .track-path-vertex.path-vertex-last {
+  background: #0000ff;
+  border-color: #0000ff;
+  border-radius: 2px;
+}
+.map-style-dark .track-path-vertex.path-vertex-circuit-start,
+.map-style-dark .track-path-vertex.path-vertex-circuit-end {
+  background: #0000ff;
+  border-color: #0000ff;
+  border-radius: 2px;
+}
+
+.map-style-dark .route-path-midpoint.path-midpoint-forced {
   background: white;
   border-color: #ff0011;
 }
-.map-style-dark .nav-path-midpoint.path-midpoint-both-forced {
+.map-style-dark .route-path-midpoint.path-midpoint-both-forced {
   background: white;
 }
 
-/* Navigation snap toggle - blue active */
-.nav-snap-toggle button.active {
+/* Route snap toggle - blue active */
+.route-snap-toggle button.active {
   background: #0091ff;
   color: white;
 }
-.path-actions-dark .nav-snap-toggle button.active {
+.path-actions-dark .route-snap-toggle button.active {
   background: #0091ff;
   color: white;
 }
 
-/* Navigation start button */
+/* Route start button */
 .path-actions-group .start-btn {
   color: #0091ff;
   font-weight: 600;

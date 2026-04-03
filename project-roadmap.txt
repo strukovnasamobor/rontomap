@@ -1,14 +1,9 @@
-NAVIGATION
-? when user goes off navigation path
-? snapped user location in navigation and tracking bearing
-? when mobile app goes in background, GPS signal is not getting for some time, user stop tracking bearing and start again
-
-RECORDING USER PATH
-? converting to feature path
-? tracked paths colors
-? backgound user locations
-
-- refactor code to align with TERMINOLOGY and sights color #0091ff
+? when editing paths just show distance
+? on changing styles preserve user passed segments
+? track context menu option rename
+? renavigate if user stay distant from route for some period of time, on renavigate add user location not as a first point but as new point (like moving midpoint in this segment to user location), maintain the user passed segments and show new navigation route
+? change color of tracks (start, end, segments), passed segments of routes to #0000ff
+? Add option to context menu for paths for trace it, show msg that user needs to be near path start point if is not, if user is close then transform path in route styling it like for navigation based on option free/foot/bike/car, when tracing path show distance, time and ETA and passed segments like in navigation routes, do not renavigate when tracing path.s
 
 UI REDESIGN
 - left click/tap on feature opens 
@@ -23,8 +18,8 @@ UI REDESIGN
 
 ==============================================================================================================================================================
 GOALS
-+ free and simple 3D map for orientation and navigation (online and offline)
-+ creating and sharing (with embedding option) map features (markers and paths)
+- free and simple 3D map for orientation and navigation (online and offline)
+- creating and sharing (with embedding option) map features (markers and paths)
 - handling and collaboration editing routes
 
 UPGRADES
@@ -41,18 +36,18 @@ Ver. x.y. (z)
 - Google Play Store new edition
 
 MOUSE/TOUCH ACTIONS
-+ left mouse click - tap => interaction
-+ double mouse click - double tap => fullscreen enter/exit
-+ right mouse click - long tap => main menu open
-+ mouse wheel => zoom in/out
-+ mouse over locked feature (alias cursor icon)
-+ mouse over unlocked feature (grab cursor icon)
-+ left mouse click & drag map or locked feaure (all-scroll cursor icon) - touch drag => map drag
-+ left mouse click & drag on unlocked feature (grabbing cursor icon) - touch drag => feature drag
-+ right mouse click & drag (croosshair cursor icon) => map rotation and tilt camera orbiting
-+ mouse wheel click & drag (croosshair cursor icon) => map rotation and tilt camera panning
-+ two fingers twisting => map rotation
-+ two fingers tilt => map tilt
+- left mouse click - tap => opening context sidebar with action icons
+- double mouse click - double tap => fullscreen enter/exit
+- right mouse click - long tap => context menu open
+- mouse wheel => zoom in/out
+- mouse over locked feature (alias cursor icon)
+- mouse over unlocked feature (grab cursor icon)
+- left mouse click & drag on map (all-scroll cursor icon) - touch drag => map drag
+- left mouse click & drag on feature dragging option (grabbing cursor icon) - touch drag => feature drag
+- right mouse click & drag (croosshair cursor icon) => map rotation and tilt camera orbiting
+- mouse wheel click & drag (croosshair cursor icon) => map rotation and tilt camera panning
+- two fingers twisting => map rotation
+- two fingers tilt => map tilt
 
 TERMINOLOGY
 - Features - set of markers and paths on a map
@@ -84,7 +79,6 @@ COLORS
     - forced midpoints - #ffffff & #6f00ff
     - forced segments - #6f00ff
     - forced directon arrows - #ff6f00
-    - passed segments - #91FF00
 - routes
     - start point (circle) - #0091ff
     - end point (rectangle) - #0091ff
@@ -100,8 +94,8 @@ COLORS
     - forced midpoints - #ffffff & #ff0011
     - forced segments - #ff0011
     - forced directon arrows - #0091ff
-    - passed segments - #bbbbbb
+    - passed segments - #0000ff
 - tracks
-    - start point (circle) - #91FF00
-    - end point (rectangle) - #91FF00
-    - segments - #91FF00
+    - start point (circle) - #0000ff
+    - end point (rectangle) - #0000ff
+    - segments - #0000ff
