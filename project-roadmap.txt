@@ -25,6 +25,7 @@ GOALS
 UPGRADES
 - offline maps and navigation using Mapbox Android SDK
 - adding GPS tracks from file
+- handling and collaboration editing routes
 
 Ver. x.y. (z)
 - change vesrion in build gradle
