@@ -1,9 +1,8 @@
 ? on mobile do not allow context menu to go behind navigation button, resize height of context menu
 ? when the recording track is finished, show it as a path, therefore no need for context menu for tracks, not need for import/export tracks
 ? when renavigate remove already passed midpoints so the route goes to the next point that hasn't yet passed
-? sight colors on traced path/route
+? sight colors on tracing and traced path/route
 ? recording path finish
-? import/export on mobile
 
 OFLINE MAPS AND NAVIGATION
 - context menu option download, update, delete
@@ -17,6 +16,7 @@ UI REDESIGN
    - near path show start path passing
 - swipe in right edge opens right sidebar
     - map features list and details, settings and login
+- handling filing feature collections, public collections
 
 - deploy version 1.3. (4), generate functionalities description
 

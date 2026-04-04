@@ -1,3 +1,5 @@
+import { Capacitor, registerPlugin } from "@capacitor/core";
+
 const ACCEPT = ".json,.geojson,.gpx,.kml,.fit";
 const MAX_SIZE = 50 * 1024 * 1024; // 50 MB
 
@@ -43,26 +45,35 @@ export function pickFile() {
 
 /**
  * Save content as a file download.
- * Tries the Web Share API on mobile, falls back to a download link.
+ * On native Android/iOS, writes to app directory and shares via native share sheet.
+ * On web, tries Web Share API, then falls back to a download link.
  * @param {string} fileName
  * @param {string|Blob} content
  * @param {string} mimeType
  */
 export async function saveFile(fileName, content, mimeType) {
   const blob = content instanceof Blob ? content : new Blob([content], { type: mimeType });
-  const file = new File([blob], fileName, { type: mimeType });
 
-  // Try Web Share API (works on mobile browsers and Capacitor WebView)
+  // Native Capacitor: save to Downloads with notification (Chrome-like)
+  if (Capacitor.isNativePlatform()) {
+    const Download = registerPlugin("Download");
+    const base64 = await blobToBase64(blob);
+    await Download.save({ fileName, data: base64, mimeType });
+    return fileName;
+  }
+
+  // Web: try Web Share API with file
+  const file = new File([blob], fileName, { type: mimeType });
   if (navigator.canShare?.({ files: [file] })) {
     try {
       await navigator.share({ files: [file] });
       return;
     } catch {
-      // User cancelled or share failed — fall through to download
+      // User cancelled or share failed — fall through
     }
   }
 
-  // Fallback: trigger a download
+  // Web fallback: trigger a download link
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -71,4 +82,13 @@ export async function saveFile(fileName, content, mimeType) {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(",")[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
 }

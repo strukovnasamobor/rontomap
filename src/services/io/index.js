@@ -73,6 +73,33 @@ export async function importFeatures() {
 }
 
 /**
+ * Import from raw content (used when the app is opened with a file).
+ * @param {string} name - file name
+ * @param {string|ArrayBuffer} content - file content
+ * @returns {Promise<{data: RontoFeatureCollection, format: FormatId}>}
+ */
+export async function importFromContent(name, content) {
+  const format = detectFormat(name, content);
+  if (!format) throw new Error("Unrecognized file format. Supported: JSON, GeoJSON, GPX, KML, FIT.");
+
+  let data;
+  if (format === "fit") {
+    const { toRonto: fitToRonto } = await import("./converters/fit");
+    data = await fitToRonto(content);
+  } else {
+    const importer = importers[format];
+    if (!importer) throw new Error(`Import not supported for format: ${format}`);
+    data = importer(content, name);
+  }
+
+  if ((!data.markers || data.markers.length === 0) && (!data.paths || data.paths.length === 0)) {
+    throw new Error("No features found in the file.");
+  }
+
+  return { data, format };
+}
+
+/**
  * Convert features to the chosen format and trigger a file download.
  * @param {RontoFeatureCollection} data
  * @param {FormatId} format
@@ -90,8 +117,7 @@ export async function exportFeatures(data, format, scope, baseName = "rontomap")
     const { fromRonto: fitFromRonto } = await import("./converters/fit");
     const blob = fitFromRonto(scoped, scope);
     const fileName = `${baseName}${EXTENSIONS[format]}`;
-    await saveFile(fileName, blob, MIME_TYPES[format]);
-    return;
+    return await saveFile(fileName, blob, MIME_TYPES[format]);
   }
 
   const exporter = exporters[format];
@@ -101,5 +127,5 @@ export async function exportFeatures(data, format, scope, baseName = "rontomap")
   const fileName = `${baseName}${EXTENSIONS[format]}`;
   const mimeType = MIME_TYPES[format];
 
-  await saveFile(fileName, content, mimeType);
+  return await saveFile(fileName, content, mimeType);
 }

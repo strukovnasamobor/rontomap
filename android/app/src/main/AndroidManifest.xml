@@ -30,6 +30,26 @@
                 <data android:scheme="https" android:host="rontomap.web.app" />
             </intent-filter>
 
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="application/json" />
+                <data android:mimeType="application/geo+json" />
+                <data android:mimeType="application/gpx+xml" />
+                <data android:mimeType="application/vnd.google-earth.kml+xml" />
+                <data android:mimeType="application/vnd.ant.fit" />
+                <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="*/*" />
+                <data android:pathPattern=".*\\.gpx" />
+                <data android:pathPattern=".*\\.kml" />
+                <data android:pathPattern=".*\\.fit" />
+                <data android:pathPattern=".*\\.geojson" />
+                <data android:pathPattern=".*\\.json" />
+            </intent-filter>
+
         </activity>
 
         <provider
@@ -56,4 +76,5 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
 </manifest>

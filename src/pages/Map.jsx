@@ -16,7 +16,7 @@ import { App as CapApp } from "@capacitor/app";
 import { db } from "../../firebase";
 import { collection, addDoc, doc, getDoc, serverTimestamp } from "firebase/firestore";
 import { collectFeatures, collectMarker, collectPath, materializeFeatures } from "../services/io/converters/rontoJson";
-import { importFeatures, exportFeatures } from "../services/io";
+import { importFeatures, importFromContent, exportFeatures } from "../services/io";
 
 // Set Mapbox access token
 mapboxgl.accessToken = "pk.eyJ1IjoiYXVyZWxpdXMtemQiLCJhIjoiY21rcXA3cXh2MHNpZDNjcXl1a3MzbW8zciJ9.JO4VSTN6-0vRtWW0YKjlAg";
@@ -2999,6 +2999,62 @@ export default function Map() {
     }
   }, []);
 
+  // Handle file open from Android intent (e.g. opening a .gpx from Files app)
+  useEffect(() => {
+    const handleFileOpen = async () => {
+      const fileData = window.__importFileData;
+      if (!fileData) return;
+      delete window.__importFileData;
+
+      try {
+        const { name, base64 } = fileData;
+        const isBinary = name.toLowerCase().endsWith(".fit");
+        let content;
+        if (isBinary) {
+          const binary = atob(base64);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          content = bytes.buffer;
+        } else {
+          content = atob(base64);
+        }
+
+        const { data } = await importFromContent(name, content);
+        const createMarker = createMarkerRef.current;
+        const result = materializeFeatures(data, { createMarker, pathHelpersRef, updateMarkerLabel, deserializeSnappedSegments, pathsRef });
+
+        // Fly to fit all imported content
+        const map = mapRef.current;
+        if (map) {
+          const bounds = new mapboxgl.LngLatBounds();
+          markersRef.current.forEach(m => bounds.extend(m.getLngLat()));
+          pathsRef.current.forEach(p => {
+            p.vertices.forEach(v => bounds.extend(v.lngLat));
+            if (p.snappedSegments) p.snappedSegments.forEach(s => s.coords.forEach(c => bounds.extend(c)));
+          });
+          if (!bounds.isEmpty()) map.fitBounds(bounds, { padding: 60, duration: 1000 });
+        }
+
+        const parts = [];
+        if (result.markerCount > 0) parts.push(`${result.markerCount} marker${result.markerCount > 1 ? "s" : ""}`);
+        if (result.pathCount > 0) parts.push(`${result.pathCount} path${result.pathCount > 1 ? "s" : ""}`);
+        let msg = `Imported ${parts.join(", ")}.`;
+        if (result.skipped > 0) msg += ` ${result.skipped} feature${result.skipped > 1 ? "s" : ""} skipped.`;
+        setToastMsg(msg);
+        setTimeout(() => setToastMsg(null), 3000);
+      } catch (e) {
+        setToastMsg(e.message);
+        setTimeout(() => setToastMsg(null), 3000);
+      }
+    };
+
+    window.addEventListener("rontomap-file-open", handleFileOpen);
+    // Also check if data was set before the listener was registered
+    if (window.__importFileData) handleFileOpen();
+
+    return () => window.removeEventListener("rontomap-file-open", handleFileOpen);
+  }, []);
+
   // When changing map style preserve the current camera state
   useEffect(() => {
     console.log("useEffect > Change map style:", mapStyle);
@@ -3521,7 +3577,11 @@ export default function Map() {
     const { data, scope, baseName } = exportAlert;
     setExportAlert(null);
     try {
-      await exportFeatures(data, format, scope, baseName);
+      const savedName = await exportFeatures(data, format, scope, baseName);
+      if (savedName) {
+        setToastMsg(`Saved to Downloads/${savedName}`);
+        setTimeout(() => setToastMsg(null), 3000);
+      }
     } catch (e) {
       setToastMsg(e.message);
       setTimeout(() => setToastMsg(null), 3000);

@@ -4,15 +4,23 @@ import android.content.Intent;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.util.Base64;
 import android.view.View;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import com.getcapacitor.BridgeActivity;
 
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+
 public class MainActivity extends BridgeActivity {
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        // Register plugins BEFORE super.onCreate() so the bridge picks them up
+        registerPlugin(FullscreenPlugin.class);
+        registerPlugin(DownloadPlugin.class);
+
         super.onCreate(savedInstanceState);
 
         // Set navigation bar to black on startup
@@ -20,9 +28,6 @@ public class MainActivity extends BridgeActivity {
             getWindow().setNavigationBarColor(android.graphics.Color.parseColor("#000000"));
             getWindow().setStatusBarColor(android.graphics.Color.parseColor("#000000"));
         }
-
-        // Register the plugin
-        registerPlugin(FullscreenPlugin.class);
 
         handleDeepLink(getIntent());
     }
@@ -37,12 +42,64 @@ public class MainActivity extends BridgeActivity {
         if (!Intent.ACTION_VIEW.equals(intent.getAction())) return;
         Uri data = intent.getData();
         if (data == null) return;
+
+        String scheme = data.getScheme();
+
+        // File open intent (content:// or file://)
+        if ("content".equals(scheme) || "file".equals(scheme)) {
+            handleFileOpen(data);
+            return;
+        }
+
+        // Deep link (https://rontomap.web.app?...)
         String query = data.getQuery();
         if (query == null || query.isEmpty()) return;
         String serverUrl = getBridge().getServerUrl();
         if (serverUrl == null) serverUrl = "http://localhost";
         final String url = serverUrl + "/?" + query;
         getBridge().getWebView().post(() -> getBridge().getWebView().loadUrl(url));
+    }
+
+    private void handleFileOpen(Uri uri) {
+        try {
+            // Get file name from URI
+            String fileName = "unknown";
+            if ("content".equals(uri.getScheme())) {
+                android.database.Cursor cursor = getContentResolver().query(uri, null, null, null, null);
+                if (cursor != null) {
+                    int nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME);
+                    if (cursor.moveToFirst() && nameIndex >= 0) {
+                        fileName = cursor.getString(nameIndex);
+                    }
+                    cursor.close();
+                }
+            } else {
+                fileName = uri.getLastPathSegment();
+                if (fileName == null) fileName = "unknown";
+            }
+
+            // Read file bytes
+            InputStream is = getContentResolver().openInputStream(uri);
+            if (is == null) return;
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            byte[] buffer = new byte[8192];
+            int len;
+            while ((len = is.read(buffer)) != -1) {
+                baos.write(buffer, 0, len);
+            }
+            is.close();
+            byte[] bytes = baos.toByteArray();
+            String base64 = Base64.encodeToString(bytes, Base64.NO_WRAP);
+
+            // Escape for JS
+            String escapedName = fileName.replace("\\", "\\\\").replace("'", "\\'");
+
+            // Pass to WebView
+            final String js = "javascript:window.__importFileData={name:'" + escapedName + "',base64:'" + base64 + "'};window.dispatchEvent(new Event('rontomap-file-open'));";
+            getBridge().getWebView().post(() -> getBridge().getWebView().loadUrl(js));
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 
     public void enterFullscreen() {
