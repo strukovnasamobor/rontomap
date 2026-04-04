@@ -27,7 +27,6 @@ GOALS
 - finding and collaboration editing public paths
 
 UPGRADES
-- opening in RontoMap or other installed apps
 - finding and collaboration editing public paths
 
 Ver. x.y. (z)
