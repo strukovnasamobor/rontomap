@@ -31,6 +31,7 @@ export default defineConfig({
           if (id.includes("react") || id.includes("react-dom") || id.includes("scheduler")) return "react-vendor";
           if (id.includes("firebase")) return "firebase";
           if (id.includes("@ionic")) return "ionic-core";
+          if (id.includes("fit-file-parser") || id.includes("fit-parser")) return "fit-parser";
         },
       },
     },

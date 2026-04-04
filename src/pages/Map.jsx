@@ -15,6 +15,8 @@ const BackgroundGeolocation = registerPlugin("BackgroundGeolocation");
 import { App as CapApp } from "@capacitor/app";
 import { db } from "../../firebase";
 import { collection, addDoc, doc, getDoc, serverTimestamp } from "firebase/firestore";
+import { collectFeatures, collectMarker, collectPath, materializeFeatures } from "../services/io/converters/rontoJson";
+import { importFeatures, exportFeatures } from "../services/io";
 
 // Set Mapbox access token
 mapboxgl.accessToken = "pk.eyJ1IjoiYXVyZWxpdXMtemQiLCJhIjoiY21rcXA3cXh2MHNpZDNjcXl1a3MzbW8zciJ9.JO4VSTN6-0vRtWW0YKjlAg";
@@ -143,6 +145,7 @@ export default function Map() {
   const trackPathRef = useRef(null);
   const trackCoordsRef = useRef([]);
   const bgWatcherIdRef = useRef(null);
+  const [stopRecordingAlert, setStopRecordingAlert] = useState(false);
   const [routeDistance, setNavRouteDistance] = useState(null);
   const [routeDuration, setNavRouteDuration] = useState(null);
   const [cancelNavigationAlert, setCancelNavigationAlert] = useState(false);
@@ -159,8 +162,9 @@ export default function Map() {
   const offPathVertexSegRef = useRef(0);
   const routeTotalDistanceRef = useRef(null);
   const isTracingPathRef = useRef(false);
-  const [traceSnapAlert, setTraceSnapAlert] = useState(false);
-  const pendingTracePathRef = useRef(null);
+
+
+  const [exportAlert, setExportAlert] = useState(null); // { data, scope, baseName }
   const [featuresLocked, setFeaturesLocked] = useState(false);
   const featuresLockedRef = useRef(false);
   const idMapStyleRef = useRef(idMapStyle);
@@ -172,13 +176,47 @@ export default function Map() {
     if (!el) return;
     // Reset so the element can expand to its natural size before measuring
     el.style.maxHeight = "";
+    el.style.transform = "";
     const rect = el.getBoundingClientRect();
+    const vw = window.innerWidth;
     const vh = window.innerHeight;
-    const PAD = 8;
-    const spaceBelow = vh - rect.top - PAD;
+    const PAD = 12;
+    // On mobile (Capacitor), account for system navigation bar via safe-area-inset-bottom
+    const probe = document.createElement("div");
+    probe.style.cssText = "position:fixed;bottom:0;height:env(safe-area-inset-bottom,0px);pointer-events:none;visibility:hidden";
+    document.body.appendChild(probe);
+    const safeBottom = probe.getBoundingClientRect().height;
+    probe.remove();
+    const bottomLimit = vh - safeBottom - PAD;
+    const menuTop = rect.top; // top of menu after default translate(-50%, 8px)
+    const spaceBelow = bottomLimit - menuTop;
+    const clickY = menuTop - 8; // undo the 8px offset to get click point
+    const spaceAbove = clickY - PAD;
+
+    // Vertical: flip above if not enough space below
+    let translateY = "8px";
     if (rect.height > spaceBelow) {
-      el.style.maxHeight = `${Math.max(spaceBelow, 80)}px`;
+      if (spaceAbove > spaceBelow && spaceAbove >= 80) {
+        translateY = "calc(-100% - 8px)";
+        if (rect.height > spaceAbove) el.style.maxHeight = `${spaceAbove}px`;
+      } else {
+        el.style.maxHeight = `${Math.max(spaceBelow, 80)}px`;
+      }
     }
+
+    // Horizontal: shift left if menu extends past right edge
+    let translateX = "-50%";
+    const menuLeft = rect.left;
+    const menuRight = rect.right;
+    if (menuRight > vw - PAD) {
+      const shift = menuRight - (vw - PAD);
+      translateX = `calc(-50% - ${shift}px)`;
+    } else if (menuLeft < PAD) {
+      const shift = PAD - menuLeft;
+      translateX = `calc(-50% + ${shift}px)`;
+    }
+
+    el.style.transform = `translate(${translateX}, ${translateY})`;
   }, []);
 
   // Add or update the name label on a marker element
@@ -418,23 +456,23 @@ export default function Map() {
     const createMarker = (lngLat, color = "#ff6f00") => {
       const marker = new mapboxgl.Marker({ color, draggable: true }).setLngLat(lngLat).addTo(mapRef.current);
       const el = marker.getElement();
-      el.style.cursor = "grab";
+      el.style.setProperty("cursor", "grab", "important");
       let wasDragged = false;
       el.addEventListener("mousedown", () => {
-        if (featuresLockedRef.current) return;
-        el.style.cursor = "grabbing";
+        if (!marker.isDraggable()) return;
+        el.style.setProperty("cursor", "grabbing", "important");
         mapRef.current.getContainer().classList.add("marker-dragging");
       });
       el.addEventListener("mouseup", () => {
-        if (featuresLockedRef.current) return;
-        el.style.cursor = "grab";
+        if (!marker.isDraggable()) return;
+        el.style.setProperty("cursor", "grab", "important");
         mapRef.current.getContainer().classList.remove("marker-dragging");
       });
       marker.on("dragstart", () => {
         wasDragged = true;
       });
       marker.on("dragend", () => {
-        el.style.cursor = "grab";
+        el.style.setProperty("cursor", marker.isDraggable() ? "grab" : "alias", "important");
         mapRef.current.getContainer().classList.remove("marker-dragging");
         setTimeout(() => {
           wasDragged = false;
@@ -478,11 +516,36 @@ export default function Map() {
         setMenuPos(computeMenuPos(marker));
         setMarkerMenu({ marker });
       });
+      // Sync cursor with draggable state
+      const origSetDraggable = marker.setDraggable.bind(marker);
+      marker.setDraggable = (v) => {
+        origSetDraggable(v);
+        el.style.setProperty("cursor", v ? "grab" : "alias", "important");
+      };
       marker._markerName = "";
       markersRef.current.push(marker);
       return marker;
     };
     createMarkerRef.current = createMarker;
+
+    // Get sight marker colors based on parent path type
+    const getSightColors = (path) => {
+      if (path.isTrack) return { pin: "#0000ff", circle: "#ffffff" };
+      if (path.isRoute) return { pin: "#0091ff", circle: "#ffffff" };
+      return { pin: "#ff6f00", circle: "#0091ff" };
+    };
+
+    const applySightColors = (marker, path) => {
+      const colors = getSightColors(path);
+      const el = marker.getElement();
+      const svg = el.querySelector("svg");
+      if (svg) {
+        const paths = svg.querySelectorAll("path[fill]");
+        paths.forEach((p) => { p.setAttribute("fill", colors.pin); });
+        const circle = svg.querySelector("circle");
+        if (circle) circle.setAttribute("fill", colors.circle);
+      }
+    };
 
     // --- Path creation helpers ---
     const ensurePathLayer = (path) => {
@@ -943,9 +1006,16 @@ export default function Map() {
     const createPathVertex = (lngLat) => {
       const el = document.createElement("div");
       el.className = "path-vertex active-path-feature";
-      return new mapboxgl.Marker({ element: el, draggable: true, anchor: "center" })
+      const marker = new mapboxgl.Marker({ element: el, draggable: true, anchor: "center" })
         .setLngLat(lngLat)
         .addTo(mapRef.current);
+      const origSetDraggable = marker.setDraggable.bind(marker);
+      marker.setDraggable = (v) => {
+        origSetDraggable(v);
+        if (v) el.classList.remove("not-draggable");
+        else el.classList.add("not-draggable");
+      };
+      return marker;
     };
 
     const createMidpointMarker = (lngLat) => {
@@ -1406,6 +1476,7 @@ export default function Map() {
       removePassedPathLayer,
       updatePassedPathLine,
       makeFeature,
+      applySightColors,
     };
 
     if (mapRef.current) mapRef.current.resize();
@@ -1636,14 +1707,16 @@ export default function Map() {
             pathHelpersRef.current.hideIntermediateVertices?.(path);
             path.midpoints.forEach((mp) => mp.marker.remove());
             path.midpoints = [];
-            path.vertices.forEach((v) => v.marker.getElement().classList.remove("active-path-feature"));
+            path.vertices.forEach((v) => {
+              v.marker.getElement().classList.remove("active-path-feature");
+              v.marker.setDraggable(false);
+            });
             if (path.sights)
-              path.sights.forEach((m) => m.getElement().classList.remove("active-path-feature"));
-            if (path._wasLocked) {
-              delete path._wasLocked;
-              path.vertices.forEach((v) => v.marker.setDraggable(false));
-              if (path.sights) path.sights.forEach((m) => m.setDraggable(false));
-            }
+              path.sights.forEach((m) => {
+                m.getElement().classList.remove("active-path-feature");
+                m.setDraggable(false);
+              });
+            delete path._wasLocked;
           }
           setToastMsg("Path saved. You can edit it after stopping bearing tracking.");
           setTimeout(() => {
@@ -1766,6 +1839,13 @@ export default function Map() {
                   v.marker.getElement().classList.add("active-path-feature");
                 });
                 pathHelpersRef.current.updateVertexStyles(path);
+                // Restore sight colors after tracking
+                if (path.sights) {
+                  path.sights.forEach((m) => {
+                    delete m._passed;
+                    pathHelpersRef.current.applySightColors(m, path);
+                  });
+                }
               }
               setIsNavigationTracking(false);
               isNavigationTrackingRef.current = false;
@@ -2202,6 +2282,25 @@ export default function Map() {
             passedPathCoordsRef.current = passedCoords;
             h.updatePassedPathLine(passedCoords, path.roadSnap);
 
+            // Update sight colors for passed sights
+            if (path.sights) {
+              for (const m of path.sights) {
+                const sightPos = m.getLngLat();
+                const sightSnap = h.closestPointOnLineWithIndex(renderedLine, [sightPos.lng, sightPos.lat]);
+                const passed = sightSnap.segmentIndex < si || (sightSnap.segmentIndex === si && sightSnap.t <= st);
+                if (passed && !m._passed) {
+                  m._passed = true;
+                  const el = m.getElement();
+                  const svg = el.querySelector("svg");
+                  if (svg) {
+                    svg.querySelectorAll("path[fill]").forEach((p) => { p.setAttribute("fill", "#0000ff"); });
+                    const circle = svg.querySelector("circle");
+                    if (circle) circle.setAttribute("fill", "#ffffff");
+                  }
+                }
+              }
+            }
+
             // Update remaining distance/duration display
             if (routeTotalDistanceRef.current != null) {
               const passedDist = haversineDistance(passedCoords);
@@ -2217,13 +2316,27 @@ export default function Map() {
 
       // === Route Recording (web only — native uses BackgroundGeolocation watcher) ===
       if (!Capacitor.isNativePlatform() && isRecordingTrackRef.current && trackPathRef.current) {
-        trackCoordsRef.current.push([long, lat]);
-        const source = mapRef.current?.getSource(trackPathRef.current.sourceId);
+        const recCoord = [long, lat];
+        trackCoordsRef.current.push(recCoord);
+        const recPath = trackPathRef.current;
+        const source = mapRef.current?.getSource(recPath.sourceId);
         if (source && trackCoordsRef.current.length >= 2) {
           source.setData({
             type: "FeatureCollection",
             features: [makeFeature(trackCoordsRef.current, "#0000ff")],
           });
+        }
+        // Update end vertex marker
+        if (recPath.vertices.length === 1) {
+          const endMarker = createPathVertex(recCoord);
+          endMarker.setDraggable(false);
+          endMarker.getElement().classList.remove("active-path-feature");
+          recPath.vertices.push({ lngLat: recCoord, marker: endMarker, path: recPath });
+          updateVertexStyles(recPath);
+        } else if (recPath.vertices.length >= 2) {
+          const endV = recPath.vertices[recPath.vertices.length - 1];
+          endV.lngLat = recCoord;
+          endV.marker.setLngLat(recCoord);
         }
       }
     });
@@ -2873,91 +2986,7 @@ export default function Map() {
       getDoc(doc(db, "featuresCollections", featuresCollectionId)).then((snap) => {
         if (!snap.exists()) return;
         const data = snap.data();
-        (data.markers || []).forEach((entry) => {
-          const m = createMarker([entry.pos[1], entry.pos[0]]);
-          if (entry.name) {
-            m._markerName = entry.name;
-            updateMarkerLabel(m);
-          }
-          if (entry.savedView) m._savedView = entry.savedView;
-        });
-        const h = pathHelpersRef.current;
-        (data.paths || []).forEach((entry) => {
-          const id = `path-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-          const path = {
-            id,
-            sourceId: `path-line-source-${id}`,
-            layerId: `path-line-layer-${id}`,
-            vertices: [],
-            midpoints: [],
-            isFinished: true,
-          };
-          if (entry.isCircuit) path.isCircuit = true;
-          if (entry.closingForced) path.closingForced = true;
-          if (entry.isRoute || entry.isNavigation) path.isRoute = true;
-          if (entry.isTrack || entry.isRecording) path.isTrack = true;
-          pathsRef.current.push(path);
-          h.ensurePathLayer(path);
-          entry.coords.forEach((c) => {
-            const lngLat = [c.long, c.lat];
-            const marker = h.createPathVertex(lngLat);
-            const vertex = { lngLat, marker, path };
-            if (c.force) vertex.force = true;
-            path.vertices.push(vertex);
-            h.attachVertexDragHandler(vertex);
-            h.attachFinishHandler(vertex);
-          });
-          if (entry.startName && path.vertices.length > 0) {
-            path.vertices[0].marker._markerName = entry.startName;
-            updateMarkerLabel(path.vertices[0].marker);
-          }
-          if (entry.endName && path.vertices.length > 0) {
-            path.vertices[path.vertices.length - 1].marker._markerName = entry.endName;
-            updateMarkerLabel(path.vertices[path.vertices.length - 1].marker);
-          }
-          if (entry.savedView) path.savedView = entry.savedView;
-          if (entry.roadSnap) {
-            path.roadSnap = entry.roadSnap === true ? "car" : entry.roadSnap;
-            if (entry.snappedSegments) {
-              path.snappedSegments = deserializeSnappedSegments(entry.snappedSegments);
-              h.updatePathLine(path);
-              h.updateSights(path);
-            } else {
-              h.fetchRoadSnap(path);
-            }
-          }
-          const sightsData = entry.sights || entry.attachedMarkers;
-          if (sightsData) {
-            path.sights = [];
-            sightsData.forEach((am) => {
-              const pos = h.getSightPos(path, am);
-              const m = createMarker(pos, "#0091ff");
-              m._sightPath = path;
-              m._segmentIndex = am.segmentIndex;
-              m._t = am.t;
-              if (am.name) {
-                m._markerName = am.name;
-                updateMarkerLabel(m);
-              }
-              m.on("drag", () => {
-                if (!m._sightPath) return;
-                const p = m.getLngLat(),
-                  lngLat = [p.lng, p.lat];
-                const s = h.snapToPath(m._sightPath, lngLat);
-                m._segmentIndex = s.segmentIndex;
-                m._t = s.t;
-                const line = h.getRenderedLine(m._sightPath);
-                m.setLngLat(h.closestPointOnLine(line, lngLat));
-              });
-              path.sights.push(m);
-            });
-          }
-          h.updatePathLine(path);
-          h.hideIntermediateVertices(path);
-          h.updateVertexStyles(path);
-          // Path is finished — remove active-path-feature so cursor shows pointer, not grab
-          path.vertices.forEach((v) => v.marker.getElement().classList.remove("active-path-feature"));
-        });
+        materializeFeatures(data, { createMarker, pathHelpersRef, updateMarkerLabel, deserializeSnappedSegments, pathsRef });
         // Lock features when loaded from URL
         featuresLockedRef.current = true;
         setFeaturesLocked(true);
@@ -2994,7 +3023,8 @@ export default function Map() {
         if (!path.isFinished) pathHelpersRef.current.rebuildMidpoints(path);
       });
       if (featuresLockedRef.current) {
-        applyFeaturesLock(true);
+        const container = mapRef.current?.getContainer();
+        if (container) container.classList.add("features-locked");
       }
       // Re-enable dragging on the active path being edited
       const active = activePathRef.current;
@@ -3297,7 +3327,6 @@ export default function Map() {
     if (!marker) return;
     const map = mapRef.current;
     marker._savedView = {
-      center: map.getCenter().toArray(),
       zoom: map.getZoom(),
       pitch: map.getPitch(),
       bearing: map.getBearing(),
@@ -3315,7 +3344,7 @@ export default function Map() {
     const map = mapRef.current;
     if (marker._savedView) {
       map.flyTo({
-        center: marker._savedView.center,
+        center: marker.getLngLat(),
         zoom: marker._savedView.zoom,
         pitch: marker._savedView.pitch,
         bearing: marker._savedView.bearing,
@@ -3383,42 +3412,7 @@ export default function Map() {
     const zoom = mapRef.current.getZoom();
     const bearing = mapRef.current.getBearing();
     const pitch = mapRef.current.getPitch();
-    const freeMarkers = markersRef.current.filter((m) => !m._sightPath);
-    const markers = freeMarkers.map((m, i) => {
-      const ll = m.getLngLat();
-      const markerData = {
-        id: `m${i + 1}`,
-        name: m._markerName || "",
-        pos: [ll.lat, ll.lng],
-      };
-      if (m._savedView) markerData.savedView = m._savedView;
-      return markerData;
-    });
-    const paths = pathsRef.current.map((p, i) => {
-      const pathData = {
-        id: `p${i + 1}`,
-        coords: p.vertices.map((v) => ({ long: v.lngLat[0], lat: v.lngLat[1], ...(v.force ? { force: true } : {}) })),
-      };
-      const startName = p.vertices[0]?.marker._markerName;
-      const endName = p.vertices[p.vertices.length - 1]?.marker._markerName;
-      if (startName) pathData.startName = startName;
-      if (endName) pathData.endName = endName;
-      if (p.savedView) pathData.savedView = p.savedView;
-      if (p.roadSnap) pathData.roadSnap = p.roadSnap;
-      if (p.snappedSegments) pathData.snappedSegments = serializeSnappedSegments(p.snappedSegments);
-      if (p.isCircuit) pathData.isCircuit = true;
-      if (p.closingForced) pathData.closingForced = true;
-      if (p.isRoute) pathData.isRoute = true;
-      if (p.isTrack) pathData.isTrack = true;
-      if (p.sights && p.sights.length > 0) {
-        pathData.sights = p.sights.map((m) => {
-          const am = { segmentIndex: m._segmentIndex, t: m._t };
-          if (m._markerName) am.name = m._markerName;
-          return am;
-        });
-      }
-      return pathData;
-    });
+    const { markers, paths } = collectFeatures(markersRef, pathsRef, serializeSnappedSegments);
     const docRef = await addDoc(collection(db, "featuresCollections"), {
       created: serverTimestamp(),
       markers,
@@ -3446,42 +3440,7 @@ export default function Map() {
     const zoom = mapRef.current.getZoom();
     const bearing = mapRef.current.getBearing();
     const pitch = mapRef.current.getPitch();
-    const freeMarkers = markersRef.current.filter((m) => !m._sightPath);
-    const markers = freeMarkers.map((m, i) => {
-      const ll = m.getLngLat();
-      const markerData = {
-        id: `m${i + 1}`,
-        name: m._markerName || "",
-        pos: [ll.lat, ll.lng],
-      };
-      if (m._savedView) markerData.savedView = m._savedView;
-      return markerData;
-    });
-    const paths = pathsRef.current.map((p, i) => {
-      const pathData = {
-        id: `p${i + 1}`,
-        coords: p.vertices.map((v) => ({ long: v.lngLat[0], lat: v.lngLat[1], ...(v.force ? { force: true } : {}) })),
-      };
-      const startName = p.vertices[0]?.marker._markerName;
-      const endName = p.vertices[p.vertices.length - 1]?.marker._markerName;
-      if (startName) pathData.startName = startName;
-      if (endName) pathData.endName = endName;
-      if (p.savedView) pathData.savedView = p.savedView;
-      if (p.roadSnap) pathData.roadSnap = p.roadSnap;
-      if (p.snappedSegments) pathData.snappedSegments = serializeSnappedSegments(p.snappedSegments);
-      if (p.isCircuit) pathData.isCircuit = true;
-      if (p.closingForced) pathData.closingForced = true;
-      if (p.isRoute) pathData.isRoute = true;
-      if (p.isTrack) pathData.isTrack = true;
-      if (p.sights && p.sights.length > 0) {
-        pathData.sights = p.sights.map((m) => {
-          const am = { segmentIndex: m._segmentIndex, t: m._t };
-          if (m._markerName) am.name = m._markerName;
-          return am;
-        });
-      }
-      return pathData;
-    });
+    const { markers, paths } = collectFeatures(markersRef, pathsRef, serializeSnappedSegments);
     const docRef = await addDoc(collection(db, "featuresCollections"), {
       created: serverTimestamp(),
       markers,
@@ -3504,6 +3463,69 @@ export default function Map() {
     setTimeout(() => {
       setToastMsg(null);
     }, 2000);
+  };
+
+  // --- Import/Export handlers ---
+
+  const handleImportFeatures = async () => {
+    setMapClickMenu(null);
+    try {
+      const { data } = await importFeatures();
+      const createMarker = createMarkerRef.current;
+      const result = materializeFeatures(data, { createMarker, pathHelpersRef, updateMarkerLabel, deserializeSnappedSegments, pathsRef });
+      const parts = [];
+      if (result.markerCount > 0) parts.push(`${result.markerCount} marker${result.markerCount > 1 ? "s" : ""}`);
+      if (result.pathCount > 0) parts.push(`${result.pathCount} path${result.pathCount > 1 ? "s" : ""}`);
+      let msg = `Imported ${parts.join(", ")}.`;
+      if (result.skipped > 0) msg += ` ${result.skipped} feature${result.skipped > 1 ? "s" : ""} skipped.`;
+      setToastMsg(msg);
+      setTimeout(() => setToastMsg(null), 3000);
+    } catch (e) {
+      if (e.message === "No file selected.") return;
+      setToastMsg(e.message);
+      setTimeout(() => setToastMsg(null), 3000);
+    }
+  };
+
+  const handleExportAll = () => {
+    setMapClickMenu(null);
+    const data = collectFeatures(markersRef, pathsRef, serializeSnappedSegments);
+    if (data.markers.length === 0 && data.paths.length === 0) {
+      setToastMsg("No features to export.");
+      setTimeout(() => setToastMsg(null), 2000);
+      return;
+    }
+    setExportAlert({ data, scope: { type: "all" }, baseName: "rontomap" });
+  };
+
+  const handleExportPath = () => {
+    const path = mapClickMenu?.path;
+    setMapClickMenu(null);
+    if (!path) return;
+    const data = collectPath(path, serializeSnappedSegments);
+    const baseName = path.startName || (path.isTrack ? "track" : "path");
+    setExportAlert({ data, scope: { type: "path", path: data.paths[0] }, baseName });
+  };
+
+  const handleExportMarker = () => {
+    const marker = markerMenu?.marker;
+    setMarkerMenu(null);
+    if (!marker) return;
+    const data = collectMarker(marker);
+    const baseName = marker._markerName || (marker._sightPath ? "sight" : "marker");
+    setExportAlert({ data, scope: { type: "marker", marker: data.markers[0] }, baseName });
+  };
+
+  const confirmExport = async (format) => {
+    if (!exportAlert) return;
+    const { data, scope, baseName } = exportAlert;
+    setExportAlert(null);
+    try {
+      await exportFeatures(data, format, scope, baseName);
+    } catch (e) {
+      setToastMsg(e.message);
+      setTimeout(() => setToastMsg(null), 3000);
+    }
   };
 
   const handleDeleteAllFeatures = () => {
@@ -3576,12 +3598,13 @@ export default function Map() {
     const pos = marker.getLngLat();
     const snap = h.snapToPath(path, [pos.lng, pos.lat]);
     const sightPos = h.getSightPos(path, { _segmentIndex: snap.segmentIndex, _t: snap.t });
-    // Replace orange marker with blue sight
+    // Replace marker with sight
     const name = marker._markerName;
     const draggable = marker.isDraggable();
     marker.remove();
     markersRef.current = markersRef.current.filter((m) => m !== marker);
     const newMarker = createMarkerRef.current(sightPos, "#0091ff");
+    h.applySightColors(newMarker, path);
     newMarker._sightPath = path;
     newMarker._segmentIndex = snap.segmentIndex;
     newMarker._t = snap.t;
@@ -3615,18 +3638,6 @@ export default function Map() {
     setMapClickMenu(null);
   };
 
-  const applyFeaturesLock = (locked) => {
-    const container = mapRef.current?.getContainer();
-    if (container) {
-      if (locked) container.classList.add("features-locked");
-      else container.classList.remove("features-locked");
-    }
-    markersRef.current.forEach((m) => m.setDraggable(!locked));
-    pathsRef.current.forEach((p) => {
-      if (p.sights) p.sights.forEach((m) => m.setDraggable(!locked));
-    });
-  };
-
   const handleToggleMarkerDrag = () => {
     const marker = markerMenu.marker;
     marker.setDraggable(!marker.isDraggable());
@@ -3658,9 +3669,15 @@ export default function Map() {
       pathHelpersRef.current.hideIntermediateVertices(prev);
       prev.midpoints.forEach((mp) => mp.marker.remove());
       prev.midpoints = [];
-      prev.vertices.forEach((v) => v.marker.getElement().classList.remove("active-path-feature"));
+      prev.vertices.forEach((v) => {
+        v.marker.getElement().classList.remove("active-path-feature");
+        v.marker.setDraggable(false);
+      });
       if (prev.sights)
-        prev.sights.forEach((m) => m.getElement().classList.remove("active-path-feature"));
+        prev.sights.forEach((m) => {
+          m.getElement().classList.remove("active-path-feature");
+          m.setDraggable(false);
+        });
     }
 
     const id = `path-${Date.now()}`;
@@ -3717,9 +3734,15 @@ export default function Map() {
       pathHelpersRef.current.hideIntermediateVertices(prev);
       prev.midpoints.forEach((mp) => mp.marker.remove());
       prev.midpoints = [];
-      prev.vertices.forEach((v) => v.marker.getElement().classList.remove("active-path-feature"));
+      prev.vertices.forEach((v) => {
+        v.marker.getElement().classList.remove("active-path-feature");
+        v.marker.setDraggable(false);
+      });
       if (prev.sights)
-        prev.sights.forEach((m) => m.getElement().classList.remove("active-path-feature"));
+        prev.sights.forEach((m) => {
+          m.getElement().classList.remove("active-path-feature");
+          m.setDraggable(false);
+        });
     }
 
     // Request location permissions
@@ -3783,6 +3806,13 @@ export default function Map() {
     const h = pathHelpersRef.current;
     h.ensurePathLayer(newPath);
 
+    // Create start vertex marker (blue circle)
+    const startMarker = h.createPathVertex([userLng, userLat]);
+    startMarker.setDraggable(false);
+    startMarker.getElement().classList.remove("active-path-feature");
+    newPath.vertices.push({ lngLat: [userLng, userLat], marker: startMarker, path: newPath });
+    h.updateVertexStyles(newPath);
+
     // Activate wake lock for continuous GPS
     await ctrl._requestWakeLock();
 
@@ -3804,12 +3834,26 @@ export default function Map() {
           if (!location || !isRecordingTrackRef.current || !trackPathRef.current) return;
           const coord = [location.longitude, location.latitude];
           trackCoordsRef.current.push(coord);
-          const source = mapRef.current?.getSource(trackPathRef.current.sourceId);
+          const path = trackPathRef.current;
+          const source = mapRef.current?.getSource(path.sourceId);
           if (source && trackCoordsRef.current.length >= 2) {
             source.setData({
               type: "FeatureCollection",
               features: [pathHelpersRef.current.makeFeature(trackCoordsRef.current, "#0000ff")],
             });
+          }
+          // Update end vertex marker
+          const h = pathHelpersRef.current;
+          if (path.vertices.length === 1) {
+            const endMarker = h.createPathVertex(coord);
+            endMarker.setDraggable(false);
+            endMarker.getElement().classList.remove("active-path-feature");
+            path.vertices.push({ lngLat: coord, marker: endMarker, path });
+            h.updateVertexStyles(path);
+          } else if (path.vertices.length >= 2) {
+            const endV = path.vertices[path.vertices.length - 1];
+            endV.lngLat = coord;
+            endV.marker.setLngLat(coord);
           }
         },
       );
@@ -3822,12 +3866,21 @@ export default function Map() {
 
   const handleStopTrackRecording = () => {
     setMapClickMenu(null);
+    if (!trackPathRef.current) return;
+    setStopRecordingAlert(true);
+  };
 
+  const confirmStopTrackRecording = () => {
+    setStopRecordingAlert(false);
     if (!trackPathRef.current) return;
 
     const path = trackPathRef.current;
     const h = pathHelpersRef.current;
     const coords = trackCoordsRef.current;
+
+    // Remove live start/end markers from recording
+    path.vertices.forEach((v) => v.marker.remove());
+    path.vertices = [];
 
     // Apply RDP simplification to reduce point density
     const simplified = coords.length >= 2 ? rdpSimplify(coords, RDP_TOLERANCE) : coords;
@@ -3845,6 +3898,7 @@ export default function Map() {
     });
 
     path.isFinished = true;
+    delete path.isTrack;
     h.updatePathLine(path);
     h.updateVertexStyles(path);
 
@@ -3875,14 +3929,16 @@ export default function Map() {
       path.midpoints.forEach((mp) => mp.marker.remove());
       path.midpoints = [];
       setToastMsg(null);
-      path.vertices.forEach((v) => v.marker.getElement().classList.remove("active-path-feature"));
+      path.vertices.forEach((v) => {
+        v.marker.getElement().classList.remove("active-path-feature");
+        v.marker.setDraggable(false);
+      });
       if (path.sights)
-        path.sights.forEach((m) => m.getElement().classList.remove("active-path-feature"));
-      if (path._wasLocked) {
-        delete path._wasLocked;
-        path.vertices.forEach((v) => v.marker.setDraggable(false));
-        if (path.sights) path.sights.forEach((m) => m.setDraggable(false));
-      }
+        path.sights.forEach((m) => {
+          m.getElement().classList.remove("active-path-feature");
+          m.setDraggable(false);
+        });
+      delete path._wasLocked;
       delete path._preEditSnapshot;
       pathUndoStackRef.current = [];
       pathRedoStackRef.current = [];
@@ -3967,9 +4023,15 @@ export default function Map() {
       pathHelpersRef.current.hideIntermediateVertices(prev);
       prev.midpoints.forEach((mp) => mp.marker.remove());
       prev.midpoints = [];
-      prev.vertices.forEach((v) => v.marker.getElement().classList.remove("active-path-feature"));
+      prev.vertices.forEach((v) => {
+        v.marker.getElement().classList.remove("active-path-feature");
+        v.marker.setDraggable(false);
+      });
       if (prev.sights)
-        prev.sights.forEach((m) => m.getElement().classList.remove("active-path-feature"));
+        prev.sights.forEach((m) => {
+          m.getElement().classList.remove("active-path-feature");
+          m.setDraggable(false);
+        });
     }
 
     path.isFinished = false;
@@ -4040,32 +4102,6 @@ export default function Map() {
     pathHelpersRef.current.updateVertexStyles(path);
   };
 
-  const handleConvertToPath = () => {
-    const path = mapClickMenu.path;
-    setMapClickMenu(null);
-    if (!path) return;
-
-    delete path.isTrack;
-
-    // Attach drag/finish handlers that were skipped during track recording
-    const h = pathHelpersRef.current;
-    path.vertices.forEach((v) => {
-      h.attachVertexDragHandler(v);
-      h.attachFinishHandler(v);
-    });
-
-    h.updateVertexStyles(path);
-    h.updatePathLine(path);
-
-    const map = mapRef.current;
-    if (map && path._arrowLayerId && map.getLayer(path._arrowLayerId)) {
-      map.setPaintProperty(path._arrowLayerId, "text-color", "#ff6f00");
-    }
-
-    setToastMsg("Converted to path.");
-    setTimeout(() => setToastMsg(null), 2000);
-  };
-
   const handleDeletePath = () => {
     const path = mapClickMenu.path;
     setMapClickMenu(null);
@@ -4115,14 +4151,10 @@ export default function Map() {
       return;
     }
 
-    pendingTracePathRef.current = path;
-    setTraceSnapAlert(true);
+    confirmTracePath(path.roadSnap ?? null, path);
   };
 
-  const confirmTracePath = async (mode) => {
-    const path = pendingTracePathRef.current;
-    pendingTracePathRef.current = null;
-    setTraceSnapAlert(false);
+  const confirmTracePath = async (mode, path) => {
     if (!path) return;
 
     // Finish any active unfinished path
@@ -4132,10 +4164,25 @@ export default function Map() {
       pathHelpersRef.current.hideIntermediateVertices(prev);
       prev.midpoints.forEach((mp) => mp.marker.remove());
       prev.midpoints = [];
-      prev.vertices.forEach((v) => v.marker.getElement().classList.remove("active-path-feature"));
+      prev.vertices.forEach((v) => {
+        v.marker.getElement().classList.remove("active-path-feature");
+        v.marker.setDraggable(false);
+      });
       if (prev.sights)
-        prev.sights.forEach((m) => m.getElement().classList.remove("active-path-feature"));
+        prev.sights.forEach((m) => {
+          m.getElement().classList.remove("active-path-feature");
+          m.setDraggable(false);
+        });
     }
+
+    // Save pre-trace state so we can restore on cancel
+    path._preTraceSnapshot = {
+      isRoute: path.isRoute || false,
+      roadSnap: path.roadSnap || null,
+      snappedSegments: path.snappedSegments ? JSON.parse(JSON.stringify(path.snappedSegments)) : null,
+      routeDistance: path.routeDistance ?? null,
+      routeDuration: path.routeDuration ?? null,
+    };
 
     // Style path as route
     path.isRoute = true;
@@ -4143,14 +4190,20 @@ export default function Map() {
     const h = pathHelpersRef.current;
     h.updateVertexStyles(path);
 
+    // Recolor sights to route colors
+    if (path.sights) {
+      path.sights.forEach((m) => h.applySightColors(m, path));
+    }
+
     // Update arrow color to route color
     const map = mapRef.current;
     if (map && path._arrowLayerId && map.getLayer(path._arrowLayerId)) {
       map.setPaintProperty(path._arrowLayerId, "text-color", "#0091ff");
     }
 
-    // Enter navigation-like mode
+    // Enter navigation-like mode (but don't start tracking yet — user clicks "Start")
     activePathRef.current = path;
+    path.isFinished = false;
     isPathModeRef.current = true;
     setIsPathMode(true);
     isNavigationModeRef.current = true;
@@ -4158,6 +4211,7 @@ export default function Map() {
     isTracingPathRef.current = true;
     setSnapMode(mode);
     setForceMode(false);
+    setPathVertexCount(path.vertices.length);
 
     // Apply snap mode
     if (mode) {
@@ -4172,28 +4226,6 @@ export default function Map() {
       setNavRouteDuration(null);
       h.updatePathLine(path);
     }
-
-    // Start tracking directly (like handleStartNavigation)
-    setIsNavigationTracking(true);
-    isNavigationTrackingRef.current = true;
-
-    h.ensurePassedPathLayer(path);
-    passedPathCoordsRef.current = [];
-    routeSplitIndexRef.current = 0;
-    routeSplitTRef.current = 0;
-    isOffPathRef.current = false;
-    offPathCoordsRef.current = [];
-    isRenavigatingRef.current = false;
-    offPathTimerRef.current = null;
-    offPathVertexSegRef.current = 0;
-    routeTotalDistanceRef.current = path.routeDistance ?? null;
-
-    const ctrl = locationControlRef.current;
-    ctrl.hideTrackingIcons();
-    ctrl._handleTrackBearing();
-
-    setToastMsg("Click tracking icon to stop tracing.");
-    setTimeout(() => setToastMsg(null), 3000);
   };
 
   const startNavigation = async (destinationLngLat) => {
@@ -4211,9 +4243,15 @@ export default function Map() {
       pathHelpersRef.current.hideIntermediateVertices(prev);
       prev.midpoints.forEach((mp) => mp.marker.remove());
       prev.midpoints = [];
-      prev.vertices.forEach((v) => v.marker.getElement().classList.remove("active-path-feature"));
+      prev.vertices.forEach((v) => {
+        v.marker.getElement().classList.remove("active-path-feature");
+        v.marker.setDraggable(false);
+      });
       if (prev.sights)
-        prev.sights.forEach((m) => m.getElement().classList.remove("active-path-feature"));
+        prev.sights.forEach((m) => {
+          m.getElement().classList.remove("active-path-feature");
+          m.setDraggable(false);
+        });
     }
 
     let userLng = ctrl._lastPostionLong;
@@ -4373,7 +4411,11 @@ export default function Map() {
 
     const userLngLat = [userLng, userLat];
     const h = pathHelpersRef.current;
-    const segIdx = offPathVertexSegRef.current;
+    // Use current position to determine passed vertices (not the stale value from
+    // when off-path was first detected — user may have passed more vertices during
+    // the renavigate delay)
+    const currentSnap = h.snapToPath(path, userLngLat);
+    const segIdx = Math.max(offPathVertexSegRef.current, currentSnap.segmentIndex);
 
     // Remove passed vertices (indices 0..segIdx) and their markers
     const removeCount = Math.min(segIdx + 1, path.vertices.length);
@@ -4449,12 +4491,23 @@ export default function Map() {
 
     const path = activePathRef.current;
     if (path && isTracingPathRef.current) {
-      // Revert path back to non-route styling
-      delete path.isRoute;
-      path.roadSnap = null;
-      path.snappedSegments = null;
-      path.routeDistance = null;
-      path.routeDuration = null;
+      // Restore path to its pre-trace state
+      const snap = path._preTraceSnapshot;
+      if (snap) {
+        path.isRoute = snap.isRoute || false;
+        if (!path.isRoute) delete path.isRoute;
+        path.roadSnap = snap.roadSnap;
+        path.snappedSegments = snap.snappedSegments;
+        path.routeDistance = snap.routeDistance;
+        path.routeDuration = snap.routeDuration;
+        delete path._preTraceSnapshot;
+      } else {
+        delete path.isRoute;
+        path.roadSnap = null;
+        path.snappedSegments = null;
+        path.routeDistance = null;
+        path.routeDuration = null;
+      }
       path.isFinished = true;
       pathHelpersRef.current.hideIntermediateVertices(path);
       path.midpoints.forEach((mp) => mp.marker.remove());
@@ -4465,9 +4518,17 @@ export default function Map() {
       });
       pathHelpersRef.current.updateVertexStyles(path);
       pathHelpersRef.current.updatePathLine(path);
+      // Restore sight colors for passed sights
+      if (path.sights) {
+        path.sights.forEach((m) => {
+          delete m._passed;
+          pathHelpersRef.current.applySightColors(m, path);
+        });
+      }
+      const mainColor = path.isRoute ? "#0091ff" : path.isTrack ? "#91FF00" : "#ff6f00";
       const map = mapRef.current;
       if (map && path._arrowLayerId && map.getLayer(path._arrowLayerId)) {
-        map.setPaintProperty(path._arrowLayerId, "text-color", "#ff6f00");
+        map.setPaintProperty(path._arrowLayerId, "text-color", mainColor);
       }
     } else if (path) {
       path.vertices.forEach((v) => v.marker.remove());
@@ -4714,6 +4775,7 @@ export default function Map() {
     const snap = h.snapToPath(path, [lngLat.lng, lngLat.lat]);
     const markerPos = h.getSightPos(path, { _segmentIndex: snap.segmentIndex, _t: snap.t });
     const marker = createMarkerRef.current(markerPos, "#0091ff");
+    pathHelpersRef.current.applySightColors(marker, path);
     marker._sightPath = path;
     marker._segmentIndex = snap.segmentIndex;
     marker._t = snap.t;
@@ -4837,6 +4899,17 @@ export default function Map() {
         ]}
       />
       <IonAlert
+        isOpen={stopRecordingAlert}
+        cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
+        onDidDismiss={() => setStopRecordingAlert(false)}
+        header="Stop recording"
+        message="Are you sure you want to stop recording?"
+        buttons={[
+          { text: "Cancel", role: "cancel" },
+          { text: "Stop", handler: confirmStopTrackRecording },
+        ]}
+      />
+      <IonAlert
         isOpen={deleteAllAlert}
         cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
         onDidDismiss={() => setDeleteAllAlert(false)}
@@ -4914,17 +4987,20 @@ export default function Map() {
         ]}
       />
       <IonAlert
-        isOpen={traceSnapAlert}
+        isOpen={!!exportAlert}
         cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
-        onDidDismiss={() => { setTraceSnapAlert(false); pendingTracePathRef.current = null; }}
-        header="Trace path"
-        message="Select tracing mode:"
+        onDidDismiss={() => setExportAlert(null)}
+        header="Export format"
+        message="Select export format:"
         buttons={[
+          { text: "RontoJSON", handler: () => confirmExport("rontoJson") },
+          { text: "GeoJSON", handler: () => confirmExport("geoJson") },
+          { text: "GPX", handler: () => confirmExport("gpx") },
+          { text: "KML", handler: () => confirmExport("kml") },
+          ...(exportAlert?.scope?.type === "path"
+            ? [{ text: "FIT", handler: () => confirmExport("fit") }]
+            : []),
           { text: "Cancel", role: "cancel" },
-          { text: "Free", handler: () => confirmTracePath(null) },
-          { text: "Foot", handler: () => confirmTracePath("foot") },
-          { text: "Bike", handler: () => confirmTracePath("bike") },
-          { text: "Car", handler: () => confirmTracePath("car") },
         ]}
       />
       {markerMenu && (
@@ -4952,6 +5028,7 @@ export default function Map() {
             {markerMenu.marker._sightPath && <button onClick={handleDetachSight}>Detach from path</button>}
             <button onClick={handleSetNameMarker}>{markerMenu.marker._sightPath ? "Set name to sight" : "Set name to marker"}</button>
             <button onClick={handleRecordMarkerView}>{markerMenu.marker._sightPath ? "Record sight view" : "Record marker view"}</button>
+            <button onClick={handleExportMarker}>{markerMenu.marker._sightPath ? "Export sight" : "Export marker"}</button>
             <button onClick={handleToggleMarkerDrag}>
               {markerMenu.marker.isDraggable() ? "Disable drag" : "Enable drag"}
             </button>
@@ -4988,23 +5065,17 @@ export default function Map() {
           >
             {mapClickMenu.path ? (
               <>
-                <button onClick={handleFlyToPath}>{mapClickMenu.path.isTrack ? "Fly to track" : "Fly to path"}</button>
-                <button onClick={handleCenterToPath}>{mapClickMenu.path.isTrack ? "Center to track" : "Center to path"}</button>
-                <button onClick={handleNavigateToPath}>{mapClickMenu.path.isTrack ? "Navigate to track" : "Navigate to path"}</button>
-                {!mapClickMenu.path.isTrack && (
-                  <>
-                    <button onClick={handleAddSight}>Add sight to path</button>
-                    <button onClick={handleEditPath}>Edit path</button>
-                    <button onClick={handleReversePath}>Reverse path</button>
-                    <button onClick={handleTracePath}>Trace path</button>
-                  </>
-                )}
-                <button onClick={handleSetPathName}>{mapClickMenu.path.isTrack ? "Set track name" : "Set path name"}</button>
-                <button onClick={handleRecordPathView}>{mapClickMenu.path.isTrack ? "Record track view" : "Record path view"}</button>
-                {mapClickMenu.path.isTrack && (
-                  <button onClick={handleConvertToPath}>Convert to path</button>
-                )}
-                <button onClick={handleDeletePath}>{mapClickMenu.path.isTrack ? "Delete track" : "Delete path"}</button>
+                <button onClick={handleFlyToPath}>Fly to path</button>
+                <button onClick={handleCenterToPath}>Center to path</button>
+                <button onClick={handleNavigateToPath}>Navigate to path</button>
+                <button onClick={handleAddSight}>Add sight to path</button>
+                <button onClick={handleEditPath}>Edit path</button>
+                <button onClick={handleReversePath}>Reverse path</button>
+                <button onClick={handleTracePath}>Trace path</button>
+                <button onClick={handleSetPathName}>Set path name</button>
+                <button onClick={handleRecordPathView}>Record path view</button>
+                <button onClick={handleExportPath}>Export path</button>
+                <button onClick={handleDeletePath}>Delete path</button>
               </>
             ) : (
               <>
@@ -5019,6 +5090,8 @@ export default function Map() {
                 )}
                 <button onClick={handleCopyFeaturesCode}>Copy features code</button>
                 <button onClick={handleCopyFeatures}>Copy link to features</button>
+                <button onClick={handleImportFeatures}>Import features</button>
+                <button onClick={handleExportAll}>Export features</button>
                 <button onClick={handleDeleteAllFeatures}>Delete all features</button>
               </>
             )}
@@ -5123,7 +5196,7 @@ export default function Map() {
           {routeDistance != null && (
             <div className="route-info">
               <span>{formatDistance(routeDistance)}</span>
-              {routeDuration != null && !isPathMode && (
+              {routeDuration != null && (!isPathMode || isNavigationMode) && (
                 <>
                   <span className="route-info-separator">&middot;</span>
                   <span>{formatDuration(routeDuration)}</span>

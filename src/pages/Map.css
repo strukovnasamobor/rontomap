@@ -349,7 +349,7 @@
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.2);
   overflow-y: auto;
   min-width: 160px;
-  max-height: calc(100dvh - 40px);
+  max-height: calc(100dvh - 40px - env(safe-area-inset-bottom, 0px));
   transform: translate(-50%, 8px);
 }
 
@@ -435,6 +435,9 @@
   z-index: 2;
   position: relative;
   touch-action: none;
+}
+.path-vertex.not-draggable {
+  cursor: alias !important;
 }
 
 .path-vertex::before {

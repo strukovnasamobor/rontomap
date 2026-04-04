@@ -1,9 +1,13 @@
-? when editing paths just show distance
-? on changing styles preserve user passed segments
-? track context menu option rename
-? renavigate if user stay distant from route for some period of time, on renavigate add user location not as a first point but as new point (like moving midpoint in this segment to user location), maintain the user passed segments and show new navigation route
-? change color of tracks (start, end, segments), passed segments of routes to #0000ff
-? Add option to context menu for paths for trace it, show msg that user needs to be near path start point if is not, if user is close then transform path in route styling it like for navigation based on option free/foot/bike/car, when tracing path show distance, time and ETA and passed segments like in navigation routes, do not renavigate when tracing path.s
+? on mobile do not allow context menu to go behind navigation button, resize height of context menu
+? when the recording track is finished, show it as a path, therefore no need for context menu for tracks, not need for import/export tracks
+? when renavigate remove already passed midpoints so the route goes to the next point that hasn't yet passed
+? sight colors on traced path/route
+? recording path finish
+? import/export on mobile
+
+OFLINE MAPS AND NAVIGATION
+- context menu option download, update, delete
+- offline first data
 
 UI REDESIGN
 - left click/tap on feature opens 
@@ -18,14 +22,13 @@ UI REDESIGN
 
 ==============================================================================================================================================================
 GOALS
-- free and simple 3D map for orientation and navigation (online and offline)
-- creating and sharing (with embedding option) map features (markers and paths)
-- handling and collaboration editing routes
+- free (no ads) and simple 3D map for orientation and navigation (online and offline)
+- creating and sharing map features (markers/sights and paths/tracks) by link or embeded code
+- finding and collaboration editing public paths
 
 UPGRADES
-- offline maps and navigation using Mapbox Android SDK
-- adding GPS tracks from file
-- handling and collaboration editing routes
+- opening in RontoMap or other installed apps
+- finding and collaboration editing public paths
 
 Ver. x.y. (z)
 - change vesrion in build gradle
@@ -64,7 +67,9 @@ COLORS
 - https://htmlcolorcodes.com/
 - context point - #ff6f00 & #ffffff
 - markers - #ffffff & #ff6f00
-- sights - #ffffff & #0091ff
+- sights - #0091ff & #ff6f00
+    - tracing path - #ffffff & #0091ff
+    - traced path - #ffffff & #0000ff
 - paths
     - start point (circle) - #ff6f00
     - end point (rectangle) - #ff6f00
@@ -95,8 +100,31 @@ COLORS
     - forced midpoints - #ffffff & #ff0011
     - forced segments - #ff0011
     - forced directon arrows - #0091ff
-    - passed segments - #0000ff
+    - traced segments - #0000ff
 - tracks
     - start point (circle) - #0000ff
     - end point (rectangle) - #0000ff
     - segments - #0000ff
+
+IMPORT/EXPORT FEATURES
+- import map features (support: JSON, GeoJSON, GPX, KML, FIT)
+- export map features (support: JSON, GeoJSON, GPX, KML)
+- option for import and export map features is in main context menu
+- export marker/sight (support: JSON, GeoJSON, GPX, KML)
+- export path/track (support: JSON, GeoJSON, GPX, KML, FIT)
+1) RontoJSON (.json)
+- format like in Firestore database
+2) GeoJSON (.json, .geojson)
+- marker - Feature with Point geometry
+- path - Path (Feature with LineString geometry)
+- sight - link them through custom properties like {"pathId": "route-1"}
+3) GPX (.gpx)
+- marker - Waypoint (<wpt>)
+- path - Route (<rte, <rtept>), Track (<trk>, <trkseg>, <trkpt>)
+- sight - use naming conventions
+4) KML (.kml)
+- marker - <Placemark> with a <Point> geometry
+- path - <Placemark> with a <LineString>)
+- sight - using <MultiGeometry> to link a point and a line inside one Placemark
+5) FIT (.fit)
+- path - track (a series of records with lat/lon, timestamp, heart rate, speed, cadence, power)
