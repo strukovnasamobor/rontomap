@@ -30,7 +30,7 @@ const exporters = {
 };
 
 const MIME_TYPES = {
-  rontoJson: "application/json",
+  rontoJson: "application/octet-stream",
   geoJson: "application/geo+json",
   gpx: "application/gpx+xml",
   kml: "application/vnd.google-earth.kml+xml",
