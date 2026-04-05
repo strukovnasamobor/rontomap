@@ -1565,30 +1565,30 @@ export default function Map() {
 
       hideTrackingIcons() {
         console.log("hideTrackingIcons");
-        this._container.querySelector('[data-control="track_location"]')?.classList.add("hidden");
-        this._container.querySelector('[data-control="track_bearing"]')?.classList.add("hidden");
-        this._container.querySelector('[data-control="stop_tracking_bearing"]')?.classList.add("hidden");
+        this._locationDiv?.querySelector('[data-control="track_location"]')?.classList.add("hidden");
+        this._locationDiv?.querySelector('[data-control="track_bearing"]')?.classList.add("hidden");
+        this._locationDiv?.querySelector('[data-control="stop_tracking_bearing"]')?.classList.add("hidden");
       }
 
       showTrackingLocationIcon() {
         console.log("showTrackingLocationIcon");
-        this._container.querySelector('[data-control="track_location"]')?.classList.remove("hidden");
-        this._container.querySelector('[data-control="track_bearing"]')?.classList.add("hidden");
-        this._container.querySelector('[data-control="stop_tracking_bearing"]')?.classList.add("hidden");
+        this._locationDiv?.querySelector('[data-control="track_location"]')?.classList.remove("hidden");
+        this._locationDiv?.querySelector('[data-control="track_bearing"]')?.classList.add("hidden");
+        this._locationDiv?.querySelector('[data-control="stop_tracking_bearing"]')?.classList.add("hidden");
       }
 
       showTrackingBearingIcon() {
         console.log("showTrackingBearingIcon");
-        this._container.querySelector('[data-control="track_location"]')?.classList.add("hidden");
-        this._container.querySelector('[data-control="track_bearing"]')?.classList.remove("hidden");
-        this._container.querySelector('[data-control="stop_tracking_bearing"]')?.classList.add("hidden");
+        this._locationDiv?.querySelector('[data-control="track_location"]')?.classList.add("hidden");
+        this._locationDiv?.querySelector('[data-control="track_bearing"]')?.classList.remove("hidden");
+        this._locationDiv?.querySelector('[data-control="stop_tracking_bearing"]')?.classList.add("hidden");
       }
 
       showStopTrackingBearingIcon() {
         console.log("showStopTrackingBearingIcon");
-        this._container.querySelector('[data-control="track_location"]')?.classList.add("hidden");
-        this._container.querySelector('[data-control="track_bearing"]')?.classList.add("hidden");
-        this._container.querySelector('[data-control="stop_tracking_bearing"]')?.classList.remove("hidden");
+        this._locationDiv?.querySelector('[data-control="track_location"]')?.classList.add("hidden");
+        this._locationDiv?.querySelector('[data-control="track_bearing"]')?.classList.add("hidden");
+        this._locationDiv?.querySelector('[data-control="stop_tracking_bearing"]')?.classList.remove("hidden");
       }
 
       disableUserInteractions() {
@@ -1962,13 +1962,19 @@ export default function Map() {
           </div>
         `;
 
+        this._locationDiv = this._container.querySelector(".ctrl-location-container");
         this._container.addEventListener("click", this._handleClick);
+        this._locationDiv.addEventListener("click", this._handleClick);
         return this._container;
       }
 
       onRemove() {
         console.log("LocationControl onRemove");
         this._container.removeEventListener("click", this._handleClick);
+        if (this._locationDiv) {
+          this._locationDiv.removeEventListener("click", this._handleClick);
+          this._locationDiv.remove();
+        }
         this._container.parentNode.removeChild(this._container);
         this._map = undefined;
       }
@@ -2808,7 +2814,7 @@ export default function Map() {
     locationControlRef.current = new LocationControl(geolocateRef.current, mapRef.current);
     mapRef.current.addControl(locationControlRef.current, "top-right");
     // Move location buttons to bottom-right container
-    const locationDiv = locationControlRef.current._container.querySelector(".ctrl-location-container");
+    const locationDiv = locationControlRef.current._locationDiv;
     const bottomRight = mapRef.current.getContainer().querySelector(".mapboxgl-ctrl-bottom-right");
     if (locationDiv && bottomRight) {
       bottomRight.appendChild(locationDiv);
