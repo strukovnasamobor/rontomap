@@ -8,15 +8,15 @@ OFLINE MAPS AND NAVIGATION
 - context menu option download, update, delete
 - offline first data
 
-UI REDESIGN - ?main action icon size and position
+UI REDESIGN 
 - left click/tap on feature opens 
     - on landscape - left sidebar with feature details (show fly & center & navigate & share options, name, coordinates, pictures, description, show on map)
     - on portrait - bottom sidebar minimal (show fly & center & navigate & share options, name, coordinates)
                   - on swipe full bottom sidebar
-   - near path show start path passing
+    - near path show start path tracing
 - swipe in right edge opens right sidebar
-    - map features list and details, settings and login
-- handling filing feature collections, public collections
+    - map features list and details, login, offline maps
+    - organize feature collections, import/export
 
 - deploy version 1.3. (4), generate functionalities description
 
@@ -61,6 +61,11 @@ TERMINOLOGY
 - Route - specific path to get from point A to point B by Foot/Bike/Car
 - Circuit Route - a specific path to get from point A to point B and back to point A by Foot/Bike/Car
 - Track - a recorded path of GPS points over time
+
+SCREEN SIZE
+- minimum: width = 360px
+- small devices: width < 768px
+- large devices: width >= 768px
 
 COLORS
 - https://htmlcolorcodes.com/

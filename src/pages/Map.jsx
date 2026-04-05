@@ -2820,6 +2820,16 @@ export default function Map() {
     mapRef.current.addControl(new mapboxgl.ScaleControl({ maxWidth: 100 }), "bottom-right");
     mapRef.current.addControl(new mapboxgl.AttributionControl({ compact: true }));
 
+    // On small screens, hide scale + logo when attribution is expanded
+    const attribEl = mapRef.current.getContainer().querySelector(".mapboxgl-ctrl-attrib");
+    if (attribEl) {
+      const observer = new MutationObserver(() => {
+        const open = attribEl.classList.contains("mapboxgl-compact-show");
+        mapRef.current?.getContainer()?.classList.toggle("attrib-open", open);
+      });
+      observer.observe(attribEl, { attributes: true, attributeFilter: ["class"] });
+    }
+
     // Add custom className to the compass container
     if (isEmbeddedRef.current) {
       nav._container.style.position = "absolute";
@@ -2827,6 +2837,17 @@ export default function Map() {
       nav._container.style.right = "0px";
     } else {
       nav._container.classList.add("ctrl-compass-container");
+    }
+
+    // Hide compass when bearing is 0
+    const compassBtn = nav._container.querySelector(".mapboxgl-ctrl-compass");
+    if (compassBtn) {
+      const updateCompassVisibility = () => {
+        const bearing = mapRef.current?.getBearing() ?? 0;
+        compassBtn.style.display = Math.abs(bearing) < 0.5 ? "none" : "";
+      };
+      mapRef.current.on("rotate", updateCompassVisibility);
+      updateCompassVisibility();
     }
 
     // Enable rotation gestures (right-click drag on desktop, two-finger rotate on mobile)
@@ -5256,12 +5277,16 @@ export default function Map() {
           {routeDistance != null && (
             <div className="route-info">
               <span>{formatDistance(routeDistance)}</span>
-              {routeDuration != null && (!isPathMode || isNavigationMode) && (
+              {routeDuration != null && (
                 <>
                   <span className="route-info-separator">&middot;</span>
                   <span>{formatDuration(routeDuration)}</span>
-                  <span className="route-info-separator">&middot;</span>
-                  <span>{formatETA(routeDuration)}</span>
+                  {isNavigationMode && (
+                    <>
+                      <span className="route-info-separator">&middot;</span>
+                      <span>{formatETA(routeDuration)}</span>
+                    </>
+                  )}
                 </>
               )}
             </div>

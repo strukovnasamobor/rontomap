@@ -135,6 +135,11 @@
   cursor: pointer !important;
 }
 
+.mapboxgl-ctrl-attrib {
+  margin-right: 16px !important;
+  margin-left: 6px !important;
+}
+
 .mapboxgl-ctrl-scale {
   margin-right: 0px !important;
   height: 20px !important;
@@ -221,7 +226,7 @@
 
 .ctrl-location-container {
   position: absolute;
-  top: 46px;
+  top: calc(100vh - 20px - 36px - 35px);
   right: 0px;
 }
 
@@ -232,13 +237,13 @@
   box-shadow: none !important;
 }
 
-.ctrl-location-container .mapboxgl-ctrl-geolocate {
-  margin-top: 36px;
-}
-
 .mapboxgl-ctrl-group button {
   width: 36px !important;
   height: 36px !important;
+}
+
+.mapboxgl-ctrl-geocoder {
+  width: 294px !important;
 }
 
 .mapboxgl-ctrl-geocoder.mapboxgl-ctrl-geocoder--collapsed {
@@ -597,8 +602,8 @@
   width: max-content;
   max-width: calc(100dvw - 20px);
   min-height: 36px;
-  background: white;
-  color: #333;
+  background: #1a1a1a;
+  color: white;
   padding: 8px 16px;
   border-radius: 4px;
   text-align: center;
@@ -616,12 +621,18 @@
 }
 
 .toast-msg-dark {
-  background: black;
-  color: white;
+  background: white;
+  color: #333;
 }
 
 .mapboxgl-ctrl-logo {
   width: 70px !important;
+}
+
+@media (max-width: 500px) {
+  .attrib-open .mapboxgl-ctrl-scale {
+    display: none !important;
+  }
 }
 
 .snap-toggle {
@@ -724,6 +735,7 @@
 }
 
 .route-info {
+  height: 26px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -765,15 +777,25 @@
 .path-actions-group button {
   flex: 1;
   height: 36px;
-  width: 50px;
+  width: 75px;
   border: none;
+  border-right: 1px solid rgba(0, 0, 0, 0.15);
   background: none;
   padding: 12px 6px;
-  border-radius: 4px;
+  border-radius: 0;
   font-size: 13px;
   cursor: pointer;
   color: black;
   white-space: nowrap;
+}
+
+.path-actions-group button:first-child {
+  border-radius: 6px 0 0 6px;
+}
+
+.path-actions-group button:last-child {
+  border-right: none;
+  border-radius: 0 6px 6px 0;
 }
 
 .path-actions-group button:hover {
@@ -814,6 +836,7 @@
 
 .path-actions-dark .path-actions-group button {
   color: white;
+  border-right-color: rgba(255, 255, 255, 0.15);
 }
 
 .path-actions-dark .path-actions-group button:hover {
