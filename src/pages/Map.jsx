@@ -2736,8 +2736,8 @@ export default function Map() {
         const logoBtn = document.createElement("button");
         logoBtn.type = "button";
         logoBtn.className = "mapboxgl-ctrl-icon";
-        logoBtn.title = "Open in Rontomap";
-        logoBtn.setAttribute("aria-label", "Open in Rontomap");
+        logoBtn.title = "Open in RontoMap";
+        logoBtn.setAttribute("aria-label", "Open in RontoMap");
         logoBtn.addEventListener("click", () => {
           window.open(url.toString(), "_blank", "noopener,noreferrer");
         });
@@ -2750,8 +2750,8 @@ export default function Map() {
         logoBtn.appendChild(logoSpan);
         logoContainer.appendChild(logoBtn);
 
-        const topLeftCtrl = mapRef.current.getContainer().querySelector(".mapboxgl-ctrl-top-left");
-        if (topLeftCtrl) topLeftCtrl.appendChild(logoContainer);
+        const bottomRightCtrl = mapRef.current.getContainer().querySelector(".mapboxgl-ctrl-bottom-right");
+        if (bottomRightCtrl) bottomRightCtrl.appendChild(logoContainer);
       } else {
         geocoderEl.addEventListener("click", () => {
           const input = geocoderEl.querySelector("input");
@@ -2819,8 +2819,10 @@ export default function Map() {
     if (locationDiv && bottomRight) {
       bottomRight.appendChild(locationDiv);
     }
-    if (isEmbeddedRef.current && locationDiv) {
-      locationDiv.style.display = "none";
+    if (isEmbeddedRef.current) {
+      if (locationDiv) locationDiv.style.display = "none";
+      const mapstyleDiv = locationControlRef.current._container.querySelector(".ctrl-mapstyle-container");
+      if (mapstyleDiv) mapstyleDiv.style.display = "none";
     }
 
     // Add compass icon

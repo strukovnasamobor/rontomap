@@ -39,7 +39,16 @@ public class MainActivity extends BridgeActivity {
     }
 
     private void handleDeepLink(Intent intent) {
-        if (!Intent.ACTION_VIEW.equals(intent.getAction())) return;
+        String action = intent.getAction();
+
+        // Handle shared file (share sheet)
+        if (Intent.ACTION_SEND.equals(action)) {
+            Uri uri = intent.getParcelableExtra(Intent.EXTRA_STREAM);
+            if (uri != null) handleFileOpen(uri);
+            return;
+        }
+
+        if (!Intent.ACTION_VIEW.equals(action)) return;
         Uri data = intent.getData();
         if (data == null) return;
 
