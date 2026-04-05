@@ -234,7 +234,6 @@
   position: absolute;
   top: 46px;
   right: 0px;
-  box-shadow: none !important;
 }
 
 .mapboxgl-ctrl-group button {
