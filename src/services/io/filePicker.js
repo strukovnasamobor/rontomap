@@ -1,6 +1,6 @@
 import { Capacitor, registerPlugin } from "@capacitor/core";
 
-const ACCEPT = ".json,.geojson,.gpx,.kml,.fit";
+const ACCEPT = ".rontojson,.json,.geojson,.gpx,.kml,.fit";
 const MAX_SIZE = 50 * 1024 * 1024; // 50 MB
 
 /**

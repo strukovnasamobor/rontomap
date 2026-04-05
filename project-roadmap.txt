@@ -8,7 +8,7 @@ OFLINE MAPS AND NAVIGATION
 - context menu option download, update, delete
 - offline first data
 
-UI REDESIGN
+UI REDESIGN - ?main action icon size and position
 - left click/tap on feature opens 
     - on landscape - left sidebar with feature details (show fly & center & navigate & share options, name, coordinates, pictures, description, show on map)
     - on portrait - bottom sidebar minimal (show fly & center & navigate & share options, name, coordinates)
@@ -106,14 +106,14 @@ COLORS
     - segments - #0000ff
 
 IMPORT/EXPORT FEATURES
-- import map features (support: JSON, GeoJSON, GPX, KML, FIT)
-- export map features (support: JSON, GeoJSON, GPX, KML)
+- import map features (support: RontoJSON, GeoJSON, GPX, KML, FIT)
+- export map features (support: RontoJSON, GeoJSON, GPX, KML)
 - option for import and export map features is in main context menu
 - export marker/sight (support: JSON, GeoJSON, GPX, KML)
 - export path/track (support: JSON, GeoJSON, GPX, KML, FIT)
-1) RontoJSON (.json)
+1) RontoJSON (.rontojson)
 - format like in Firestore database
-2) GeoJSON (.json, .geojson)
+2) GeoJSON (.geojson)
 - marker - Feature with Point geometry
 - path - Path (Feature with LineString geometry)
 - sight - link them through custom properties like {"pathId": "route-1"}

@@ -38,7 +38,7 @@ const MIME_TYPES = {
 };
 
 const EXTENSIONS = {
-  rontoJson: ".json",
+  rontoJson: ".rontojson",
   geoJson: ".geojson",
   gpx: ".gpx",
   kml: ".kml",

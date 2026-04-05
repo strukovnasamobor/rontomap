@@ -1,6 +1,7 @@
 /** @typedef {import('./types').FormatId} FormatId */
 
 const EXTENSION_MAP = {
+  ".rontojson": "rontoJson",
   ".geojson": "geoJson",
   ".gpx": "gpx",
   ".kml": "kml",
