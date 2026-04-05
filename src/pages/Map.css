@@ -125,9 +125,8 @@
   right: env(safe-area-inset-right) !important;
 }
 
-.mapboxgl-ctrl-bottom-right {
+.mapboxgl-ctrl-bottom-left {
   display: flex;
-  flex-direction: row-reverse;
   align-items: flex-end;
 }
 
@@ -135,13 +134,8 @@
   cursor: pointer !important;
 }
 
-.mapboxgl-ctrl-attrib {
-  margin-right: 16px !important;
-  margin-left: 6px !important;
-}
-
 .mapboxgl-ctrl-scale {
-  margin-right: 0px !important;
+  margin-left: 0px !important;
   height: 20px !important;
 }
 
@@ -226,7 +220,7 @@
 
 .ctrl-location-container {
   position: absolute;
-  top: calc(100vh - 20px - 36px - 35px);
+  top: calc(100vh - 20px - 36px - env(safe-area-inset-bottom)) !important;
   right: 0px;
 }
 
@@ -592,7 +586,7 @@
 
 .toast-msg {
   position: fixed;
-  bottom: calc(env(safe-area-inset-bottom) + 40px);
+  bottom: calc(env(safe-area-inset-bottom) + 56px);
   left: 50%;
   transform: translateX(-50%);
   display: flex;
@@ -614,7 +608,7 @@
 
 @media (min-width: 768px) {
   .toast-msg {
-    bottom: calc(env(safe-area-inset-bottom) + 5px);
+    bottom: calc(env(safe-area-inset-bottom) + 10px);
     max-width: calc(100dvw - 300px);
   }
 }
@@ -625,7 +619,7 @@
 }
 
 .mapboxgl-ctrl-logo {
-  width: 70px !important;
+  display: none !important;
 }
 
 @media (max-width: 500px) {

@@ -2817,8 +2817,8 @@ export default function Map() {
       visualizePitch: true,
     });
     mapRef.current.addControl(nav, "top-right");
-    mapRef.current.addControl(new mapboxgl.ScaleControl({ maxWidth: 100 }), "bottom-right");
-    mapRef.current.addControl(new mapboxgl.AttributionControl({ compact: true }));
+    mapRef.current.addControl(new mapboxgl.ScaleControl({ maxWidth: 100 }), "bottom-left");
+    mapRef.current.addControl(new mapboxgl.AttributionControl({ compact: true }), "bottom-left");
 
     // On small screens, hide scale + logo when attribution is expanded
     const attribEl = mapRef.current.getContainer().querySelector(".mapboxgl-ctrl-attrib");
