@@ -2807,8 +2807,14 @@ export default function Map() {
     // Initialize custom location control
     locationControlRef.current = new LocationControl(geolocateRef.current, mapRef.current);
     mapRef.current.addControl(locationControlRef.current, "top-right");
-    if (isEmbeddedRef.current) {
-      locationControlRef.current._container.querySelector(".ctrl-location-container").style.display = "none";
+    // Move location buttons to bottom-right container
+    const locationDiv = locationControlRef.current._container.querySelector(".ctrl-location-container");
+    const bottomRight = mapRef.current.getContainer().querySelector(".mapboxgl-ctrl-bottom-right");
+    if (locationDiv && bottomRight) {
+      bottomRight.appendChild(locationDiv);
+    }
+    if (isEmbeddedRef.current && locationDiv) {
+      locationDiv.style.display = "none";
     }
 
     // Add compass icon

@@ -219,9 +219,7 @@
 }
 
 .ctrl-location-container {
-  position: absolute;
-  top: calc(100vh - 20px - 36px - env(safe-area-inset-bottom)) !important;
-  right: 0px;
+  box-shadow: none !important;
 }
 
 .ctrl-compass-container {
