@@ -616,16 +616,13 @@ export default function Map() {
         });
       }
       if (!map.getLayer(lyrId)) {
-        map.addLayer(
-          {
-            id: lyrId,
-            type: "line",
-            source: srcId,
-            paint: { "line-color": "#0000ff", "line-width": ["coalesce", ["get", "width"], 3], "line-emissive-strength": 1 },
-            layout: { "line-cap": "round", "line-join": "round" },
-          },
-          routePath._arrowLayerId,
-        );
+        map.addLayer({
+          id: lyrId,
+          type: "line",
+          source: srcId,
+          paint: { "line-color": "#0000ff", "line-width": ["coalesce", ["get", "width"], 3], "line-emissive-strength": 1 },
+          layout: { "line-cap": "round", "line-join": "round" },
+        });
       }
       passedPathSourceId.current = srcId;
       passedPathLayerId.current = lyrId;
@@ -2332,11 +2329,12 @@ export default function Map() {
             features: [makeFeature(trackCoordsRef.current, "#0000ff")],
           });
         }
-        // Update end vertex marker
+        // Update end vertex position (hidden during recording, shown on stop)
         if (recPath.vertices.length === 1) {
           const endMarker = createPathVertex(recCoord);
           endMarker.setDraggable(false);
           endMarker.getElement().classList.remove("active-path-feature");
+          endMarker.getElement().style.display = "none";
           recPath.vertices.push({ lngLat: recCoord, marker: endMarker, path: recPath });
           updateVertexStyles(recPath);
         } else if (recPath.vertices.length >= 2) {
@@ -3901,7 +3899,7 @@ export default function Map() {
     const h = pathHelpersRef.current;
     h.ensurePathLayer(newPath);
 
-    // Create start vertex marker (blue circle)
+    // Create start vertex marker
     const startMarker = h.createPathVertex([userLng, userLat]);
     startMarker.setDraggable(false);
     startMarker.getElement().classList.remove("active-path-feature");
@@ -3937,12 +3935,13 @@ export default function Map() {
               features: [pathHelpersRef.current.makeFeature(trackCoordsRef.current, "#0000ff")],
             });
           }
-          // Update end vertex marker
+          // Update end vertex position (hidden during recording, shown on stop)
           const h = pathHelpersRef.current;
           if (path.vertices.length === 1) {
             const endMarker = h.createPathVertex(coord);
             endMarker.setDraggable(false);
             endMarker.getElement().classList.remove("active-path-feature");
+            endMarker.getElement().style.display = "none";
             path.vertices.push({ lngLat: coord, marker: endMarker, path });
             h.updateVertexStyles(path);
           } else if (path.vertices.length >= 2) {
@@ -3989,13 +3988,22 @@ export default function Map() {
       if (i > 0 && i < simplified.length - 1) {
         marker.getElement().style.display = "none";
       }
-      path.vertices.push({ lngLat: coord, marker, path });
+      const vertex = { lngLat: coord, marker, path };
+      path.vertices.push(vertex);
+      h.attachVertexDragHandler(vertex);
+      h.attachFinishHandler(vertex);
     });
 
     path.isFinished = true;
     delete path.isTrack;
     h.updatePathLine(path);
     h.updateVertexStyles(path);
+
+    // Update arrow color to orange (was blue for track)
+    const map = mapRef.current;
+    if (map && path._arrowLayerId && map.getLayer(path._arrowLayerId)) {
+      map.setPaintProperty(path._arrowLayerId, "text-color", "#ff6f00");
+    }
 
     // Stop background watcher on native platforms
     if (bgWatcherIdRef.current != null) {

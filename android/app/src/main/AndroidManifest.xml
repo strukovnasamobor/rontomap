@@ -41,7 +41,6 @@
                 <data android:mimeType="application/vnd.google-earth.kml+xml" />
                 <data android:mimeType="application/vnd.ant.fit" />
                 <data android:mimeType="application/octet-stream" />
-                <data android:mimeType="*/*" />
                 <data android:pathPattern=".*\\.rontojson" />
                 <data android:pathPattern=".*\\.gpx" />
                 <data android:pathPattern=".*\\.kml" />
@@ -57,7 +56,6 @@
                 <data android:mimeType="application/vnd.google-earth.kml+xml" />
                 <data android:mimeType="application/vnd.ant.fit" />
                 <data android:mimeType="application/octet-stream" />
-                <data android:mimeType="*/*" />
             </intent-filter>
 
         </activity>

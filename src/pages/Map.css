@@ -726,7 +726,7 @@
 }
 
 .route-info {
-  height: 26px;
+  height: 36px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -735,8 +735,8 @@
   padding: 6px 16px;
   border-radius: 6px;
   box-shadow: 0 1px 6px rgba(0, 0, 0, 0.15);
-  font-size: 14px;
-  font-weight: 500;
+  font-size: 13px;
+  font-weight: 600;
   color: #333;
   white-space: nowrap;
 }

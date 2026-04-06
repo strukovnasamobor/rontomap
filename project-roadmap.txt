@@ -1,18 +1,12 @@
-? when the recording track is finished, show it as a path, therefore no need for context menu for tracks, not need for import/export tracks
-? when renavigate remove already passed midpoints so the route goes to the next point that hasn't yet passed
-? sight colors on tracing and traced path/route
-? recording path finish
-
 OFLINE MAPS AND NAVIGATION
 - context menu option download, update, delete
 - offline first data
 
 UI REDESIGN 
 - left click/tap on feature opens 
-    - on landscape - left sidebar with feature details (show fly & center & navigate & share options, name, coordinates, pictures, description, show on map)
-    - on portrait - bottom sidebar minimal (show fly & center & navigate & share options, name, coordinates)
+    - on landscape - left sidebar with feature details (show fly & center & navigate & share options, name, coordinates, pictures, description, path tracing)
+    - on portrait - bottom sidebar minimal (show fly & center & navigate & share options, name, coordinates, path tracing)
                   - on swipe full bottom sidebar
-    - near path show start path tracing
 - swipe in right edge opens right sidebar
     - map features list and details, login, offline maps
     - organize feature collections, import/export
