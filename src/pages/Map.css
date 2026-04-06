@@ -180,7 +180,7 @@
 .map-style-dark .mapboxgl-ctrl-group button .mapboxgl-ctrl-icon {
   filter: invert(0.8) !important;
 }
-.map-style-dark .ctrl-menu-container button .mapboxgl-ctrl-icon {
+.map-style-dark .rontomap-logo button .mapboxgl-ctrl-icon {
   filter: none !important;
 }
 .map-style-dark .mapboxgl-ctrl-group button.mapboxgl-ctrl-compass  .mapboxgl-ctrl-icon {
@@ -482,6 +482,166 @@
   background: rgba(255, 255, 255, 0.1);
 }
 
+/* Feature panel */
+.feature-panel-overlay {
+  display: none;
+}
+
+.feature-panel {
+  position: fixed;
+  background: white;
+  z-index: 1003;
+  overflow-y: auto;
+}
+
+.feature-panel-handle {
+  display: none;
+}
+
+.feature-panel-actions {
+  display: flex;
+  gap: 12px;
+  padding: 12px 0;
+}
+
+.feature-panel-actions button {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  background: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #333;
+}
+
+.feature-panel-actions button:hover {
+  background: #f0f0f0;
+}
+
+.feature-panel-name {
+  font-size: 16px;
+  font-weight: 600;
+  padding: 4px 0 8px;
+}
+
+.feature-panel-coords {
+  font-size: 13px;
+  color: #666;
+  padding: 4px 0;
+  font-family: monospace;
+}
+
+.feature-panel-trace-btn {
+  display: block;
+  width: 100%;
+  padding: 10px 16px;
+  margin-top: 8px;
+  background: #0091ff;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.feature-panel-trace-btn:hover {
+  background: #007ae6;
+}
+
+/* Dark mode */
+.feature-panel-dark {
+  background: #1a1a1a;
+  color: white;
+}
+
+.feature-panel-dark .feature-panel-actions button {
+  background: #2a2a2a;
+  border-color: rgba(255, 255, 255, 0.1);
+  color: white;
+}
+
+.feature-panel-dark .feature-panel-actions button:hover {
+  background: #333;
+}
+
+.feature-panel-dark .feature-panel-coords {
+  color: #aaa;
+}
+
+.feature-panel-dark .feature-panel-handle-bar {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+/* Landscape: left sidebar */
+@media (orientation: landscape) {
+  .feature-panel {
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 300px;
+    padding: calc(env(safe-area-inset-top, 0px) + 12px) 16px 16px calc(env(safe-area-inset-left, 0px) + 16px);
+    box-shadow: 2px 0 12px rgba(0, 0, 0, 0.15);
+    animation: feature-panel-slide-left 0.2s ease-out;
+  }
+
+  .feature-panel-details {
+    display: block;
+  }
+}
+
+@keyframes feature-panel-slide-left {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+
+/* Portrait: bottom sheet */
+@media (orientation: portrait) {
+  .feature-panel-overlay {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 1002;
+  }
+
+  .feature-panel {
+    left: 0;
+    right: 0;
+    bottom: 0;
+    border-radius: 16px 16px 0 0;
+    padding: 0 16px calc(env(safe-area-inset-bottom, 0px) + 16px);
+    max-height: 70vh;
+    transform: translateY(calc(100% - 140px));
+    transition: transform 0.3s ease;
+    box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.15);
+  }
+
+  .feature-panel-expanded {
+    transform: translateY(0) !important;
+  }
+
+  .feature-panel-handle {
+    display: flex;
+    justify-content: center;
+    padding: 12px 0 4px;
+    cursor: grab;
+    touch-action: none;
+  }
+
+  .feature-panel-handle-bar {
+    width: 40px;
+    height: 4px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 2px;
+  }
+
+  .feature-panel-details {
+    overflow: hidden;
+  }
+}
+
 .map-style-dark .marker-label,
 .map-style-satellite .marker-label {
   background: rgba(0, 0, 0, 0.5);
@@ -713,6 +873,13 @@
   .toast-msg {
     bottom: calc(env(safe-area-inset-bottom) + 10px);
     max-width: calc(100dvw - 300px);
+  }
+}
+
+@media (orientation: portrait) {
+  .toast-above-panel {
+    bottom: calc(env(safe-area-inset-bottom) + 156px) !important;
+    z-index: 1004 !important;
   }
 }
 

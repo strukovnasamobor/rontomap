@@ -102,6 +102,10 @@ export default function Map() {
   const [menuPos, setMenuPos] = useState({ x: 0, y: 0 });
   const [mapClickMenu, setMapClickMenu] = useState(null); // { lngLat, x, y }
   const [isSideMenuOpen, setIsSideMenuOpen] = useState(false);
+  const [selectedFeature, setSelectedFeature] = useState(null);
+  const [isSheetExpanded, setIsSheetExpanded] = useState(false);
+  const sheetDragRef = useRef({ startY: 0, dragging: false });
+  const featurePanelRef = useRef(null);
 
   const namingMarkerRef = useRef(null);
   const createMarkerRef = useRef(null);
@@ -529,6 +533,14 @@ export default function Map() {
         }, 300);
         setMenuPos(computeMenuPos(marker));
         setMarkerMenu({ marker });
+      });
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (wasDragged) return;
+        if (isPathModeRef.current) return;
+        if (isEmbeddedRef.current) return;
+        setSelectedFeature({ type: "marker", marker });
+        setIsSheetExpanded(false);
       });
       // Sync cursor with draggable state
       const origSetDraggable = marker.setDraggable.bind(marker);
@@ -2546,6 +2558,23 @@ export default function Map() {
         // Embedded mode: ignore single clicks (toggle is on dblclick)
         if (isEmbeddedRef.current) return;
 
+        // Feature selection: click on finished path opens detail panel
+        if (!isPathModeRef.current) {
+          let hitPath = null;
+          for (const p of pathsRef.current) {
+            if (!p.isFinished || !p._hitLayerId) continue;
+            const features = mapRef.current.queryRenderedFeatures(e.point, { layers: [p._hitLayerId] });
+            if (features.length > 0) { hitPath = p; break; }
+          }
+          if (hitPath) {
+            setSelectedFeature({ type: "path", path: hitPath });
+            setIsSheetExpanded(false);
+            return;
+          }
+          // Click on empty map: close feature panel
+          setSelectedFeature(null);
+        }
+
         // Path mode: add vertex or start new path
         if (isPathModeRef.current) {
           let path = activePathRef.current;
@@ -2745,8 +2774,35 @@ export default function Map() {
     const geocoderEl = document.querySelector(".mapboxgl-ctrl-geocoder");
     if (geocoderEl) {
       if (isEmbeddedRef.current) {
-        // In embedded mode, hide geocoder (logo is added at top-right later)
+        // In embedded mode, replace geocoder with rontomap logo at top-left
         geocoderEl.style.display = "none";
+
+        const url = new URL(window.location.href);
+        url.searchParams.delete("embedded");
+        url.searchParams.delete("style");
+
+        const logoContainer = document.createElement("div");
+        logoContainer.className = "mapboxgl-ctrl mapboxgl-ctrl-group rontomap-logo";
+
+        const logoBtn = document.createElement("button");
+        logoBtn.type = "button";
+        logoBtn.className = "mapboxgl-ctrl-icon";
+        logoBtn.title = "Open in RontoMap";
+        logoBtn.setAttribute("aria-label", "Open in RontoMap");
+        logoBtn.addEventListener("click", () => {
+          window.open(url.toString(), "_blank", "noopener,noreferrer");
+        });
+
+        const logoSpan = document.createElement("span");
+        logoSpan.className = "mapboxgl-ctrl-icon";
+        logoSpan.style.cssText =
+          "background-image: url('/logo512_nobg.png') !important; background-size: 29px 29px !important;";
+
+        logoBtn.appendChild(logoSpan);
+        logoContainer.appendChild(logoBtn);
+
+        const topLeft = mapRef.current.getContainer().querySelector(".mapboxgl-ctrl-top-left");
+        if (topLeft) topLeft.appendChild(logoContainer);
       } else {
         geocoderEl.addEventListener("click", () => {
           const input = geocoderEl.querySelector("input");
@@ -2830,36 +2886,21 @@ export default function Map() {
     });
     mapRef.current.addControl(nav, "top-right");
 
-    // Add hamburger menu button (or rontomap logo in embedded mode) at top-right
+    // Add menu/zoom controls at top-right
     const topRight = mapRef.current.getContainer().querySelector(".mapboxgl-ctrl-top-right");
     if (topRight) {
-      const menuContainer = document.createElement("div");
-      menuContainer.className = "mapboxgl-ctrl mapboxgl-ctrl-group ctrl-menu-container";
-
       if (isEmbeddedRef.current) {
-        // In embedded mode: show rontomap logo that opens full app
-        const url = new URL(window.location.href);
-        url.searchParams.delete("embedded");
-        url.searchParams.delete("style");
-
-        const logoBtn = document.createElement("button");
-        logoBtn.type = "button";
-        logoBtn.className = "mapboxgl-ctrl-icon";
-        logoBtn.title = "Open in RontoMap";
-        logoBtn.setAttribute("aria-label", "Open in RontoMap");
-        logoBtn.addEventListener("click", () => {
-          window.open(url.toString(), "_blank", "noopener,noreferrer");
+        // In embedded mode: show zoom in/out controls
+        const zoomNav = new mapboxgl.NavigationControl({
+          showZoom: true,
+          showCompass: false,
         });
-
-        const logoSpan = document.createElement("span");
-        logoSpan.className = "mapboxgl-ctrl-icon";
-        logoSpan.style.cssText =
-          "background-image: url('/logo512_nobg.png') !important; background-size: 29px 29px !important;";
-
-        logoBtn.appendChild(logoSpan);
-        menuContainer.appendChild(logoBtn);
+        mapRef.current.addControl(zoomNav, "top-right");
+        topRight.insertBefore(zoomNav._container, topRight.firstChild);
       } else {
         // Normal mode: hamburger menu button
+        const menuContainer = document.createElement("div");
+        menuContainer.className = "mapboxgl-ctrl mapboxgl-ctrl-group ctrl-menu-container";
         const menuBtn = document.createElement("button");
         menuBtn.type = "button";
         menuBtn.className = "mapboxgl-ctrl-icon ctrl-menu-btn";
@@ -2869,9 +2910,8 @@ export default function Map() {
           setIsSideMenuOpen((prev) => !prev);
         });
         menuContainer.appendChild(menuBtn);
+        topRight.insertBefore(menuContainer, topRight.firstChild);
       }
-
-      topRight.insertBefore(menuContainer, topRight.firstChild);
     }
 
     mapRef.current.addControl(new mapboxgl.ScaleControl({ maxWidth: 100 }), "bottom-left");
@@ -2890,7 +2930,7 @@ export default function Map() {
     // Add custom className to the compass container
     if (isEmbeddedRef.current) {
       nav._container.style.position = "absolute";
-      nav._container.style.top = "46px";
+      nav._container.style.top = "82px";
       nav._container.style.right = "0px";
     } else {
       nav._container.classList.add("ctrl-compass-container");
@@ -3454,6 +3494,46 @@ export default function Map() {
     return () => el.classList.remove("feature-glow");
   }, [markerMenu]);
 
+  // Glow feature when feature panel is open
+  useEffect(() => {
+    if (!selectedFeature || !mapRef.current) return;
+    const map = mapRef.current;
+    const glowEls = [];
+    if (selectedFeature.type === "marker") {
+      const el = selectedFeature.marker.getElement();
+      el.classList.add("feature-glow");
+      glowEls.push(el);
+      return () => glowEls.forEach((el) => el.classList.remove("feature-glow"));
+    }
+    if (selectedFeature.type === "path") {
+      const path = selectedFeature.path;
+      const layerId = path.layerId;
+      if (map.getLayer(layerId)) {
+        map.setPaintProperty(layerId, "line-width", 6);
+        map.setPaintProperty(layerId, "line-opacity", 0.8);
+      }
+      path.vertices.forEach((v) => {
+        const el = v.marker.getElement();
+        el.classList.add("feature-glow");
+        glowEls.push(el);
+      });
+      if (path.sights) {
+        path.sights.forEach((m) => {
+          const el = m.getElement();
+          el.classList.add("feature-glow");
+          glowEls.push(el);
+        });
+      }
+      return () => {
+        if (map.getLayer(layerId)) {
+          map.setPaintProperty(layerId, "line-width", ["coalesce", ["get", "width"], 3]);
+          map.setPaintProperty(layerId, "line-opacity", 1);
+        }
+        glowEls.forEach((el) => el.classList.remove("feature-glow"));
+      };
+    }
+  }, [selectedFeature]);
+
   // Reposition marker menu on window resize or map move
   useEffect(() => {
     if (!markerMenu) return;
@@ -3785,6 +3865,146 @@ export default function Map() {
     namingMarkerRef.current = markerMenu.marker;
     setMarkerMenu(null);
     setNameAlert(true);
+  };
+
+  // === Feature panel action handlers ===
+  const handleFeatureFlyTo = () => {
+    if (!selectedFeature) return;
+    const map = mapRef.current;
+    if (selectedFeature.type === "marker") {
+      const marker = selectedFeature.marker;
+      if (marker._savedView) {
+        map.flyTo({ center: marker.getLngLat(), zoom: marker._savedView.zoom, pitch: marker._savedView.pitch, bearing: marker._savedView.bearing, duration: 1500 });
+      } else {
+        map.flyTo({ center: marker.getLngLat(), zoom: 18, duration: 1500 });
+      }
+    } else if (selectedFeature.type === "path") {
+      const path = selectedFeature.path;
+      if (path.savedView) {
+        map.flyTo({ center: path.savedView.center, zoom: path.savedView.zoom, pitch: map.getPitch(), bearing: map.getBearing(), duration: 1500 });
+      } else if (path.vertices.length > 0) {
+        const bounds = new mapboxgl.LngLatBounds();
+        if (path.snappedSegments) {
+          path.snappedSegments.forEach((seg) => seg.coords.forEach((c) => bounds.extend(c)));
+        } else {
+          path.vertices.forEach((v) => bounds.extend(v.lngLat));
+        }
+        map.fitBounds(bounds, { padding: 60, bearing: map.getBearing(), pitch: map.getPitch(), duration: 1500 });
+      }
+    }
+  };
+
+  const handleFeatureCenterTo = () => {
+    if (!selectedFeature) return;
+    if (selectedFeature.type === "marker") {
+      mapRef.current.easeTo({ center: selectedFeature.marker.getLngLat(), duration: 500 });
+    } else if (selectedFeature.type === "path") {
+      const path = selectedFeature.path;
+      if (path.vertices.length === 0) return;
+      const start = path.vertices[0].lngLat;
+      const end = path.vertices[path.vertices.length - 1].lngLat;
+      mapRef.current.easeTo({ center: [(start[0] + end[0]) / 2, (start[1] + end[1]) / 2], duration: 500 });
+    }
+  };
+
+  const handleFeatureNavigateTo = () => {
+    if (!selectedFeature) return;
+    if (selectedFeature.type === "marker") {
+      const pos = selectedFeature.marker.getLngLat();
+      startNavigation([pos.lng, pos.lat]);
+    } else if (selectedFeature.type === "path") {
+      const path = selectedFeature.path;
+      if (path.vertices.length === 0) return;
+      startNavigation(path.vertices[0].lngLat);
+    }
+    setSelectedFeature(null);
+  };
+
+  const handleFeatureShare = () => {
+    if (!selectedFeature) return;
+    const center = mapRef.current.getCenter();
+    const zoom = mapRef.current.getZoom();
+    const bearing = mapRef.current.getBearing();
+    const pitch = mapRef.current.getPitch();
+    if (selectedFeature.type === "marker") {
+      const ll = selectedFeature.marker.getLngLat();
+      const params = new URLSearchParams({
+        lat: center.lat.toFixed(6), long: center.lng.toFixed(6),
+        zoom: zoom.toFixed(2), bearing: bearing.toFixed(1), pitch: pitch.toFixed(1),
+        marker: selectedFeature.marker._markerName
+          ? `${ll.lat.toFixed(6)}-${ll.lng.toFixed(6)}-${encodeURIComponent(selectedFeature.marker._markerName)}`
+          : `${ll.lat.toFixed(6)}-${ll.lng.toFixed(6)}`,
+      });
+      navigator.clipboard.writeText(`https://rontomap.web.app/?${params}`);
+      setToastMsg("Link copied.");
+    } else if (selectedFeature.type === "path") {
+      const path = selectedFeature.path;
+      if (path.vertices.length === 0) return;
+      const start = path.vertices[0].lngLat;
+      const params = new URLSearchParams({
+        lat: start[1].toFixed(6), long: start[0].toFixed(6),
+        zoom: zoom.toFixed(2), bearing: bearing.toFixed(1), pitch: pitch.toFixed(1),
+      });
+      navigator.clipboard.writeText(`https://rontomap.web.app/?${params}`);
+      setToastMsg("Link copied.");
+    }
+    setTimeout(() => setToastMsg(null), 2000);
+  };
+
+  const handleFeatureTrace = () => {
+    if (!selectedFeature || selectedFeature.type !== "path") return;
+    const path = selectedFeature.path;
+    if (!path || path.vertices.length < 2) return;
+    const ctrl = locationControlRef.current;
+    if (!ctrl || ctrl._lastPostionLat == null || ctrl._lastPostionLong == null) {
+      setToastMsg("Enable location to trace path.");
+      setTimeout(() => setToastMsg(null), 3000);
+      return;
+    }
+    const userPos = [ctrl._lastPostionLong, ctrl._lastPostionLat];
+    const startPos = path.vertices[0].lngLat;
+    const dist = haversineDistance([userPos, startPos]);
+    if (dist > 50) {
+      setToastMsg("You need to be near the path start point.");
+      setTimeout(() => setToastMsg(null), 3000);
+      return;
+    }
+    setSelectedFeature(null);
+    confirmTracePath(path.roadSnap ?? null, path);
+  };
+
+  // Bottom sheet drag handlers (portrait mode)
+  const handleSheetDragStart = (e) => {
+    sheetDragRef.current.startY = e.touches[0].clientY;
+    sheetDragRef.current.dragging = true;
+    if (featurePanelRef.current) featurePanelRef.current.style.transition = "none";
+  };
+  const handleSheetDragMove = (e) => {
+    if (!sheetDragRef.current.dragging || !featurePanelRef.current) return;
+    const deltaY = e.touches[0].clientY - sheetDragRef.current.startY;
+    const panel = featurePanelRef.current;
+    if (isSheetExpanded) {
+      // Expanded: allow dragging down only
+      if (deltaY > 0) panel.style.transform = `translateY(${deltaY}px)`;
+    } else {
+      // Peek: allow dragging up only
+      const peekTranslate = panel.offsetHeight - 140;
+      const newTranslate = Math.max(0, peekTranslate + deltaY);
+      panel.style.transform = `translateY(${newTranslate}px)`;
+    }
+  };
+  const handleSheetDragEnd = (e) => {
+    if (!sheetDragRef.current.dragging || !featurePanelRef.current) return;
+    sheetDragRef.current.dragging = false;
+    const panel = featurePanelRef.current;
+    panel.style.transition = "";
+    panel.style.transform = "";
+    const deltaY = e.changedTouches[0].clientY - sheetDragRef.current.startY;
+    if (isSheetExpanded) {
+      if (deltaY > 60) setIsSheetExpanded(false); // dragged down enough → collapse
+    } else {
+      if (deltaY < -60) setIsSheetExpanded(true); // dragged up enough → expand
+    }
   };
 
   const handleCenterHere = () => {
@@ -5578,8 +5798,63 @@ export default function Map() {
           )}
         </div>
       )}
+      {selectedFeature && (
+        <>
+          <div className="feature-panel-overlay" onClick={() => setSelectedFeature(null)} />
+          <div
+            ref={featurePanelRef}
+            className={`feature-panel${idMapStyle === "rontomap_streets_dark" ? " feature-panel-dark" : ""}${isSheetExpanded ? " feature-panel-expanded" : ""}`}
+          >
+            <div
+              className="feature-panel-handle"
+              onTouchStart={handleSheetDragStart}
+              onTouchMove={handleSheetDragMove}
+              onTouchEnd={handleSheetDragEnd}
+              onClick={() => setIsSheetExpanded((v) => !v)}
+            >
+              <div className="feature-panel-handle-bar" />
+            </div>
+            <div className="feature-panel-actions">
+              <button onClick={handleFeatureFlyTo} title="Fly to">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>
+              </button>
+              <button onClick={handleFeatureCenterTo} title="Center to">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/></svg>
+              </button>
+              <button onClick={handleFeatureNavigateTo} title="Navigate to">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg>
+              </button>
+              <button onClick={handleFeatureShare} title="Share">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+              </button>
+              {selectedFeature.type === "path" && (
+                <button onClick={handleFeatureTrace} title="Trace path">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 19L19 5"/><polyline points="15 5 19 5 19 9"/><circle cx="5" cy="19" r="2"/></svg>
+                </button>
+              )}
+            </div>
+            <div className="feature-panel-name">
+              {selectedFeature.type === "marker"
+                ? selectedFeature.marker._markerName || (selectedFeature.marker._sightPath ? "Sight" : "Marker")
+                : selectedFeature.path.startName || "Path"}
+            </div>
+            <div className="feature-panel-details">
+              {selectedFeature.type === "marker" && (
+                <div className="feature-panel-coords">
+                  {selectedFeature.marker.getLngLat().lat.toFixed(6)}, {selectedFeature.marker.getLngLat().lng.toFixed(6)}
+                </div>
+              )}
+              {selectedFeature.type === "path" && selectedFeature.path.vertices.length > 0 && (
+                <div className="feature-panel-coords">
+                  {selectedFeature.path.vertices[0].lngLat[1].toFixed(6)}, {selectedFeature.path.vertices[0].lngLat[0].toFixed(6)}
+                </div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
       {toastMsg && (
-        <div className={`toast-msg${idMapStyle === "rontomap_streets_dark" ? " toast-msg-dark" : ""}`}>{toastMsg}</div>
+        <div className={`toast-msg${idMapStyle === "rontomap_streets_dark" ? " toast-msg-dark" : ""}${selectedFeature ? " toast-above-panel" : ""}`}>{toastMsg}</div>
       )}
       <div
         ref={mapContainerRef}
