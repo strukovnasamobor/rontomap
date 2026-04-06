@@ -1,5 +1,7 @@
-? recording path actions and info
-- left click on map not on feature, menu options sync with left/right click options
+? test recording path actions and info
+? left click on map not on feature, menu options sync with left/right click options, action ordering, left click in embeded (cursor icon),
+dragging option
+- when detail panel is shown alow map moving and interaction, on mobile show above navigation buttons
 
 OFLINE MAPS AND NAVIGATION
 - context menu option download, update, delete

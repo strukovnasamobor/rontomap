@@ -876,13 +876,6 @@
   }
 }
 
-@media (orientation: portrait) {
-  .toast-above-panel {
-    bottom: calc(env(safe-area-inset-bottom) + 156px) !important;
-    z-index: 1004 !important;
-  }
-}
-
 .toast-msg-dark {
   background: white;
   color: #333;

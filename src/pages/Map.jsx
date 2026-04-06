@@ -3534,6 +3534,30 @@ export default function Map() {
     }
   }, [selectedFeature]);
 
+  // Dynamic toast position: 10px above feature panel in portrait
+  const [toastBottom, setToastBottom] = useState(null);
+  useEffect(() => {
+    if (!selectedFeature || !featurePanelRef.current) {
+      setToastBottom(null);
+      return;
+    }
+    const measure = () => {
+      if (!featurePanelRef.current) return;
+      const rect = featurePanelRef.current.getBoundingClientRect();
+      const isPortrait = window.matchMedia("(orientation: portrait)").matches;
+      if (isPortrait) {
+        setToastBottom(window.innerHeight - rect.top + 10);
+      } else {
+        setToastBottom(null);
+      }
+    };
+    // Measure after CSS transition (0.3s)
+    const tid = setTimeout(measure, 320);
+    // Also measure immediately for drag-end snaps
+    measure();
+    return () => clearTimeout(tid);
+  }, [selectedFeature, isSheetExpanded]);
+
   // Reposition marker menu on window resize or map move
   useEffect(() => {
     if (!markerMenu) return;
@@ -5854,7 +5878,7 @@ export default function Map() {
         </>
       )}
       {toastMsg && (
-        <div className={`toast-msg${idMapStyle === "rontomap_streets_dark" ? " toast-msg-dark" : ""}${selectedFeature ? " toast-above-panel" : ""}`}>{toastMsg}</div>
+        <div className={`toast-msg${idMapStyle === "rontomap_streets_dark" ? " toast-msg-dark" : ""}`} style={toastBottom != null ? { bottom: toastBottom, zIndex: 1004 } : undefined}>{toastMsg}</div>
       )}
       <div
         ref={mapContainerRef}
