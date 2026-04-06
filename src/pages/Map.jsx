@@ -101,6 +101,7 @@ export default function Map() {
   const [markerMenu, setMarkerMenu] = useState(null); // { marker }
   const [menuPos, setMenuPos] = useState({ x: 0, y: 0 });
   const [mapClickMenu, setMapClickMenu] = useState(null); // { lngLat, x, y }
+  const [isSideMenuOpen, setIsSideMenuOpen] = useState(false);
 
   const namingMarkerRef = useRef(null);
   const createMarkerRef = useRef(null);
@@ -2744,35 +2745,8 @@ export default function Map() {
     const geocoderEl = document.querySelector(".mapboxgl-ctrl-geocoder");
     if (geocoderEl) {
       if (isEmbeddedRef.current) {
-        // In embedded mode, hide geocoder and show logo link to full Rontomap
+        // In embedded mode, hide geocoder (logo is added at top-right later)
         geocoderEl.style.display = "none";
-
-        const url = new URL(window.location.href);
-        url.searchParams.delete("embedded");
-        url.searchParams.delete("style");
-
-        const logoContainer = document.createElement("div");
-        logoContainer.className = "mapboxgl-ctrl mapboxgl-ctrl-group rontomap-logo";
-
-        const logoBtn = document.createElement("button");
-        logoBtn.type = "button";
-        logoBtn.className = "mapboxgl-ctrl-icon";
-        logoBtn.title = "Open in RontoMap";
-        logoBtn.setAttribute("aria-label", "Open in RontoMap");
-        logoBtn.addEventListener("click", () => {
-          window.open(url.toString(), "_blank", "noopener,noreferrer");
-        });
-
-        const logoSpan = document.createElement("span");
-        logoSpan.className = "mapboxgl-ctrl-icon";
-        logoSpan.style.cssText =
-          "background-image: url('/logo512_nobg.png') !important; background-size: 29px 29px !important;";
-
-        logoBtn.appendChild(logoSpan);
-        logoContainer.appendChild(logoBtn);
-
-        const bottomRightCtrl = mapRef.current.getContainer().querySelector(".mapboxgl-ctrl-bottom-right");
-        if (bottomRightCtrl) bottomRightCtrl.appendChild(logoContainer);
       } else {
         geocoderEl.addEventListener("click", () => {
           const input = geocoderEl.querySelector("input");
@@ -2834,16 +2808,19 @@ export default function Map() {
     // Initialize custom location control
     locationControlRef.current = new LocationControl(geolocateRef.current, mapRef.current);
     mapRef.current.addControl(locationControlRef.current, "top-right");
-    // Move location buttons to bottom-right container
+    // Move location buttons and map style switcher to bottom-right container
     const locationDiv = locationControlRef.current._locationDiv;
+    const mapstyleDiv = locationControlRef.current._container.querySelector(".ctrl-mapstyle-container");
     const bottomRight = mapRef.current.getContainer().querySelector(".mapboxgl-ctrl-bottom-right");
-    if (locationDiv && bottomRight) {
-      bottomRight.appendChild(locationDiv);
+    if (bottomRight) {
+      if (locationDiv) bottomRight.appendChild(locationDiv);
+      if (mapstyleDiv) {
+        bottomRight.appendChild(mapstyleDiv);
+        mapstyleDiv.addEventListener("click", locationControlRef.current._handleClick);
+      }
     }
     if (isEmbeddedRef.current) {
       if (locationDiv) locationDiv.style.display = "none";
-      const mapstyleDiv = locationControlRef.current._container.querySelector(".ctrl-mapstyle-container");
-      if (mapstyleDiv) mapstyleDiv.style.display = "none";
     }
 
     // Add compass icon
@@ -2852,6 +2829,51 @@ export default function Map() {
       visualizePitch: true,
     });
     mapRef.current.addControl(nav, "top-right");
+
+    // Add hamburger menu button (or rontomap logo in embedded mode) at top-right
+    const topRight = mapRef.current.getContainer().querySelector(".mapboxgl-ctrl-top-right");
+    if (topRight) {
+      const menuContainer = document.createElement("div");
+      menuContainer.className = "mapboxgl-ctrl mapboxgl-ctrl-group ctrl-menu-container";
+
+      if (isEmbeddedRef.current) {
+        // In embedded mode: show rontomap logo that opens full app
+        const url = new URL(window.location.href);
+        url.searchParams.delete("embedded");
+        url.searchParams.delete("style");
+
+        const logoBtn = document.createElement("button");
+        logoBtn.type = "button";
+        logoBtn.className = "mapboxgl-ctrl-icon";
+        logoBtn.title = "Open in RontoMap";
+        logoBtn.setAttribute("aria-label", "Open in RontoMap");
+        logoBtn.addEventListener("click", () => {
+          window.open(url.toString(), "_blank", "noopener,noreferrer");
+        });
+
+        const logoSpan = document.createElement("span");
+        logoSpan.className = "mapboxgl-ctrl-icon";
+        logoSpan.style.cssText =
+          "background-image: url('/logo512_nobg.png') !important; background-size: 29px 29px !important;";
+
+        logoBtn.appendChild(logoSpan);
+        menuContainer.appendChild(logoBtn);
+      } else {
+        // Normal mode: hamburger menu button
+        const menuBtn = document.createElement("button");
+        menuBtn.type = "button";
+        menuBtn.className = "mapboxgl-ctrl-icon ctrl-menu-btn";
+        menuBtn.title = "Menu";
+        menuBtn.setAttribute("aria-label", "Menu");
+        menuBtn.addEventListener("click", () => {
+          setIsSideMenuOpen((prev) => !prev);
+        });
+        menuContainer.appendChild(menuBtn);
+      }
+
+      topRight.insertBefore(menuContainer, topRight.firstChild);
+    }
+
     mapRef.current.addControl(new mapboxgl.ScaleControl({ maxWidth: 100 }), "bottom-left");
     mapRef.current.addControl(new mapboxgl.AttributionControl({ compact: true }), "bottom-left");
 
@@ -3784,14 +3806,15 @@ export default function Map() {
     setMapClickMenu(null);
   };
 
-  const handleStartPathCreation = () => {
+  const handleStartPathCreation = (overrideLngLat) => {
     if (isRecordingTrackRef.current) {
       setMapClickMenu(null);
       setToastMsg("Stop recording first.");
       setTimeout(() => setToastMsg(null), 2000);
       return;
     }
-    const lngLat = [mapClickMenu.lngLat.lng, mapClickMenu.lngLat.lat];
+    const ll = overrideLngLat || mapClickMenu.lngLat;
+    const lngLat = [ll.lng, ll.lat];
     setMapClickMenu(null);
 
     // Finish any active unfinished path
@@ -5307,6 +5330,29 @@ export default function Map() {
               {markerMenu.marker.isDraggable() ? "Disable drag" : "Enable drag"}
             </button>
             <button onClick={handleDeleteMarker}>{markerMenu.marker._sightPath ? "Delete sight" : "Delete marker"}</button>
+          </div>
+        </>
+      )}
+      {isSideMenuOpen && (
+        <>
+          <div className="side-menu-overlay" onClick={() => setIsSideMenuOpen(false)} />
+          <div className={`side-menu${idMapStyle === "rontomap_streets_dark" ? " side-menu-dark" : ""}`}>
+            <button onClick={() => {
+              setIsSideMenuOpen(false);
+              handleStartPathCreation(mapRef.current.getCenter());
+            }}>Start path creation</button>
+            {isRecordingTrack ? (
+              <button onClick={() => { setIsSideMenuOpen(false); handleStopTrackRecording(); }}>Stop path recording</button>
+            ) : (
+              <button onClick={() => { setIsSideMenuOpen(false); handleEnterRecordingMode(); }}>Path recording</button>
+            )}
+            <div className="side-menu-separator" />
+            <button onClick={() => { setIsSideMenuOpen(false); handleImportFeatures(); }}>Import features</button>
+            <button onClick={() => { setIsSideMenuOpen(false); handleExportAll(); }}>Export features</button>
+            <button onClick={() => { setIsSideMenuOpen(false); handleCopyFeaturesCode(); }}>Copy features code</button>
+            <button onClick={() => { setIsSideMenuOpen(false); handleCopyFeatures(); }}>Copy link to features</button>
+            <div className="side-menu-separator" />
+            <button onClick={() => { setIsSideMenuOpen(false); handleDeleteAllFeatures(); }}>Delete all features</button>
           </div>
         </>
       )}

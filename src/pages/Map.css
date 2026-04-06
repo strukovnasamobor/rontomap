@@ -125,6 +125,20 @@
   right: env(safe-area-inset-right) !important;
 }
 
+.mapboxgl-ctrl-bottom-right {
+  display: flex !important;
+  flex-direction: column-reverse !important;
+  align-items: flex-end !important;
+}
+
+.mapboxgl-ctrl-bottom-right .ctrl-mapstyle-container {
+  order: 1;
+}
+
+.mapboxgl-ctrl-bottom-right .ctrl-location-container {
+  order: 2;
+}
+
 .mapboxgl-ctrl-bottom-left {
   display: flex;
   align-items: flex-end;
@@ -164,9 +178,9 @@
   background: #1a1a1a !important;
 }
 .map-style-dark .mapboxgl-ctrl-group button .mapboxgl-ctrl-icon {
-  filter: invert(1) !important;
+  filter: invert(0.8) !important;
 }
-.map-style-dark .rontomap-logo button .mapboxgl-ctrl-icon {
+.map-style-dark .ctrl-menu-container button .mapboxgl-ctrl-icon {
   filter: none !important;
 }
 .map-style-dark .mapboxgl-ctrl-group button.mapboxgl-ctrl-compass  .mapboxgl-ctrl-icon {
@@ -212,20 +226,39 @@
   border-top: none !important;
 }
 
-.ctrl-mapstyle-container {
-  position: absolute;
-  top: 0px;
-  right: 0px;
+.mapboxgl-ctrl-group:not(:empty),
+.mapboxgl-ctrl-geocoder {
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.1) !important;
 }
 
-.ctrl-location-container {
-  box-shadow: none !important;
+.map-style-dark .mapboxgl-ctrl-group:not(:empty),
+.map-style-dark .mapboxgl-ctrl-geocoder {
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.1) !important;
 }
 
-.ctrl-compass-container {
+.ctrl-menu-btn {
+  background: none !important;
+  border: none;
+  cursor: pointer;
+  position: relative;
+}
+.ctrl-menu-btn::before {
+  content: "";
+  display: block;
   position: absolute;
-  top: 46px;
-  right: 0px;
+  left: 9px;
+  right: 9px;
+  top: 50%;
+  height: 2px;
+  transform: translateY(-50%);
+  background: #333;
+  border-radius: 1px;
+  box-shadow: 0 -6px 0 #333, 0 6px 0 #333;
+}
+
+.map-style-dark .ctrl-menu-btn::before {
+  background: #ccc;
+  box-shadow: 0 -6px 0 #ccc, 0 6px 0 #ccc;
 }
 
 .mapboxgl-ctrl-group button {
@@ -375,6 +408,78 @@
 
 .marker-menu-dark button:hover {
   background: #2a2a2a;
+}
+
+/* Side menu panel */
+.side-menu-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1002;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.side-menu {
+  position: fixed;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 260px;
+  max-width: 80vw;
+  background: white;
+  z-index: 1003;
+  padding-top: calc(env(safe-area-inset-top, 0px) + 12px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  overflow-y: auto;
+  box-shadow: -2px 0 12px rgba(0, 0, 0, 0.15);
+  animation: side-menu-slide-in 0.2s ease-out;
+}
+
+@keyframes side-menu-slide-in {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+.side-menu button {
+  display: block;
+  width: 100%;
+  padding: 12px 20px;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  color: #333;
+}
+
+.side-menu button:hover {
+  background: #f0f0f0;
+}
+
+.side-menu-separator {
+  height: 1px;
+  background: rgba(0, 0, 0, 0.1);
+  margin: 4px 12px;
+}
+
+.side-menu-dark {
+  background: #1a1a1a;
+  box-shadow: -2px 0 12px rgba(0, 0, 0, 0.4);
+}
+
+.side-menu-dark button {
+  color: white;
+}
+
+.side-menu-dark button:hover {
+  background: #2a2a2a;
+}
+
+.side-menu-dark .side-menu-separator {
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .map-style-dark .marker-label,

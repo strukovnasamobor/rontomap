@@ -1,4 +1,4 @@
-? recording actions and info
+? recording path actions and info
 
 OFLINE MAPS AND NAVIGATION
 - context menu option download, update, delete
