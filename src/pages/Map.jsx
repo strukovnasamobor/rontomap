@@ -145,6 +145,19 @@ export default function Map() {
   const trackPathRef = useRef(null);
   const trackCoordsRef = useRef([]);
   const bgWatcherIdRef = useRef(null);
+  const [isRecordingMode, setIsRecordingMode] = useState(false);
+  const isRecordingModeRef = useRef(false);
+  const [isRecordingPaused, setIsRecordingPaused] = useState(false);
+  const isRecordingPausedRef = useRef(false);
+  const [isRecordingStarted, setIsRecordingStarted] = useState(false);
+  const recordingStartTimeRef = useRef(null);
+  const recordingPauseAccumulatedRef = useRef(0);
+  const recordingPauseStartRef = useRef(null);
+  const [recordingElapsed, setRecordingElapsed] = useState(0);
+  const recordingTimerRef = useRef(null);
+  const [recordingDistance, setRecordingDistance] = useState(0);
+  const [recordingSnapMode, setRecordingSnapMode] = useState(null);
+  const handlePauseRecordingRef = useRef(null);
   const [stopRecordingAlert, setStopRecordingAlert] = useState(false);
   const [routeDistance, setNavRouteDistance] = useState(null);
   const [routeDuration, setNavRouteDuration] = useState(null);
@@ -1632,10 +1645,18 @@ export default function Map() {
             await this._handleChangeMapStyle("rontomap_streets_dark");
             break;
           case "track_location":
+            if (isRecordingModeRef.current && !isRecordingPausedRef.current && handlePauseRecordingRef.current) {
+              handlePauseRecordingRef.current();
+              return;
+            }
             this.hideTrackingIcons();
             await this._handleTrackLocation();
             break;
           case "track_bearing":
+            if (isRecordingModeRef.current && !isRecordingPausedRef.current && handlePauseRecordingRef.current) {
+              handlePauseRecordingRef.current();
+              return;
+            }
             this.hideTrackingIcons();
             await this._handleTrackBearing();
             break;
@@ -2319,8 +2340,10 @@ export default function Map() {
 
       // === Route Recording (web only — native uses BackgroundGeolocation watcher) ===
       if (!Capacitor.isNativePlatform() && isRecordingTrackRef.current && trackPathRef.current) {
+        if (isRecordingPausedRef.current) return;
         const recCoord = [long, lat];
         trackCoordsRef.current.push(recCoord);
+        setRecordingDistance(haversineDistance(trackCoordsRef.current));
         const recPath = trackPathRef.current;
         const source = mapRef.current?.getSource(recPath.sourceId);
         if (source && trackCoordsRef.current.length >= 2) {
@@ -3147,6 +3170,12 @@ export default function Map() {
     isRecordingTrackRef.current = isRecordingTrack;
   }, [isRecordingTrack]);
   useEffect(() => {
+    isRecordingModeRef.current = isRecordingMode;
+  }, [isRecordingMode]);
+  useEffect(() => {
+    isRecordingPausedRef.current = isRecordingPaused;
+  }, [isRecordingPaused]);
+  useEffect(() => {
     cancelNavigationAlertRef.current = cancelNavigationAlert;
   }, [cancelNavigationAlert]);
   useEffect(() => {
@@ -3178,6 +3207,16 @@ export default function Map() {
         e.preventDefault();
         setCancelPathAlert(false);
         confirmCancelPath();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey && isRecordingModeRef.current) {
+        e.preventDefault();
+        undoRecordingPath();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && (e.key === "Z" || e.key === "y") && isRecordingModeRef.current) {
+        e.preventDefault();
+        redoRecordingPath();
         return;
       }
       if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey && isPathModeRef.current) {
@@ -3815,10 +3854,8 @@ export default function Map() {
     }, 2000);
   };
 
-  const handleRecordTrack = async () => {
+  const handleEnterRecordingMode = () => {
     setMapClickMenu(null);
-
-    const ctrl = locationControlRef.current;
 
     // Finish any active unfinished path
     if (activePathRef.current && !activePathRef.current.isFinished) {
@@ -3836,7 +3873,28 @@ export default function Map() {
           m.getElement().classList.remove("active-path-feature");
           m.setDraggable(false);
         });
+      activePathRef.current = null;
+      isPathModeRef.current = false;
+      setIsPathMode(false);
     }
+
+    setIsRecordingMode(true);
+    isRecordingModeRef.current = true;
+    setIsRecordingRoute(true);
+    setIsRecordingStarted(false);
+    setIsRecordingPaused(false);
+    isRecordingPausedRef.current = false;
+    setRecordingElapsed(0);
+    setRecordingDistance(0);
+    setRecordingSnapMode(null);
+    pathUndoStackRef.current = [];
+    pathRedoStackRef.current = [];
+    setCanUndo(false);
+    setCanRedo(false);
+  };
+
+  const handleStartRecording = async () => {
+    const ctrl = locationControlRef.current;
 
     // Request location permissions
     if (Capacitor.isNativePlatform()) {
@@ -3891,6 +3949,7 @@ export default function Map() {
       midpoints: [],
       isFinished: false,
       isTrack: true,
+      roadSnap: recordingSnapMode,
     };
     pathsRef.current.push(newPath);
     trackPathRef.current = newPath;
@@ -3909,10 +3968,21 @@ export default function Map() {
     // Activate wake lock for continuous GPS
     await ctrl._requestWakeLock();
 
-    setIsRecordingRoute(true);
+    setIsRecordingStarted(true);
+
+    // Start elapsed timer
+    recordingStartTimeRef.current = Date.now();
+    recordingPauseAccumulatedRef.current = 0;
+    recordingPauseStartRef.current = null;
+    recordingTimerRef.current = setInterval(() => {
+      const now = Date.now();
+      const totalPaused = recordingPauseAccumulatedRef.current +
+        (recordingPauseStartRef.current ? now - recordingPauseStartRef.current : 0);
+      const elapsedMs = now - recordingStartTimeRef.current - totalPaused;
+      setRecordingElapsed(Math.max(0, Math.floor(elapsedMs / 1000)));
+    }, 1000);
 
     // On native platforms, start a background geolocation watcher
-    // that keeps tracking even when the app is backgrounded
     if (Capacitor.isNativePlatform()) {
       const watcherId = await BackgroundGeolocation.addWatcher(
         {
@@ -3924,9 +3994,10 @@ export default function Map() {
         },
         (location, error) => {
           if (error) return;
-          if (!location || !isRecordingTrackRef.current || !trackPathRef.current) return;
+          if (!location || !isRecordingTrackRef.current || isRecordingPausedRef.current || !trackPathRef.current) return;
           const coord = [location.longitude, location.latitude];
           trackCoordsRef.current.push(coord);
+          setRecordingDistance(haversineDistance(trackCoordsRef.current));
           const path = trackPathRef.current;
           const source = mapRef.current?.getSource(path.sourceId);
           if (source && trackCoordsRef.current.length >= 2) {
@@ -3954,13 +4025,93 @@ export default function Map() {
       bgWatcherIdRef.current = watcherId;
     }
 
-    setToastMsg("Recording track...");
+    setToastMsg("Click tracking icon to pause.");
     setTimeout(() => setToastMsg(null), 3000);
+  };
+
+  const handlePauseRecording = () => {
+    setIsRecordingPaused(true);
+    isRecordingPausedRef.current = true;
+    recordingPauseStartRef.current = Date.now();
+    // Push undo snapshot on pause
+    if (trackPathRef.current) {
+      pathUndoStackRef.current.push({ trackCoords: trackCoordsRef.current.map((c) => [...c]) });
+      pathRedoStackRef.current = [];
+      setCanUndo(true);
+      setCanRedo(false);
+    }
+    setToastMsg("Recording paused.");
+    setTimeout(() => setToastMsg(null), 2000);
+  };
+  handlePauseRecordingRef.current = handlePauseRecording;
+
+  const handleResumeRecording = () => {
+    if (recordingPauseStartRef.current) {
+      recordingPauseAccumulatedRef.current += Date.now() - recordingPauseStartRef.current;
+      recordingPauseStartRef.current = null;
+    }
+    setIsRecordingPaused(false);
+    isRecordingPausedRef.current = false;
+    setToastMsg("Recording resumed. Click tracking icon to pause.");
+    setTimeout(() => setToastMsg(null), 2000);
+  };
+
+  const undoRecordingPath = () => {
+    if (!trackPathRef.current || pathUndoStackRef.current.length === 0) return;
+    pathRedoStackRef.current.push({ trackCoords: trackCoordsRef.current.map((c) => [...c]) });
+    const snapshot = pathUndoStackRef.current.pop();
+    trackCoordsRef.current = snapshot.trackCoords.map((c) => [...c]);
+    setRecordingDistance(haversineDistance(trackCoordsRef.current));
+    const source = mapRef.current?.getSource(trackPathRef.current.sourceId);
+    if (source && trackCoordsRef.current.length >= 2) {
+      source.setData({
+        type: "FeatureCollection",
+        features: [pathHelpersRef.current.makeFeature(trackCoordsRef.current, "#0000ff")],
+      });
+    } else if (source) {
+      source.setData({ type: "FeatureCollection", features: [] });
+    }
+    setCanUndo(pathUndoStackRef.current.length > 0);
+    setCanRedo(true);
+  };
+
+  const redoRecordingPath = () => {
+    if (!trackPathRef.current || pathRedoStackRef.current.length === 0) return;
+    pathUndoStackRef.current.push({ trackCoords: trackCoordsRef.current.map((c) => [...c]) });
+    const snapshot = pathRedoStackRef.current.pop();
+    trackCoordsRef.current = snapshot.trackCoords.map((c) => [...c]);
+    setRecordingDistance(haversineDistance(trackCoordsRef.current));
+    const source = mapRef.current?.getSource(trackPathRef.current.sourceId);
+    if (source && trackCoordsRef.current.length >= 2) {
+      source.setData({
+        type: "FeatureCollection",
+        features: [pathHelpersRef.current.makeFeature(trackCoordsRef.current, "#0000ff")],
+      });
+    } else if (source) {
+      source.setData({ type: "FeatureCollection", features: [] });
+    }
+    setCanUndo(true);
+    setCanRedo(pathRedoStackRef.current.length > 0);
   };
 
   const handleStopTrackRecording = () => {
     setMapClickMenu(null);
-    if (!trackPathRef.current) return;
+    // If recording was never started, just exit recording mode
+    if (!trackPathRef.current) {
+      setIsRecordingMode(false);
+      isRecordingModeRef.current = false;
+      setIsRecordingRoute(false);
+      setIsRecordingStarted(false);
+      setIsRecordingPaused(false);
+      isRecordingPausedRef.current = false;
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
+      setRecordingElapsed(0);
+      setRecordingDistance(0);
+      return;
+    }
     setStopRecordingAlert(true);
   };
 
@@ -4017,6 +4168,26 @@ export default function Map() {
     setIsRecordingRoute(false);
     trackPathRef.current = null;
     trackCoordsRef.current = [];
+
+    // Clean up recording mode state
+    setIsRecordingMode(false);
+    isRecordingModeRef.current = false;
+    setIsRecordingStarted(false);
+    setIsRecordingPaused(false);
+    isRecordingPausedRef.current = false;
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+    recordingStartTimeRef.current = null;
+    recordingPauseAccumulatedRef.current = 0;
+    recordingPauseStartRef.current = null;
+    setRecordingElapsed(0);
+    setRecordingDistance(0);
+    pathUndoStackRef.current = [];
+    pathRedoStackRef.current = [];
+    setCanUndo(false);
+    setCanRedo(false);
 
     setToastMsg("Track recorded.");
     setTimeout(() => setToastMsg(null), 3000);
@@ -5187,9 +5358,9 @@ export default function Map() {
                 <button onClick={handleAddMarkerFromMenu}>Add marker</button>
                 <button onClick={handleStartPathCreation}>Start path creation</button>
                 {isRecordingTrack ? (
-                  <button onClick={handleStopTrackRecording}>Stop track recording</button>
+                  <button onClick={handleStopTrackRecording}>Stop path recording</button>
                 ) : (
-                  <button onClick={handleRecordTrack}>Record track</button>
+                  <button onClick={handleEnterRecordingMode}>Path recording</button>
                 )}
                 <button onClick={handleCopyFeaturesCode}>Copy features code</button>
                 <button onClick={handleCopyFeatures}>Copy link to features</button>
@@ -5311,6 +5482,52 @@ export default function Map() {
                   )}
                 </>
               )}
+            </div>
+          )}
+        </div>
+      )}
+      {isRecordingMode && (
+        <div className={`path-actions${idMapStyle === "rontomap_streets_dark" ? " path-actions-dark" : ""}`}>
+          <div className="path-actions-group">
+            <button className="undo-btn" disabled={!canUndo} onClick={undoRecordingPath}>
+              Undo
+            </button>
+            <button className="redo-btn" disabled={!canRedo} onClick={redoRecordingPath}>
+              Redo
+            </button>
+            <button className="cancel-btn" onClick={handleStopTrackRecording}>
+              Stop
+            </button>
+            {!isRecordingStarted ? (
+              <button className="save-btn" onClick={handleStartRecording}>
+                Start
+              </button>
+            ) : (
+              <button
+                className="save-btn"
+                onClick={isRecordingPaused ? handleResumeRecording : handlePauseRecording}
+              >
+                {isRecordingPaused ? "Resume" : "Pause"}
+              </button>
+            )}
+          </div>
+          <div className="snap-toggle">
+            {[null, "foot", "bike", "car"].map((mode) => (
+              <button
+                key={mode ?? "none"}
+                className={recordingSnapMode === mode ? "active" : ""}
+                disabled={isRecordingStarted}
+                onClick={() => setRecordingSnapMode(mode)}
+              >
+                {mode === null ? "Free" : mode === "foot" ? "Foot" : mode === "bike" ? "Bike" : "Car"}
+              </button>
+            ))}
+          </div>
+          {isRecordingStarted && (
+            <div className="route-info">
+              <span>{formatDistance(recordingDistance)}</span>
+              <span className="route-info-separator">&middot;</span>
+              <span>{formatDuration(recordingElapsed)}</span>
             </div>
           )}
         </div>
