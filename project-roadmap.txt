@@ -2,12 +2,21 @@ OFLINE MAPS AND NAVIGATION
 - context menu option download, update, delete
 - offline first data
 
-UI REDESIGN 
+UI DESIGN
+- top
+    - left - search icon
+    - middle - path actions
+    - right - menu & compass icon
+- bottom
+    - left - attribut icon & scale
+    - middle - bottom sheet, toast msg
+    - right - map change style & location icon
+?embedded
 - left click/tap on feature opens 
-    - on landscape - left sidebar with feature details (show fly & center & navigate & share options, name, coordinates, pictures, description, path tracing)
-    - on portrait - bottom sidebar minimal (show fly & center & navigate & share options, name, coordinates, path tracing)
-                  - on swipe full bottom sidebar
-- swipe in right edge opens right sidebar
+    - on landscape - left sidebar with feature details (show fly & center & navigate & share options, name, coordinates, path tracing, pictures, description)
+    - on portrait - bottom sheet minimal (show fly & center & navigate & share options, name, coordinates, path tracing)
+                  - on swipe to up full bottom sheetr (pictures, description)
+- menu icon clicked
     - map features list and details, login, offline maps
     - organize feature collections, import/export
 
