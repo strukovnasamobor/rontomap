@@ -5630,8 +5630,8 @@ export default function Map() {
             {mapClickMenu.path ? (
               <>
                 <button onClick={handleFlyToPath}>Fly to path</button>
-                <button onClick={handleCenterToPath}>Center to path</button>
-                <button onClick={handleNavigateToPath}>Navigate to path</button>
+                <button onClick={handleCenterToPath}>Center to path start</button>
+                <button onClick={handleNavigateToPath}>Navigate to path start</button>
                 <button onClick={handleAddSight}>Add sight to path</button>
                 <button onClick={handleEditPath}>Edit path</button>
                 <button onClick={handleReversePath}>Reverse path</button>
@@ -5647,16 +5647,6 @@ export default function Map() {
                 <button onClick={handleNavigateHere}>Navigate here</button>
                 <button onClick={handleAddMarkerFromMenu}>Add marker</button>
                 <button onClick={handleStartPathCreation}>Start path creation</button>
-                {isRecordingTrack ? (
-                  <button onClick={handleStopTrackRecording}>Stop path recording</button>
-                ) : (
-                  <button onClick={handleEnterRecordingMode}>Path recording</button>
-                )}
-                <button onClick={handleCopyFeaturesCode}>Copy features code</button>
-                <button onClick={handleCopyFeatures}>Copy link to features</button>
-                <button onClick={handleImportFeatures}>Import features</button>
-                <button onClick={handleExportAll}>Export features</button>
-                <button onClick={handleDeleteAllFeatures}>Delete all features</button>
               </>
             )}
           </div>

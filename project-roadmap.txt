@@ -1,7 +1,18 @@
-? test recording path actions and info
-? left click on map not on feature, menu options sync with left/right click options, action ordering, left click in embeded (cursor icon),
-dragging option
-- when detail panel is shown alow map moving and interaction, on mobile show above navigation buttons
+- in recording path remove snapping options, on start same as start tracking user bearing then hide action icons, show toast msg, click stop tracking to pause, on stop recording show alert
+
+- when starting path creation transform context dot to a start point, when clicking on menu option path creation do not add starting point
+- when added marker open panel details, allow dragging marker only when is selected (and detail panel is opened), remove enable/disable drag context option
+- double click on feature do not open details but goes to full screen
+- when detail panel is shown allow map moving and clicking on another feature, on mobile show above navigation buttons
+- white nav bar, white nav panel detail, change in dark for dark map
+- swipe right closing menu
+- swipe left / down closing detail pane
+- exporting/embedded only path with sights - using # add mapbox built in google polyline encoding
+- long tap description of action icon
+- enable clicking on start/end point of path
+- for path show snapping, length, duration
+- action ordering and icons, new actions
+- left click is disabled in embeded mode so show cursor icon
 
 OFLINE MAPS AND NAVIGATION
 - context menu option download, update, delete
@@ -57,8 +68,8 @@ UI DESIGN & INTERACTIONS
     - on portrait - peeking bottom sheet
         - actiopn icons: fly to, center to, navigate to, share, for path - path tracing
         - name of feature
-        - for marker/sight - coordinates, for path - coordinates of start point
-- double mouse click / double tap => fullscreen enter/exit
+        - for marker/sight - coordinates, for path - snapping, length, duration
+- double left mouse click / double tap => fullscreen enter/exit
 - right mouse click / long tap on map/feature => context menu open
 - mouse wheel => zoom in/out
 - mouse over locked feature (alias cursor icon)
