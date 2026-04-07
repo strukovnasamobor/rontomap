@@ -347,27 +347,6 @@
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
 }
 
-/* Long-press / hover tooltip */
-.long-press-tooltip-wrap {
-  position: relative;
-  display: inline-flex;
-}
-
-.long-press-tooltip {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
-  background: rgba(0, 0, 0, 0.85);
-  color: white;
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-size: 12px;
-  white-space: nowrap;
-  pointer-events: none;
-  z-index: 1100;
-}
-
 /* Glow effect on selected features */
 .feature-glow {
   filter: drop-shadow(0 0 6px rgba(255, 111, 0, 0.8)) drop-shadow(0 0 3px rgba(255, 111, 0, 0.6)) !important;

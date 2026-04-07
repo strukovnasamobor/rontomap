@@ -1,15 +1,16 @@
-? SHARING LINKS & EMBEDDED CODE
-- test on mobile
-    - double click on feature do not open details but goes to full screen
-    - swipe right closing menu
-    - swipe left / down closing detail panel
-    - long tap on icons show it's name/description
-    - in recording path remove snapping options, on start recording is same as start tracking user bearing then hide action icons, 
-      show toast msg "Click stop tracking to pause recording", on stop recording show alert
+? in recording path start tracking user bearing same as clicking start/resume, on start show toast msg "Click stop tracking to pause recording". 
+  elapsed time in format hh:mm (do not count time in pause), on geolocate remove tost msg "recording paused"
 
-- action ordering, icons, new actions
+- conflicting action in parallel
+  - path creation
+  - path recording
+  - path tracing
+  - route navigation
+  - features and menu actions
+
 - white nav bar, white nav panel detail, change in dark for dark map
 - on mobile show detail panel above navigation buttons
+- action ordering, icons, new actions
 
 
 OFLINE MAPS AND NAVIGATION

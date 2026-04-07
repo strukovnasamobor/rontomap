@@ -91,6 +91,7 @@ export function collectPath(path, serializeSnappedSegments) {
     pathData.sights = path.sights.map((m) => {
       const am = { segmentIndex: m._segmentIndex, t: m._t };
       if (m._markerName) am.name = m._markerName;
+      if (m._savedView) am.savedView = m._savedView;
       return am;
     });
   }

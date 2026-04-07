@@ -86,68 +86,6 @@ const deserializeSnappedSegments = (segments) =>
     coords: seg.coords.map((c) => [c.lng, c.lat]),
   }));
 
-// Tooltip that appears on long-press (touch) or hover (mouse).
-// Wraps a single child element (typically a button) and absolutely-positions
-// the tooltip above it. The wrapped child gets `position: relative` via the wrapper span.
-function LongPressTooltip({ label, children }) {
-  const [visible, setVisible] = useState(false);
-  const timerRef = useRef(null);
-  const startPosRef = useRef(null);
-
-  const clearTimer = () => {
-    if (timerRef.current) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
-  };
-  const handleTouchStart = (e) => {
-    const t = e.touches[0];
-    startPosRef.current = { x: t.clientX, y: t.clientY };
-    clearTimer();
-    timerRef.current = setTimeout(() => {
-      setVisible(true);
-      timerRef.current = setTimeout(() => setVisible(false), 2000);
-    }, 500);
-  };
-  const handleTouchMove = (e) => {
-    if (!startPosRef.current) return;
-    const t = e.touches[0];
-    const dx = t.clientX - startPosRef.current.x;
-    const dy = t.clientY - startPosRef.current.y;
-    if (dx * dx + dy * dy > 100) {
-      clearTimer();
-      setVisible(false);
-    }
-  };
-  const handleTouchEnd = () => {
-    clearTimer();
-    setVisible(false);
-  };
-  const handleMouseEnter = () => {
-    clearTimer();
-    timerRef.current = setTimeout(() => setVisible(true), 400);
-  };
-  const handleMouseLeave = () => {
-    clearTimer();
-    setVisible(false);
-  };
-
-  return (
-    <span
-      className="long-press-tooltip-wrap"
-      onTouchStart={handleTouchStart}
-      onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
-      onTouchCancel={handleTouchEnd}
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
-    >
-      {children}
-      {visible && <span className="long-press-tooltip">{label}</span>}
-    </span>
-  );
-}
-
 export default function Map() {
   const mapRef = useRef(null);
   const mapContainerRef = useRef(null);
@@ -264,30 +202,83 @@ export default function Map() {
   const embeddedFocusedRef = useRef(false);
   const embeddedToastTimerRef = useRef(null);
 
-  // Swipe right closes the side menu
+  // Refs for finger-following swipe gestures
+  const sideMenuRef = useRef(null);
+  const sideMenuOverlayRef = useRef(null);
+
+  // Swipe right closes the side menu (finger-following)
   const sideMenuSwipe = useSwipeable({
-    onSwipedRight: () => setIsSideMenuOpen(false),
+    onSwiping: (e) => {
+      if (!sideMenuRef.current) return;
+      if (e.deltaX <= 0) return; // only rightward (closing) follows finger
+      sideMenuRef.current.style.transition = "none";
+      sideMenuRef.current.style.transform = `translateX(${e.deltaX}px)`;
+      if (sideMenuOverlayRef.current) {
+        const width = sideMenuRef.current.offsetWidth;
+        const progress = Math.min(1, e.deltaX / width);
+        sideMenuOverlayRef.current.style.transition = "none";
+        sideMenuOverlayRef.current.style.opacity = String(1 - progress);
+      }
+    },
+    onSwiped: (e) => {
+      const el = sideMenuRef.current;
+      const ov = sideMenuOverlayRef.current;
+      if (!el) return;
+      el.style.transition = "transform 0.2s ease";
+      if (ov) ov.style.transition = "opacity 0.2s ease";
+      const shouldClose = e.dir === "Right" && (e.deltaX > 80 || e.velocity > 0.5);
+      if (shouldClose) {
+        el.style.transform = "translateX(100%)";
+        if (ov) ov.style.opacity = "0";
+        setTimeout(() => {
+          setIsSideMenuOpen(false);
+        }, 200);
+      } else {
+        el.style.transform = "";
+        if (ov) ov.style.opacity = "";
+      }
+    },
     trackTouch: true,
     trackMouse: false,
-    delta: 30,
+    delta: 10,
   });
 
   // Swipe down (portrait) or left (landscape) closes the feature detail panel
   const featurePanelSwipe = useSwipeable({
-    onSwipedDown: () => {
+    onSwiping: (e) => {
       const isPortrait = window.matchMedia("(orientation: portrait)").matches;
-      if (!isPortrait) return;
-      if (isSheetExpanded) setIsSheetExpanded(false);
-      else setSelectedFeature(null);
+      if (isPortrait) return; // portrait dismissal is via the handle drag
+      if (!featurePanelRef.current) return;
+      if (e.deltaX >= 0) return; // only leftward (closing) follows finger
+      featurePanelRef.current.style.transition = "none";
+      featurePanelRef.current.style.transform = `translateX(${e.deltaX}px)`;
     },
-    onSwipedLeft: () => {
+    onSwiped: (e) => {
       const isPortrait = window.matchMedia("(orientation: portrait)").matches;
       if (isPortrait) return;
-      setSelectedFeature(null);
+      const el = featurePanelRef.current;
+      if (!el) return;
+      el.style.transition = "transform 0.2s ease";
+      const shouldClose = e.dir === "Left" && (e.deltaX < -100 || e.velocity > 0.5);
+      if (shouldClose) {
+        el.style.transform = "translateX(-100%)";
+        setTimeout(() => {
+          setSelectedFeature(null);
+          if (featurePanelRef.current) {
+            featurePanelRef.current.style.transform = "";
+            featurePanelRef.current.style.transition = "";
+          }
+        }, 200);
+      } else {
+        el.style.transform = "";
+        setTimeout(() => {
+          if (featurePanelRef.current) featurePanelRef.current.style.transition = "";
+        }, 220);
+      }
     },
     trackTouch: true,
     trackMouse: false,
-    delta: 40,
+    delta: 10,
   });
 
   const menuRefCallback = useCallback((el) => {
@@ -565,6 +556,13 @@ export default function Map() {
     const hrs = Math.floor(mins / 60);
     const rem = mins % 60;
     return rem > 0 ? `${hrs} h ${rem} min` : `${hrs} h`;
+  };
+
+  const formatRecordingDuration = (seconds) => {
+    const total = Math.max(0, Math.floor((seconds ?? 0) / 60));
+    const hrs = Math.floor(total / 60);
+    const mins = total % 60;
+    return `${String(hrs).padStart(2, "0")}:${String(mins).padStart(2, "0")}`;
   };
 
   const formatETA = (seconds) => {
@@ -3218,19 +3216,25 @@ export default function Map() {
       }
     }
 
-    // Parse optional saved_view (used by both marker and path URL formats)
+    // Parse optional saved_view (used by both marker and path URL formats).
+    // Regex-based so each field can carry an optional leading "-" (e.g. negative bearing).
     const savedViewParam = getQueryParams("saved_view");
     let parsedSavedView = null;
     if (savedViewParam) {
-      const svParts = savedViewParam.split("-").map(parseFloat);
-      if (svParts.length === 5 && !svParts.some(Number.isNaN)) {
-        parsedSavedView = {
-          lat: svParts[0],
-          lng: svParts[1],
-          zoom: svParts[2],
-          bearing: svParts[3],
-          pitch: svParts[4],
-        };
+      const m = savedViewParam.match(
+        /^(-?\d+(?:\.\d+)?)-(-?\d+(?:\.\d+)?)-(-?\d+(?:\.\d+)?)-(-?\d+(?:\.\d+)?)-(-?\d+(?:\.\d+)?)$/
+      );
+      if (m) {
+        const nums = [m[1], m[2], m[3], m[4], m[5]].map(parseFloat);
+        if (!nums.some(Number.isNaN)) {
+          parsedSavedView = {
+            lat: nums[0],
+            lng: nums[1],
+            zoom: nums[2],
+            bearing: nums[3],
+            pitch: nums[4],
+          };
+        }
       }
     }
 
@@ -3261,9 +3265,13 @@ export default function Map() {
       }
     }
 
-    // Recreate path from URL hash (vertex polyline + optional extras blob)
-    const rawHash = window.location.hash ? decodeURIComponent(window.location.hash.slice(1)) : "";
-    if (rawHash) {
+    // Recreate path from URL hash (vertex polyline + optional extras blob).
+    // Deferred until the map style is loaded — materializePathFromShape calls
+    // ensurePathLayer → map.addSource/addLayer, which throw "Style is not done loading"
+    // if invoked before the style is ready.
+    const runPathFromHash = () => {
+      const rawHash = window.location.hash ? decodeURIComponent(window.location.hash.slice(1)) : "";
+      if (!rawHash) return;
       const sepIdx = rawHash.indexOf("!");
       const vertexPolyStr = sepIdx >= 0 ? rawHash.slice(0, sepIdx) : rawHash;
       const extrasStr = sepIdx >= 0 ? rawHash.slice(sepIdx + 1) : "";
@@ -3327,7 +3335,12 @@ export default function Map() {
           snappedSegments,
           sights: sights.length ? sights : undefined,
           savedView: parsedSavedView
-            ? { zoom: parsedSavedView.zoom, bearing: parsedSavedView.bearing, pitch: parsedSavedView.pitch }
+            ? {
+                center: [parsedSavedView.lng, parsedSavedView.lat],
+                zoom: parsedSavedView.zoom,
+                bearing: parsedSavedView.bearing,
+                pitch: parsedSavedView.pitch,
+              }
             : undefined,
         };
 
@@ -3345,6 +3358,11 @@ export default function Map() {
         pathsRef.current.forEach((p) => p.vertices.forEach((v) => v.marker.setDraggable(false)));
         pathsRef.current.forEach((p) => p.sights?.forEach((m) => m.setDraggable(false)));
       }
+    };
+    if (mapRef.current.isStyleLoaded()) {
+      runPathFromHash();
+    } else {
+      mapRef.current.once("load", runPathFromHash);
     }
 
     // Recreate markers from a Firebase features collection
@@ -3733,17 +3751,20 @@ export default function Map() {
         contextDotRef.current = null;
       }
     };
-  }, [mapClickMenu]);
+  }, [mapClickMenu, selectedFeature]);
 
-  // Glow marker when marker menu is open
+  // Glow marker when marker menu is open. Depends on selectedFeature too so the
+  // glow is re-applied after the feature-panel cleanup runs in the same commit
+  // that opened this menu (right-click on the currently-selected marker).
   useEffect(() => {
     if (!markerMenu) return;
     const el = markerMenu.marker.getElement();
     el.classList.add("feature-glow");
     return () => el.classList.remove("feature-glow");
-  }, [markerMenu]);
+  }, [markerMenu, selectedFeature]);
 
-  // Glow feature when feature panel is open; also enable marker drag while panel is open.
+  // Glow feature when feature panel is open; also enable feature drag while panel is open
+  // (so loaded/imported markers and paths can be edited).
   useEffect(() => {
     if (!selectedFeature || !mapRef.current) return;
     const map = mapRef.current;
@@ -3753,12 +3774,11 @@ export default function Map() {
       const el = m.getElement();
       el.classList.add("feature-glow");
       glowEls.push(el);
-      // Enable drag while the panel is open (skip if features are globally locked).
-      const enableDrag = !featuresLockedRef.current;
-      if (enableDrag) m.setDraggable(true);
+      const wasDraggable = m.isDraggable();
+      if (!wasDraggable) m.setDraggable(true);
       return () => {
         glowEls.forEach((el) => el.classList.remove("feature-glow"));
-        if (enableDrag) m.setDraggable(false);
+        if (!wasDraggable) m.setDraggable(false);
       };
     }
     if (selectedFeature.type === "path") {
@@ -3768,6 +3788,7 @@ export default function Map() {
         map.setPaintProperty(layerId, "line-width", 6);
         map.setPaintProperty(layerId, "line-opacity", 0.8);
       }
+      const restoreDrag = [];
       path.vertices.forEach((v) => {
         const el = v.marker.getElement();
         el.classList.add("feature-glow");
@@ -3778,6 +3799,11 @@ export default function Map() {
           const el = m.getElement();
           el.classList.add("feature-glow");
           glowEls.push(el);
+          const wasDraggable = m.isDraggable();
+          if (!wasDraggable) {
+            m.setDraggable(true);
+            restoreDrag.push(m);
+          }
         });
       }
       return () => {
@@ -3786,9 +3812,24 @@ export default function Map() {
           map.setPaintProperty(layerId, "line-opacity", 1);
         }
         glowEls.forEach((el) => el.classList.remove("feature-glow"));
+        restoreDrag.forEach((m) => m.setDraggable(false));
       };
     }
   }, [selectedFeature]);
+
+  // Close the feature detail panel whenever a context menu or the side menu opens
+  useEffect(() => {
+    if (markerMenu || mapClickMenu || isSideMenuOpen) setSelectedFeature(null);
+  }, [markerMenu, mapClickMenu, isSideMenuOpen]);
+
+  // Show a transient toast labeling the icon-only button the user just touched.
+  // Re-armable: tapping another button replaces the message and resets the timer.
+  const buttonToastTimerRef = useRef(null);
+  const showButtonToast = (label) => {
+    setToastMsg(label);
+    if (buttonToastTimerRef.current) clearTimeout(buttonToastTimerRef.current);
+    buttonToastTimerRef.current = setTimeout(() => setToastMsg(null), 1500);
+  };
 
   // Dynamic toast position: 10px above feature panel in portrait
   const [toastBottom, setToastBottom] = useState(null);
@@ -3907,10 +3948,10 @@ export default function Map() {
     }
     if (path.savedView) {
       const sv = path.savedView;
-      const start = path.vertices[0].lngLat;
+      const center = sv.center || path.vertices[0].lngLat;
       params.set(
         "saved_view",
-        `${start[1].toFixed(6)}-${start[0].toFixed(6)}-${sv.zoom.toFixed(2)}-${sv.bearing.toFixed(1)}-${sv.pitch.toFixed(1)}`
+        `${center[1].toFixed(6)}-${center[0].toFixed(6)}-${sv.zoom.toFixed(2)}-${sv.bearing.toFixed(1)}-${sv.pitch.toFixed(1)}`
       );
     }
 
@@ -3998,7 +4039,7 @@ export default function Map() {
     shareOrCopy({ url, kind: "Link" });
   };
 
-  const handleCopyFeaturesCode = async () => {
+  const handleCopyEmbeddedFeatures = async () => {
     const { markers, paths } = collectFeatures(markersRef, pathsRef, serializeSnappedSegments);
     const docRef = await addDoc(collection(db, "featuresCollections"), {
       created: serverTimestamp(),
@@ -4198,7 +4239,7 @@ export default function Map() {
     } else if (selectedFeature.type === "path") {
       const path = selectedFeature.path;
       if (path.savedView) {
-        map.flyTo({ center: path.savedView.center, zoom: path.savedView.zoom, pitch: map.getPitch(), bearing: map.getBearing(), duration: 1500 });
+        map.flyTo({ center: path.savedView.center, zoom: path.savedView.zoom, pitch: path.savedView.pitch, bearing: path.savedView.bearing, duration: 1500 });
       } else if (path.vertices.length > 0) {
         const bounds = new mapboxgl.LngLatBounds();
         if (path.snappedSegments) {
@@ -4218,9 +4259,14 @@ export default function Map() {
     } else if (selectedFeature.type === "path") {
       const path = selectedFeature.path;
       if (path.vertices.length === 0) return;
-      const start = path.vertices[0].lngLat;
-      const end = path.vertices[path.vertices.length - 1].lngLat;
-      mapRef.current.easeTo({ center: [(start[0] + end[0]) / 2, (start[1] + end[1]) / 2], duration: 500 });
+      const map = mapRef.current;
+      const bounds = new mapboxgl.LngLatBounds();
+      if (path.snappedSegments) {
+        path.snappedSegments.forEach((seg) => seg.coords.forEach((c) => bounds.extend(c)));
+      } else {
+        path.vertices.forEach((v) => bounds.extend(v.lngLat));
+      }
+      map.easeTo({ center: bounds.getCenter(), duration: 500 });
     }
   };
 
@@ -4308,13 +4354,41 @@ export default function Map() {
     sheetDragRef.current.dragging = false;
     const panel = featurePanelRef.current;
     panel.style.transition = "";
-    panel.style.transform = "";
     const deltaY = e.changedTouches[0].clientY - sheetDragRef.current.startY;
+
     if (isSheetExpanded) {
-      if (deltaY > 60) setIsSheetExpanded(false); // dragged down enough → collapse
+      if (deltaY > 200) {
+        // Dismiss from expanded
+        panel.style.transform = "translateY(100%)";
+        setTimeout(() => {
+          setSelectedFeature(null);
+          if (featurePanelRef.current) featurePanelRef.current.style.transform = "";
+        }, 300);
+        return;
+      }
+      if (deltaY > 60) {
+        setIsSheetExpanded(false);
+        panel.style.transform = "";
+        return;
+      }
     } else {
-      if (deltaY < -60) setIsSheetExpanded(true); // dragged up enough → expand
+      if (deltaY > 80) {
+        // Dismiss from peek
+        panel.style.transform = "translateY(100%)";
+        setTimeout(() => {
+          setSelectedFeature(null);
+          if (featurePanelRef.current) featurePanelRef.current.style.transform = "";
+        }, 300);
+        return;
+      }
+      if (deltaY < -60) {
+        setIsSheetExpanded(true);
+        panel.style.transform = "";
+        return;
+      }
     }
+    // Snap back to current state
+    panel.style.transform = "";
   };
 
   const handleCenterHere = () => {
@@ -4330,7 +4404,7 @@ export default function Map() {
     setIsSheetExpanded(false);
   };
 
-  const handleStartPathCreation = (opts) => {
+  const handleCreatePath = (opts) => {
     if (isRecordingTrackRef.current) {
       setMapClickMenu(null);
       setToastMsg("Stop recording first.");
@@ -4439,7 +4513,7 @@ export default function Map() {
     }, 2000);
   };
 
-  const handleEnterRecordingMode = () => {
+  const handleRecordPath = () => {
     setMapClickMenu(null);
 
     // Finish any active unfinished path
@@ -4552,6 +4626,8 @@ export default function Map() {
 
     // Start bearing tracking — this also acquires the wake lock and shows the
     // stop_tracking_bearing icon, which the user clicks to pause recording.
+    // Mirror the click-handler flow: hide existing tracking icons first.
+    ctrl.hideTrackingIcons();
     await ctrl._handleTrackBearing();
 
     // Start elapsed timer
@@ -4624,8 +4700,6 @@ export default function Map() {
       setCanUndo(true);
       setCanRedo(false);
     }
-    setToastMsg("Recording paused.");
-    setTimeout(() => setToastMsg(null), 2000);
   };
   handlePauseRecordingRef.current = handlePauseRecording;
 
@@ -4636,6 +4710,8 @@ export default function Map() {
     }
     setIsRecordingPaused(false);
     isRecordingPausedRef.current = false;
+    // Mirror the click-handler flow: hide existing tracking icons first.
+    locationControlRef.current?.hideTrackingIcons();
     locationControlRef.current?._handleTrackBearing();
     setToastMsg("Recording resumed. Click stop tracking to pause.");
     setTimeout(() => setToastMsg(null), 2000);
@@ -4679,7 +4755,7 @@ export default function Map() {
     setCanRedo(pathRedoStackRef.current.length > 0);
   };
 
-  const handleStopTrackRecording = () => {
+  const handleStopPathRecording = () => {
     setMapClickMenu(null);
     // If recording was never started, just exit recording mode
     if (!trackPathRef.current) {
@@ -5097,7 +5173,7 @@ export default function Map() {
   const startNavigation = async (destinationLngLat) => {
     // Auto-stop recording before starting navigation
     if (isRecordingTrackRef.current) {
-      handleStopTrackRecording();
+      handleStopPathRecording();
     }
 
     const ctrl = locationControlRef.current;
@@ -5597,10 +5673,14 @@ export default function Map() {
     const path = mapClickMenu.path;
     setMapClickMenu(null);
     if (!path || path.vertices.length === 0) return;
-    const start = path.vertices[0].lngLat;
-    const end = path.vertices[path.vertices.length - 1].lngLat;
-    const center = [(start[0] + end[0]) / 2, (start[1] + end[1]) / 2];
-    mapRef.current.easeTo({ center, duration: 500 });
+    const map = mapRef.current;
+    const bounds = new mapboxgl.LngLatBounds();
+    if (path.snappedSegments) {
+      path.snappedSegments.forEach((seg) => seg.coords.forEach((c) => bounds.extend(c)));
+    } else {
+      path.vertices.forEach((v) => bounds.extend(v.lngLat));
+    }
+    map.easeTo({ center: bounds.getCenter(), duration: 500 });
   };
 
   const handleFlyToPath = () => {
@@ -5612,8 +5692,8 @@ export default function Map() {
       map.flyTo({
         center: path.savedView.center,
         zoom: path.savedView.zoom,
-        pitch: map.getPitch(),
-        bearing: map.getBearing(),
+        pitch: path.savedView.pitch,
+        bearing: path.savedView.bearing,
         duration: 1500,
       });
     } else if (path.vertices.length > 0) {
@@ -5677,7 +5757,7 @@ export default function Map() {
     if (url) shareOrCopy({ url, kind: "Link" });
   };
 
-  const handleCopyPathCode = () => {
+  const handleCopyEmbeddedPath = () => {
     const path = mapClickMenu?.path;
     setMapClickMenu(null);
     if (!path) return;
@@ -5927,7 +6007,7 @@ export default function Map() {
             <button onClick={handleCenterToMarker}>{markerMenu.marker._sightPath ? "Center to sight" : "Center to marker"}</button>
             <button onClick={handleNavigateToMarker}>{markerMenu.marker._sightPath ? "Navigate to sight" : "Navigate to marker"}</button>
             <button onClick={handleCopyLinkMarker}>{markerMenu.marker._sightPath ? "Copy link to sight" : "Copy link to marker"}</button>
-            <button onClick={handleCopyMarkerCode}>{markerMenu.marker._sightPath ? "Copy embeded sight" : "Copy embeded marker"}</button>
+            <button onClick={handleCopyEmbeddedPath}>{markerMenu.marker._sightPath ? "Copy embedded sight" : "Copy embedded marker"}</button>
             {markerMenu.marker._sightPath && <button onClick={handleDetachSight}>Detach from path</button>}
             <button onClick={handleSetNameMarker}>{markerMenu.marker._sightPath ? "Set name to sight" : "Set name to marker"}</button>
             <button onClick={handleRecordMarkerView}>{markerMenu.marker._sightPath ? "Record sight view" : "Record marker view"}</button>
@@ -5938,24 +6018,29 @@ export default function Map() {
       )}
       {isSideMenuOpen && (
         <>
-          <div className="side-menu-overlay" onClick={() => setIsSideMenuOpen(false)} />
+          <div
+            ref={sideMenuOverlayRef}
+            className="side-menu-overlay"
+            onClick={() => setIsSideMenuOpen(false)}
+          />
           <div
             {...sideMenuSwipe}
+            ref={(el) => { sideMenuRef.current = el; sideMenuSwipe.ref(el); }}
             className={`side-menu${idMapStyle === "rontomap_streets_dark" ? " side-menu-dark" : ""}`}
           >
             <button onClick={() => {
               setIsSideMenuOpen(false);
-              handleStartPathCreation({ noAutoVertex: true });
-            }}>Start path creation</button>
+              handleCreatePath({ noAutoVertex: true });
+            }}>Create path</button>
             {isRecordingTrack ? (
-              <button onClick={() => { setIsSideMenuOpen(false); handleStopTrackRecording(); }}>Stop path recording</button>
+              <button onClick={() => { setIsSideMenuOpen(false); handleStopPathRecording(); }}>Stop path recording</button>
             ) : (
-              <button onClick={() => { setIsSideMenuOpen(false); handleEnterRecordingMode(); }}>Path recording</button>
+              <button onClick={() => { setIsSideMenuOpen(false); handleRecordPath(); }}>Record path</button>
             )}
             <div className="side-menu-separator" />
             <button onClick={() => { setIsSideMenuOpen(false); handleImportFeatures(); }}>Import features</button>
             <button onClick={() => { setIsSideMenuOpen(false); handleExportAll(); }}>Export features</button>
-            <button onClick={() => { setIsSideMenuOpen(false); handleCopyFeaturesCode(); }}>Copy embeded feature</button>
+            <button onClick={() => { setIsSideMenuOpen(false); handleCopyEmbeddedFeatures(); }}>Copy embedded features</button>
             <button onClick={() => { setIsSideMenuOpen(false); handleCopyFeatures(); }}>Copy link to features</button>
             <div className="side-menu-separator" />
             <button onClick={() => { setIsSideMenuOpen(false); handleDeleteAllFeatures(); }}>Delete all features</button>
@@ -5992,7 +6077,7 @@ export default function Map() {
             {mapClickMenu.path ? (
               <>
                 <button onClick={handleFlyToPath}>Fly to path</button>
-                <button onClick={handleCenterToPath}>Center to path start</button>
+                <button onClick={handleCenterToPath}>Center to path</button>
                 <button onClick={handleNavigateToPath}>Navigate to path start</button>
                 <button onClick={handleAddSight}>Add sight to path</button>
                 <button onClick={handleEditPath}>Edit path</button>
@@ -6001,7 +6086,7 @@ export default function Map() {
                 <button onClick={handleSetPathName}>Set path name</button>
                 <button onClick={handleRecordPathView}>Record path view</button>
                 <button onClick={handleCopyLinkPath}>Copy link to path</button>
-                <button onClick={handleCopyPathCode}>Copy embeded path</button>
+                <button onClick={handleCopyEmbeddedPath}>Copy embedded path</button>
                 <button onClick={handleExportPath}>Export path</button>
                 <button onClick={handleDeletePath}>Delete path</button>
               </>
@@ -6010,7 +6095,7 @@ export default function Map() {
                 <button onClick={handleCenterHere}>Center here</button>
                 <button onClick={handleNavigateHere}>Navigate here</button>
                 <button onClick={handleAddMarkerFromMenu}>Add marker</button>
-                <button onClick={handleStartPathCreation}>Start path creation</button>
+                <button onClick={handleCreatePath}>Create path</button>
               </>
             )}
           </div>
@@ -6140,7 +6225,7 @@ export default function Map() {
               <button className="redo-btn" disabled={!canRedo} onClick={redoRecordingPath}>
                 Redo
               </button>
-              <button className="cancel-btn" onClick={handleStopTrackRecording}>
+              <button className="cancel-btn" onClick={handleStopPathRecording}>
                 Stop
               </button>
               {!isRecordingStarted ? (
@@ -6158,7 +6243,7 @@ export default function Map() {
             <div className="route-info">
               <span>{formatDistance(recordingDistance)}</span>
               <span className="route-info-separator">&middot;</span>
-              <span>{formatDuration(recordingElapsed)}</span>
+              <span>{formatRecordingDuration(recordingElapsed)}</span>
             </div>
           )}
         </div>
@@ -6183,37 +6268,25 @@ export default function Map() {
               <div className="feature-panel-handle-bar" />
             </div>
             <div className="feature-panel-actions">
-              <LongPressTooltip label="Fly to">
-                <button onClick={handleFeatureFlyTo}>
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>
-                </button>
-              </LongPressTooltip>
-              <LongPressTooltip label="Center to">
-                <button onClick={handleFeatureCenterTo}>
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/></svg>
-                </button>
-              </LongPressTooltip>
-              <LongPressTooltip label="Navigate to">
-                <button onClick={handleFeatureNavigateTo}>
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg>
-                </button>
-              </LongPressTooltip>
-              <LongPressTooltip label="Share">
-                <button onClick={handleFeatureShare}>
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
-                </button>
-              </LongPressTooltip>
-              <LongPressTooltip label="Embed">
-                <button onClick={handleFeatureEmbed}>
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-                </button>
-              </LongPressTooltip>
+              <button onPointerDown={() => showButtonToast("Fly to")} onClick={handleFeatureFlyTo}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>
+              </button>
+              <button onPointerDown={() => showButtonToast("Center to")} onClick={handleFeatureCenterTo}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/></svg>
+              </button>
+              <button onPointerDown={() => showButtonToast("Navigate to")} onClick={handleFeatureNavigateTo}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg>
+              </button>
+              <button onPointerDown={() => showButtonToast("Share")} onClick={handleFeatureShare}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+              </button>
+              <button onPointerDown={() => showButtonToast("Embed")} onClick={handleFeatureEmbed}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+              </button>
               {selectedFeature.type === "path" && (
-                <LongPressTooltip label="Trace path">
-                  <button onClick={handleFeatureTrace}>
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 19L19 5"/><polyline points="15 5 19 5 19 9"/><circle cx="5" cy="19" r="2"/></svg>
-                  </button>
-                </LongPressTooltip>
+                <button onPointerDown={() => showButtonToast("Trace path")} onClick={handleFeatureTrace}>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 19L19 5"/><polyline points="15 5 19 5 19 9"/><circle cx="5" cy="19" r="2"/></svg>
+                </button>
               )}
             </div>
             <div className="feature-panel-name">
