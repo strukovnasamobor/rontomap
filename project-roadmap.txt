@@ -1,18 +1,16 @@
-- in recording path remove snapping options, on start same as start tracking user bearing then hide action icons, show toast msg, click stop tracking to pause, on stop recording show alert
+? SHARING LINKS & EMBEDDED CODE
+- test on mobile
+    - double click on feature do not open details but goes to full screen
+    - swipe right closing menu
+    - swipe left / down closing detail panel
+    - long tap on icons show it's name/description
+    - in recording path remove snapping options, on start recording is same as start tracking user bearing then hide action icons, 
+      show toast msg "Click stop tracking to pause recording", on stop recording show alert
 
-- when starting path creation transform context dot to a start point, when clicking on menu option path creation do not add starting point
-- when added marker open panel details, allow dragging marker only when is selected (and detail panel is opened), remove enable/disable drag context option
-- double click on feature do not open details but goes to full screen
-- when detail panel is shown allow map moving and clicking on another feature, on mobile show above navigation buttons
+- action ordering, icons, new actions
 - white nav bar, white nav panel detail, change in dark for dark map
-- swipe right closing menu
-- swipe left / down closing detail pane
-- exporting/embedded only path with sights - using # add mapbox built in google polyline encoding
-- long tap description of action icon
-- enable clicking on start/end point of path
-- for path show snapping, length, duration
-- action ordering and icons, new actions
-- left click is disabled in embeded mode so show cursor icon
+- on mobile show detail panel above navigation buttons
+
 
 OFLINE MAPS AND NAVIGATION
 - context menu option download, update, delete
@@ -66,7 +64,7 @@ UI DESIGN & INTERACTIONS
 - left mouse click / tap on feature opens detail panel
     - on landscape - left sidebar
     - on portrait - peeking bottom sheet
-        - actiopn icons: fly to, center to, navigate to, share, for path - path tracing
+        - actiopn icons: fly to, center to, navigate to, copy link, copy embed code, for path - path tracing
         - name of feature
         - for marker/sight - coordinates, for path - snapping, length, duration
 - double left mouse click / double tap => fullscreen enter/exit
@@ -151,3 +149,22 @@ IMPORT/EXPORT FEATURES
 - sight - using <MultiGeometry> to link a point and a line inside one Placemark
 5) FIT (.fit)
 - path - track (a series of records with lat/lon, timestamp, heart rate, speed, cadence, power)
+
+SHARING LINKS & EMBEDDED CODE
+- marker
+    https://rontomap.web.app/
+    ?lat=<center_lat>&long=<center_lng>&zoom=<z>&bearing=<b>&pitch=<p>
+    &marker=<lat>-<lng>-<urlEncodedName>
+    &saved_view=<lat>-<lng>-<z>-<b>-<p>      [optional, only if marker._savedView]
+- path
+    https://rontomap.web.app/
+    ?lat=<center_lat>&long=<center_lng>&zoom=<z>&bearing=<b>&pitch=<p>
+    &path=<urlEncodedName>                     [optional]
+    &road_snap=<free|foot|bike|car>
+    &is_circuit=<true|false>                   [optional, only if true]
+    &sight=<segIdx>-<t>-<urlEncodedName>       [repeated, one per sight]
+    &saved_view=<lat>-<lng>-<z>-<b>-<p>        [optional, only if path.savedView]
+- features
+    ?lat=<center_lat>&long=<center_lng>&zoom=<z>&bearing=<b>&pitch=<p>
+    &features_collection=<docId>
+- embedded code - const iframe = `<iframe style="width: 100%; height: 100%; border: none;" allow="fullscreen" scrolling="no" src="<link>"></iframe>`;

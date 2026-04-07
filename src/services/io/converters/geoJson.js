@@ -56,7 +56,7 @@ export function toRonto(content) {
         coords,
       };
       if (props.name || props.title) {
-        pathData.startName = props.name || props.title;
+        pathData.name = props.name || props.title;
       }
       if (props.isCircuit) {
         pathData.isCircuit = true;
@@ -123,7 +123,7 @@ export function fromRonto(data, scope) {
     // For road-snapped paths, export the snapped geometry if available
     const coords = getExportCoords(p);
     const props = {
-      name: p.startName || "",
+      name: p.name || "",
       type: p.isRoute ? "route" : "path",
       id: p.id,
     };

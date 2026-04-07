@@ -16,8 +16,7 @@
  * @typedef {Object} RontoPath
  * @property {string} id
  * @property {RontoCoord[]} coords
- * @property {string} [startName]
- * @property {string} [endName]
+ * @property {string} [name]
  * @property {boolean} [isCircuit]
  * @property {boolean} [closingForced]
  * @property {boolean} [isRoute]

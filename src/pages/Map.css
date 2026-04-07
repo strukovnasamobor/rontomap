@@ -59,25 +59,25 @@
   cursor: grab !important;
 }
 
-/* Locked features: alias cursor */
-.features-locked:not(.path-editing)
+/* Locked features: alias cursor (skip in embedded mode — embedded uses default arrow) */
+.features-locked:not(.path-editing):not(.embedded)
   .mapboxgl-marker:not(.context-dot):not(.mapboxgl-user-location):not(.mapboxgl-user-location-accuracy-circle),
-.features-locked:not(.path-editing) .path-vertex,
-.features-locked:not(.path-editing) .path-midpoint {
+.features-locked:not(.path-editing):not(.embedded) .path-vertex,
+.features-locked:not(.path-editing):not(.embedded) .path-midpoint {
   cursor: alias !important;
 }
 
-/* Embedded mode: default cursor on locked features */
-.embedded.features-locked:not(.path-editing) .mapboxgl-marker:not(.context-dot):not(.mapboxgl-user-location),
-.embedded.features-locked:not(.path-editing) .path-vertex,
-.embedded.features-locked:not(.path-editing) .path-midpoint {
+/* Embedded mode: default cursor on all features (left-click is disabled) */
+.embedded:not(.path-editing) .mapboxgl-marker:not(.context-dot):not(.mapboxgl-user-location):not(.mapboxgl-user-location-accuracy-circle),
+.embedded:not(.path-editing) .path-vertex,
+.embedded:not(.path-editing) .path-midpoint {
   cursor: default !important;
 }
 
-/* Locked features on mousedown: all-scroll (same as map) */
-.map-mousedown.features-locked:not(.path-editing) .mapboxgl-marker:not(.mapboxgl-user-location),
-.map-mousedown.features-locked:not(.path-editing) .path-vertex,
-.map-mousedown.features-locked:not(.path-editing) .path-midpoint {
+/* Locked features on mousedown: all-scroll (same as map) — skip in embedded mode */
+.map-mousedown.features-locked:not(.path-editing):not(.embedded) .mapboxgl-marker:not(.mapboxgl-user-location),
+.map-mousedown.features-locked:not(.path-editing):not(.embedded) .path-vertex,
+.map-mousedown.features-locked:not(.path-editing):not(.embedded) .path-midpoint {
   cursor: all-scroll !important;
 }
 
@@ -347,6 +347,27 @@
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
 }
 
+/* Long-press / hover tooltip */
+.long-press-tooltip-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.long-press-tooltip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.85);
+  color: white;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 1100;
+}
+
 /* Glow effect on selected features */
 .feature-glow {
   filter: drop-shadow(0 0 6px rgba(255, 111, 0, 0.8)) drop-shadow(0 0 3px rgba(255, 111, 0, 0.6)) !important;
@@ -483,10 +504,6 @@
 }
 
 /* Feature panel */
-.feature-panel-overlay {
-  display: none;
-}
-
 .feature-panel {
   position: fixed;
   background: white;
@@ -532,6 +549,20 @@
   color: #666;
   padding: 4px 0;
   font-family: monospace;
+}
+
+.feature-panel-meta {
+  font-size: 13px;
+  color: #555;
+  padding: 4px 0;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.feature-panel-dark .feature-panel-meta {
+  color: #bbb;
 }
 
 .feature-panel-trace-btn {
@@ -599,13 +630,6 @@
 
 /* Portrait: bottom sheet */
 @media (orientation: portrait) {
-  .feature-panel-overlay {
-    display: block;
-    position: fixed;
-    inset: 0;
-    z-index: 1002;
-  }
-
   .feature-panel {
     left: 0;
     right: 0;
@@ -697,7 +721,7 @@
   position: relative;
   touch-action: none;
 }
-.path-vertex.not-draggable {
+.map-container:not(.embedded) .path-vertex.not-draggable {
   cursor: alias !important;
 }
 

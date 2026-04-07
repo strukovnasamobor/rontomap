@@ -46,7 +46,7 @@ export async function toRonto(content) {
       // Use sport name if available
       const session = data.sessions?.[0];
       if (session?.sport) {
-        pathData.startName = session.sport.charAt(0).toUpperCase() + session.sport.slice(1);
+        pathData.name = session.sport.charAt(0).toUpperCase() + session.sport.slice(1);
       }
 
       // Laps as sights

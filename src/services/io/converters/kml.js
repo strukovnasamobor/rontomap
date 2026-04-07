@@ -66,7 +66,7 @@ export function toRonto(content) {
             pathData.isCircuit = true;
             lineCoords.pop();
           }
-          if (name) pathData.startName = name;
+          if (name) pathData.name = name;
 
           const ptCoords = parseKmlCoordinates(point.querySelector("coordinates")?.textContent || "");
           if (ptCoords.length > 0) {
@@ -109,7 +109,7 @@ export function toRonto(content) {
           pathData.isCircuit = true;
           coords.pop();
         }
-        if (name) pathData.startName = name;
+        if (name) pathData.name = name;
         const sv = parseSavedViewStr(parseExtData(pm, "savedView"));
         if (sv) pathData.savedView = sv;
         const snap = parseExtRoadSnap(pm);
@@ -131,7 +131,7 @@ export function toRonto(content) {
           pathData.isCircuit = true;
           coords.pop();
         }
-        if (name) pathData.startName = name;
+        if (name) pathData.name = name;
         paths.push(pathData);
       }
     }
@@ -235,7 +235,7 @@ export function fromRonto(data, scope) {
 
     // Main path placemark
     lines.push(`  <Placemark>`);
-    lines.push(`    <name>${escapeXml(p.startName || "")}</name>`);
+    lines.push(`    <name>${escapeXml(p.name || "")}</name>`);
     lines.push(`    <styleUrl>#${styleId}</styleUrl>`);
     const extData = [];
     if (p.sights && p.sights.length > 0) extData.push(`      <Data name="pathId"><value>${escapeXml(p.id)}</value></Data>`);

@@ -82,7 +82,7 @@ export function toRonto(content) {
       pathData.isCircuit = true;
       coords.pop();
     }
-    if (nameEl?.textContent) pathData.startName = nameEl.textContent;
+    if (nameEl?.textContent) pathData.name = nameEl.textContent;
     const sv = parseExtSavedView(rte);
     if (sv) pathData.savedView = sv;
     const snap = parseExtRoadSnap(rte);
@@ -114,7 +114,7 @@ export function toRonto(content) {
         pathData.isCircuit = true;
         coords.pop();
       }
-      if (nameEl?.textContent) pathData.startName = nameEl.textContent;
+      if (nameEl?.textContent) pathData.name = nameEl.textContent;
       paths.push(pathData);
     }
   }
@@ -176,7 +176,7 @@ export function fromRonto(data, scope) {
       for (const s of p.sights) {
         const [lng, lat] = interpolateSightPosition(p, s);
         lines.push(`  <wpt lat="${lat}" lon="${lng}">`);
-        lines.push(`    <name>${escapeXml(s.name || `Sight on ${p.startName || p.id}`)}</name>`);
+        lines.push(`    <name>${escapeXml(s.name || `Sight on ${p.name || p.id}`)}</name>`);
         lines.push(`    <type>sight</type>`);
         lines.push(`    <extensions>`);
         lines.push(`      <rontomap:sight pathId="${escapeXml(p.id)}" segmentIndex="${s.segmentIndex}" t="${s.t}"/>`);
@@ -190,7 +190,7 @@ export function fromRonto(data, scope) {
 
     // All paths export as <rte>
     lines.push(`  <rte>`);
-    if (p.startName) lines.push(`    <name>${escapeXml(p.startName)}</name>`);
+    if (p.name) lines.push(`    <name>${escapeXml(p.name)}</name>`);
     const rteExtensions = [];
     if (p.sights && p.sights.length > 0) {
       rteExtensions.push(`      <rontomap:id>${escapeXml(p.id)}</rontomap:id>`);

@@ -4,6 +4,7 @@ import Fullscreen from "../plugins/Fullscreen";
 import { useIonViewWillEnter, IonAlert } from "@ionic/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useDoubleTap } from "use-double-tap";
+import { useSwipeable } from "react-swipeable";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import MapboxGeocoder from "@mapbox/mapbox-gl-geocoder";
@@ -13,10 +14,22 @@ import { Geolocation } from "@capacitor/geolocation";
 import { Capacitor, registerPlugin } from "@capacitor/core";
 const BackgroundGeolocation = registerPlugin("BackgroundGeolocation");
 import { App as CapApp } from "@capacitor/app";
+import { Share } from "@capacitor/share";
+import polyline from "@mapbox/polyline";
 import { db } from "../../firebase";
 import { collection, addDoc, doc, getDoc, serverTimestamp } from "firebase/firestore";
-import { collectFeatures, collectMarker, collectPath, materializeFeatures } from "../services/io/converters/rontoJson";
+import { collectFeatures, collectMarker, collectPath, materializeFeatures, materializePathFromShape } from "../services/io/converters/rontoJson";
 import { importFeatures, importFromContent, exportFeatures } from "../services/io";
+
+// base64url helpers (no padding, URL-safe)
+const b64uEncode = (s) =>
+  btoa(unescape(encodeURIComponent(s))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const b64uDecode = (s) =>
+  decodeURIComponent(escape(atob(s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4))));
+
+// Snapped-segment type code mapping (used in path URL extras blob)
+const SEG_TYPE_TO_CODE = { snapped: "s", offset: "o", fallback: "f", direct: "d" };
+const CODE_TO_SEG_TYPE = { s: "snapped", o: "offset", f: "fallback", d: "direct" };
 
 // Set Mapbox access token
 mapboxgl.accessToken = "pk.eyJ1IjoiYXVyZWxpdXMtemQiLCJhIjoiY21rcXA3cXh2MHNpZDNjcXl1a3MzbW8zciJ9.JO4VSTN6-0vRtWW0YKjlAg";
@@ -73,6 +86,68 @@ const deserializeSnappedSegments = (segments) =>
     coords: seg.coords.map((c) => [c.lng, c.lat]),
   }));
 
+// Tooltip that appears on long-press (touch) or hover (mouse).
+// Wraps a single child element (typically a button) and absolutely-positions
+// the tooltip above it. The wrapped child gets `position: relative` via the wrapper span.
+function LongPressTooltip({ label, children }) {
+  const [visible, setVisible] = useState(false);
+  const timerRef = useRef(null);
+  const startPosRef = useRef(null);
+
+  const clearTimer = () => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  };
+  const handleTouchStart = (e) => {
+    const t = e.touches[0];
+    startPosRef.current = { x: t.clientX, y: t.clientY };
+    clearTimer();
+    timerRef.current = setTimeout(() => {
+      setVisible(true);
+      timerRef.current = setTimeout(() => setVisible(false), 2000);
+    }, 500);
+  };
+  const handleTouchMove = (e) => {
+    if (!startPosRef.current) return;
+    const t = e.touches[0];
+    const dx = t.clientX - startPosRef.current.x;
+    const dy = t.clientY - startPosRef.current.y;
+    if (dx * dx + dy * dy > 100) {
+      clearTimer();
+      setVisible(false);
+    }
+  };
+  const handleTouchEnd = () => {
+    clearTimer();
+    setVisible(false);
+  };
+  const handleMouseEnter = () => {
+    clearTimer();
+    timerRef.current = setTimeout(() => setVisible(true), 400);
+  };
+  const handleMouseLeave = () => {
+    clearTimer();
+    setVisible(false);
+  };
+
+  return (
+    <span
+      className="long-press-tooltip-wrap"
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      onTouchCancel={handleTouchEnd}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+    >
+      {children}
+      {visible && <span className="long-press-tooltip">{label}</span>}
+    </span>
+  );
+}
+
 export default function Map() {
   const mapRef = useRef(null);
   const mapContainerRef = useRef(null);
@@ -107,7 +182,7 @@ export default function Map() {
   const sheetDragRef = useRef({ startY: 0, dragging: false });
   const featurePanelRef = useRef(null);
 
-  const namingMarkerRef = useRef(null);
+  const namingTargetRef = useRef(null);
   const createMarkerRef = useRef(null);
   const geocoderOpenRef = useRef(false);
   const geocoderRef = useRef(null);
@@ -161,7 +236,6 @@ export default function Map() {
   const [recordingElapsed, setRecordingElapsed] = useState(0);
   const recordingTimerRef = useRef(null);
   const [recordingDistance, setRecordingDistance] = useState(0);
-  const [recordingSnapMode, setRecordingSnapMode] = useState(null);
   const handlePauseRecordingRef = useRef(null);
   const [stopRecordingAlert, setStopRecordingAlert] = useState(false);
   const [routeDistance, setNavRouteDistance] = useState(null);
@@ -189,6 +263,32 @@ export default function Map() {
   const isEmbeddedRef = useRef(new URLSearchParams(window.location.search).get("embedded") === "true");
   const embeddedFocusedRef = useRef(false);
   const embeddedToastTimerRef = useRef(null);
+
+  // Swipe right closes the side menu
+  const sideMenuSwipe = useSwipeable({
+    onSwipedRight: () => setIsSideMenuOpen(false),
+    trackTouch: true,
+    trackMouse: false,
+    delta: 30,
+  });
+
+  // Swipe down (portrait) or left (landscape) closes the feature detail panel
+  const featurePanelSwipe = useSwipeable({
+    onSwipedDown: () => {
+      const isPortrait = window.matchMedia("(orientation: portrait)").matches;
+      if (!isPortrait) return;
+      if (isSheetExpanded) setIsSheetExpanded(false);
+      else setSelectedFeature(null);
+    },
+    onSwipedLeft: () => {
+      const isPortrait = window.matchMedia("(orientation: portrait)").matches;
+      if (isPortrait) return;
+      setSelectedFeature(null);
+    },
+    trackTouch: true,
+    trackMouse: false,
+    delta: 40,
+  });
 
   const menuRefCallback = useCallback((el) => {
     if (!el) return;
@@ -300,16 +400,12 @@ export default function Map() {
     tryAdd();
   };
 
-  // Double tap to toggle fullscreen
-  const bind = useDoubleTap((e) => {
-    console.log("Event > DoubleTap");
+  // Toggle fullscreen — used by useDoubleTap and by feature double-click
+  const toggleFullscreenRef = useRef(null);
+  const toggleFullscreen = useCallback(() => {
+    console.log("Event > ToggleFullscreen");
     const controlsContainer = document.querySelector(".mapboxgl-control-container");
     const fsTarget = document.documentElement;
-
-    // Ignore clicks on Mapbox controls
-    if (e?.target?.closest(".mapboxgl-control-container")) {
-      return;
-    }
 
     if (!fullscreen) {
       if (controlsContainer) {
@@ -380,6 +476,17 @@ export default function Map() {
         mapRef.current.resize();
       }
     }, 100);
+  }, [fullscreen]);
+  toggleFullscreenRef.current = toggleFullscreen;
+
+  // Double tap to toggle fullscreen
+  const bind = useDoubleTap((e) => {
+    console.log("Event > DoubleTap");
+    // Ignore clicks on Mapbox controls
+    if (e?.target?.closest(".mapboxgl-control-container")) {
+      return;
+    }
+    toggleFullscreen();
   }, 300);
 
   // Sync fullscreen state when exiting via Escape/F11
@@ -472,25 +579,31 @@ export default function Map() {
 
     // Helper to create a marker with cursor and menu event handlers
     const createMarker = (lngLat, color = "#ff6f00") => {
-      const marker = new mapboxgl.Marker({ color, draggable: true }).setLngLat(lngLat).addTo(mapRef.current);
+      const marker = new mapboxgl.Marker({ color, draggable: false }).setLngLat(lngLat).addTo(mapRef.current);
       const el = marker.getElement();
-      el.style.setProperty("cursor", "grab", "important");
+      // In embedded mode, leave cursor to CSS (.embedded rule sets it to default).
+      // Inline !important would otherwise override CSS.
+      const setCursor = (value) => {
+        if (isEmbeddedRef.current) return;
+        el.style.setProperty("cursor", value, "important");
+      };
+      setCursor("alias");
       let wasDragged = false;
       el.addEventListener("mousedown", () => {
         if (!marker.isDraggable()) return;
-        el.style.setProperty("cursor", "grabbing", "important");
+        setCursor("grabbing");
         mapRef.current.getContainer().classList.add("marker-dragging");
       });
       el.addEventListener("mouseup", () => {
         if (!marker.isDraggable()) return;
-        el.style.setProperty("cursor", "grab", "important");
+        setCursor("grab");
         mapRef.current.getContainer().classList.remove("marker-dragging");
       });
       marker.on("dragstart", () => {
         wasDragged = true;
       });
       marker.on("dragend", () => {
-        el.style.setProperty("cursor", marker.isDraggable() ? "grab" : "alias", "important");
+        setCursor(marker.isDraggable() ? "grab" : "alias");
         mapRef.current.getContainer().classList.remove("marker-dragging");
         setTimeout(() => {
           wasDragged = false;
@@ -534,19 +647,30 @@ export default function Map() {
         setMenuPos(computeMenuPos(marker));
         setMarkerMenu({ marker });
       });
+      let markerClickTimer = null;
       el.addEventListener("click", (e) => {
         e.stopPropagation();
         if (wasDragged) return;
         if (isPathModeRef.current) return;
         if (isEmbeddedRef.current) return;
-        setSelectedFeature({ type: "marker", marker });
-        setIsSheetExpanded(false);
+        // Debounce so a second click within 300ms toggles fullscreen instead of opening details
+        if (markerClickTimer) {
+          clearTimeout(markerClickTimer);
+          markerClickTimer = null;
+          if (toggleFullscreenRef.current) toggleFullscreenRef.current();
+          return;
+        }
+        markerClickTimer = setTimeout(() => {
+          markerClickTimer = null;
+          setSelectedFeature({ type: "marker", marker });
+          setIsSheetExpanded(false);
+        }, 300);
       });
       // Sync cursor with draggable state
       const origSetDraggable = marker.setDraggable.bind(marker);
       marker.setDraggable = (v) => {
         origSetDraggable(v);
-        el.style.setProperty("cursor", v ? "grab" : "alias", "important");
+        setCursor(v ? "grab" : "alias");
       };
       marker._markerName = "";
       markersRef.current.push(marker);
@@ -601,6 +725,7 @@ export default function Map() {
         });
         path._hitLayerId = hitLayerId;
         map.on("mouseenter", hitLayerId, () => {
+          if (isEmbeddedRef.current) return;
           if (!isPathModeRef.current) map.getCanvas().style.cursor = "alias";
         });
         map.on("mouseleave", hitLayerId, () => {
@@ -1346,12 +1471,24 @@ export default function Map() {
           wasDragged = false;
         }, 0);
       });
-      // Click: remove vertex during path creation
+      // Click: remove vertex during path creation, or open detail panel on finished path endpoints
       el.addEventListener("click", (e) => {
         e.stopPropagation();
         if (wasDragged) return;
         const path = vertexEntry.path;
         const verts = path.vertices;
+        // Left-click on a finished path's start or end vertex → open detail panel
+        if (path.isFinished && !isPathModeRef.current && !isEmbeddedRef.current) {
+          if (verts[0] === vertexEntry || verts[verts.length - 1] === vertexEntry) {
+            pathClickHandledRef.current = true;
+            setTimeout(() => {
+              pathClickHandledRef.current = false;
+            }, 400);
+            setSelectedFeature({ type: "path", path });
+            setIsSheetExpanded(false);
+            return;
+          }
+        }
         if (!path.isFinished) {
           const idx = verts.indexOf(vertexEntry);
           if (idx < 0) return;
@@ -1674,6 +1811,9 @@ export default function Map() {
             await this._handleTrackBearing();
             break;
           case "stop_tracking_bearing":
+            if (isRecordingModeRef.current && !isRecordingPausedRef.current && handlePauseRecordingRef.current) {
+              handlePauseRecordingRef.current();
+            }
             this.hideTrackingIcons();
             await this._handleStopTrackingBearing();
             break;
@@ -3078,6 +3218,22 @@ export default function Map() {
       }
     }
 
+    // Parse optional saved_view (used by both marker and path URL formats)
+    const savedViewParam = getQueryParams("saved_view");
+    let parsedSavedView = null;
+    if (savedViewParam) {
+      const svParts = savedViewParam.split("-").map(parseFloat);
+      if (svParts.length === 5 && !svParts.some(Number.isNaN)) {
+        parsedSavedView = {
+          lat: svParts[0],
+          lng: svParts[1],
+          zoom: svParts[2],
+          bearing: svParts[3],
+          pitch: svParts[4],
+        };
+      }
+    }
+
     // Recreate single marker from URL params
     const markerParam = getQueryParams("marker");
     if (markerParam) {
@@ -3091,10 +3247,103 @@ export default function Map() {
           m._markerName = markerName;
           updateMarkerLabel(m);
         }
+        if (parsedSavedView) {
+          m._savedView = {
+            zoom: parsedSavedView.zoom,
+            bearing: parsedSavedView.bearing,
+            pitch: parsedSavedView.pitch,
+          };
+        }
         featuresLockedRef.current = true;
         setFeaturesLocked(true);
         m.setDraggable(false);
         mapRef.current.getContainer().classList.add("features-locked");
+      }
+    }
+
+    // Recreate path from URL hash (vertex polyline + optional extras blob)
+    const rawHash = window.location.hash ? decodeURIComponent(window.location.hash.slice(1)) : "";
+    if (rawHash) {
+      const sepIdx = rawHash.indexOf("!");
+      const vertexPolyStr = sepIdx >= 0 ? rawHash.slice(0, sepIdx) : rawHash;
+      const extrasStr = sepIdx >= 0 ? rawHash.slice(sepIdx + 1) : "";
+
+      let decodedVerts = null;
+      try {
+        decodedVerts = polyline.decode(vertexPolyStr);
+      } catch {
+        decodedVerts = null;
+      }
+
+      let extras = {};
+      if (extrasStr) {
+        try {
+          extras = JSON.parse(b64uDecode(extrasStr));
+        } catch {
+          extras = {};
+        }
+      }
+
+      if (decodedVerts && decodedVerts.length >= 2) {
+        const forceSet = new Set(extras.fi || []);
+        const coords = decodedVerts.map(([lat, lng], i) => ({
+          long: lng,
+          lat,
+          ...(forceSet.has(i) ? { force: true } : {}),
+        }));
+
+        const sightParams = new URLSearchParams(window.location.search).getAll("sight");
+        const sights = sightParams
+          .map((s, idx) => {
+            const parts = s.split("-");
+            const segIdx = parseInt(parts[0]);
+            const t = parseFloat(parts[1]);
+            if (Number.isNaN(segIdx) || Number.isNaN(t)) return null;
+            const name = parts.length > 2 ? decodeURIComponent(parts.slice(2).join("-")) : undefined;
+            const am = { segmentIndex: segIdx, t, ...(name ? { name } : {}) };
+            const svArr = extras.sv?.[idx];
+            if (Array.isArray(svArr) && svArr.length === 3) {
+              am.savedView = { zoom: svArr[0], bearing: svArr[1], pitch: svArr[2] };
+            }
+            return am;
+          })
+          .filter(Boolean);
+
+        let snappedSegments;
+        if (Array.isArray(extras.sn)) {
+          snappedSegments = extras.sn.map(([code, poly]) => ({
+            type: CODE_TO_SEG_TYPE[code] || code,
+            coords: polyline.decode(poly).map(([lat, lng]) => [lng, lat]),
+          }));
+        }
+
+        const roadSnapParam = getQueryParams("road_snap");
+        const entry = {
+          coords,
+          name: decodeURIComponent(getQueryParams("path") || "") || undefined,
+          roadSnap: roadSnapParam && roadSnapParam !== "free" ? roadSnapParam : undefined,
+          isCircuit: getQueryParams("is_circuit") === "true",
+          closingForced: extras.cf === true,
+          snappedSegments,
+          sights: sights.length ? sights : undefined,
+          savedView: parsedSavedView
+            ? { zoom: parsedSavedView.zoom, bearing: parsedSavedView.bearing, pitch: parsedSavedView.pitch }
+            : undefined,
+        };
+
+        materializePathFromShape(entry, {
+          createMarker,
+          pathHelpersRef,
+          updateMarkerLabel,
+          deserializeSnappedSegments,
+          pathsRef,
+        });
+
+        featuresLockedRef.current = true;
+        setFeaturesLocked(true);
+        mapRef.current.getContainer().classList.add("features-locked");
+        pathsRef.current.forEach((p) => p.vertices.forEach((v) => v.marker.setDraggable(false)));
+        pathsRef.current.forEach((p) => p.sights?.forEach((m) => m.setDraggable(false)));
       }
     }
 
@@ -3494,16 +3743,23 @@ export default function Map() {
     return () => el.classList.remove("feature-glow");
   }, [markerMenu]);
 
-  // Glow feature when feature panel is open
+  // Glow feature when feature panel is open; also enable marker drag while panel is open.
   useEffect(() => {
     if (!selectedFeature || !mapRef.current) return;
     const map = mapRef.current;
     const glowEls = [];
     if (selectedFeature.type === "marker") {
-      const el = selectedFeature.marker.getElement();
+      const m = selectedFeature.marker;
+      const el = m.getElement();
       el.classList.add("feature-glow");
       glowEls.push(el);
-      return () => glowEls.forEach((el) => el.classList.remove("feature-glow"));
+      // Enable drag while the panel is open (skip if features are globally locked).
+      const enableDrag = !featuresLockedRef.current;
+      if (enableDrag) m.setDraggable(true);
+      return () => {
+        glowEls.forEach((el) => el.classList.remove("feature-glow"));
+        if (enableDrag) m.setDraggable(false);
+      };
     }
     if (selectedFeature.type === "path") {
       const path = selectedFeature.path;
@@ -3609,114 +3865,151 @@ export default function Map() {
     }
   };
 
+  // --- URL builders (centralized; used by all share/embed handlers) ---
+
+  const buildBaseParams = () => {
+    const c = mapRef.current.getCenter();
+    return {
+      lat: c.lat.toFixed(6),
+      long: c.lng.toFixed(6),
+      zoom: mapRef.current.getZoom().toFixed(2),
+      bearing: mapRef.current.getBearing().toFixed(1),
+      pitch: mapRef.current.getPitch().toFixed(1),
+    };
+  };
+
+  const buildMarkerUrl = (marker) => {
+    const params = new URLSearchParams(buildBaseParams());
+    const ll = marker.getLngLat();
+    const namePart = marker._markerName ? `-${encodeURIComponent(marker._markerName)}` : "";
+    params.set("marker", `${ll.lat.toFixed(6)}-${ll.lng.toFixed(6)}${namePart}`);
+    if (marker._savedView) {
+      const sv = marker._savedView;
+      params.set(
+        "saved_view",
+        `${ll.lat.toFixed(6)}-${ll.lng.toFixed(6)}-${sv.zoom.toFixed(2)}-${sv.bearing.toFixed(1)}-${sv.pitch.toFixed(1)}`
+      );
+    }
+    return `https://rontomap.web.app/?${params}`;
+  };
+
+  const buildPathUrl = (path) => {
+    if (!path || path.vertices.length < 2) return null;
+    const params = new URLSearchParams(buildBaseParams());
+    if (path.name) params.set("path", path.name);
+    params.set("road_snap", path.roadSnap || "free");
+    if (path.isCircuit) params.set("is_circuit", "true");
+    if (path.sights?.length) {
+      path.sights.forEach((m) => {
+        const namePart = m._markerName ? `-${encodeURIComponent(m._markerName)}` : "";
+        params.append("sight", `${m._segmentIndex}-${m._t.toFixed(4)}${namePart}`);
+      });
+    }
+    if (path.savedView) {
+      const sv = path.savedView;
+      const start = path.vertices[0].lngLat;
+      params.set(
+        "saved_view",
+        `${start[1].toFixed(6)}-${start[0].toFixed(6)}-${sv.zoom.toFixed(2)}-${sv.bearing.toFixed(1)}-${sv.pitch.toFixed(1)}`
+      );
+    }
+
+    // Hash: vertex polyline + optional extras blob (separated by `!`)
+    const vertexPoly = polyline.encode(path.vertices.map((v) => [v.lngLat[1], v.lngLat[0]]));
+
+    const extras = {};
+    const fi = path.vertices.map((v, i) => (v.force ? i : -1)).filter((i) => i >= 0);
+    if (fi.length) extras.fi = fi;
+    if (path.closingForced) extras.cf = true;
+    if (path.snappedSegments?.length) {
+      extras.sn = path.snappedSegments.map((seg) => {
+        const simplified = seg.type === "snapped" ? rdpSimplify(seg.coords, RDP_TOLERANCE) : seg.coords;
+        return [SEG_TYPE_TO_CODE[seg.type] || seg.type, polyline.encode(simplified.map(([lng, lat]) => [lat, lng]))];
+      });
+    }
+    if (path.sights?.length) {
+      const sv = {};
+      path.sights.forEach((m, idx) => {
+        if (m._savedView) sv[idx] = [m._savedView.zoom, m._savedView.bearing, m._savedView.pitch];
+      });
+      if (Object.keys(sv).length) extras.sv = sv;
+    }
+
+    const hash = Object.keys(extras).length
+      ? `${vertexPoly}!${b64uEncode(JSON.stringify(extras))}`
+      : vertexPoly;
+    return `https://rontomap.web.app/?${params}#${encodeURIComponent(hash)}`;
+  };
+
+  const buildEmbedCode = (url) => {
+    const u = new URL(url);
+    u.searchParams.set("embedded", "true");
+    u.searchParams.set("style", idMapStyle);
+    return `<iframe style="width: 100%; height: 100%; border: none;" allow="fullscreen" scrolling="no" src="${u.toString()}"></iframe>`;
+  };
+
+  // Always copy to clipboard; on native platforms also open the OS share sheet.
+  const shareOrCopy = async ({ text, url, kind }) => {
+    try {
+      await navigator.clipboard.writeText(url || text || "");
+    } catch {
+      // Clipboard may be unavailable in some embedded contexts — fall through to share sheet anyway.
+    }
+    setToastMsg(`${kind} copied.`);
+    setTimeout(() => setToastMsg(null), 2000);
+
+    if (Capacitor.isNativePlatform()) {
+      try {
+        await Share.share({
+          title: "RontoMap",
+          text: text || undefined,
+          url: url || undefined,
+          dialogTitle: `Share ${kind.toLowerCase()}`,
+        });
+      } catch {
+        // User canceled — clipboard copy still happened.
+      }
+    }
+  };
+
   const handleCopyLinkMarker = () => {
-    const center = mapRef.current.getCenter();
-    const zoom = mapRef.current.getZoom();
-    const bearing = mapRef.current.getBearing();
-    const pitch = mapRef.current.getPitch();
-    const ll = markerMenu.marker.getLngLat();
-    const params = new URLSearchParams({
-      lat: center.lat.toFixed(6),
-      long: center.lng.toFixed(6),
-      zoom: zoom.toFixed(2),
-      bearing: bearing.toFixed(1),
-      pitch: pitch.toFixed(1),
-      marker: markerMenu.marker._markerName
-        ? `${ll.lat.toFixed(6)}-${ll.lng.toFixed(6)}-${encodeURIComponent(markerMenu.marker._markerName)}`
-        : `${ll.lat.toFixed(6)}-${ll.lng.toFixed(6)}`,
-    });
-    const url = `https://rontomap.web.app/?${params}`;
-    navigator.clipboard.writeText(url);
+    const url = buildMarkerUrl(markerMenu.marker);
     setMarkerMenu(null);
-    setToastMsg("Link to marker copied.");
-    setTimeout(() => {
-      setToastMsg(null);
-    }, 2000);
+    shareOrCopy({ url, kind: "Link" });
   };
 
   const handleCopyMarkerCode = () => {
-    const center = mapRef.current.getCenter();
-    const zoom = mapRef.current.getZoom();
-    const bearing = mapRef.current.getBearing();
-    const pitch = mapRef.current.getPitch();
-    const ll = markerMenu.marker.getLngLat();
-    const params = new URLSearchParams({
-      lat: center.lat.toFixed(6),
-      long: center.lng.toFixed(6),
-      zoom: zoom.toFixed(2),
-      bearing: bearing.toFixed(1),
-      pitch: pitch.toFixed(1),
-      marker: markerMenu.marker._markerName
-        ? `${ll.lat.toFixed(6)}-${ll.lng.toFixed(6)}-${encodeURIComponent(markerMenu.marker._markerName)}`
-        : `${ll.lat.toFixed(6)}-${ll.lng.toFixed(6)}`,
-      embedded: "true",
-      style: idMapStyle,
-    });
-    const iframe = `<iframe style="width: 100%; height: 100%; border: none;" allow="fullscreen" scrolling="no" src="https://rontomap.web.app/?${params}"></iframe>`;
-    navigator.clipboard.writeText(iframe);
+    const code = buildEmbedCode(buildMarkerUrl(markerMenu.marker));
     setMarkerMenu(null);
-    setToastMsg("Embed code for marker copied.");
-    setTimeout(() => {
-      setToastMsg(null);
-    }, 2000);
+    shareOrCopy({ text: code, kind: "Embed code" });
   };
 
   const handleCopyFeatures = async () => {
-    const center = mapRef.current.getCenter();
-    const zoom = mapRef.current.getZoom();
-    const bearing = mapRef.current.getBearing();
-    const pitch = mapRef.current.getPitch();
     const { markers, paths } = collectFeatures(markersRef, pathsRef, serializeSnappedSegments);
     const docRef = await addDoc(collection(db, "featuresCollections"), {
       created: serverTimestamp(),
       markers,
       paths,
     });
-    const params = new URLSearchParams({
-      lat: center.lat.toFixed(6),
-      long: center.lng.toFixed(6),
-      zoom: zoom.toFixed(2),
-      bearing: bearing.toFixed(1),
-      pitch: pitch.toFixed(1),
-      features_collection: docRef.id,
-    });
+    const params = new URLSearchParams(buildBaseParams());
+    params.set("features_collection", docRef.id);
     const url = `https://rontomap.web.app/?${params}`;
-    navigator.clipboard.writeText(url);
     setMapClickMenu(null);
-    setToastMsg("Link to features copied.");
-    setTimeout(() => {
-      setToastMsg(null);
-    }, 2000);
+    shareOrCopy({ url, kind: "Link" });
   };
 
   const handleCopyFeaturesCode = async () => {
-    const center = mapRef.current.getCenter();
-    const zoom = mapRef.current.getZoom();
-    const bearing = mapRef.current.getBearing();
-    const pitch = mapRef.current.getPitch();
     const { markers, paths } = collectFeatures(markersRef, pathsRef, serializeSnappedSegments);
     const docRef = await addDoc(collection(db, "featuresCollections"), {
       created: serverTimestamp(),
       markers,
       paths,
     });
-    const params = new URLSearchParams({
-      lat: center.lat.toFixed(6),
-      long: center.lng.toFixed(6),
-      zoom: zoom.toFixed(2),
-      bearing: bearing.toFixed(1),
-      pitch: pitch.toFixed(1),
-      features_collection: docRef.id,
-      embedded: "true",
-      style: idMapStyle,
-    });
-    const iframe = `<iframe style="width: 100%; height: 100%; border: none;" allow="fullscreen" scrolling="no" src="https://rontomap.web.app/?${params}"></iframe>`;
-    navigator.clipboard.writeText(iframe);
+    const params = new URLSearchParams(buildBaseParams());
+    params.set("features_collection", docRef.id);
+    const url = `https://rontomap.web.app/?${params}`;
     setMapClickMenu(null);
-    setToastMsg("Embed code for features copied.");
-    setTimeout(() => {
-      setToastMsg(null);
-    }, 2000);
+    shareOrCopy({ text: buildEmbedCode(url), kind: "Embed code" });
   };
 
   // --- Import/Export handlers ---
@@ -3757,7 +4050,7 @@ export default function Map() {
     setMapClickMenu(null);
     if (!path) return;
     const data = collectPath(path, serializeSnappedSegments);
-    const baseName = path.startName || (path.isTrack ? "track" : "path");
+    const baseName = path.name || (path.isTrack ? "track" : "path");
     setExportAlert({ data, scope: { type: "path", path: data.paths[0] }, baseName });
   };
 
@@ -3886,7 +4179,7 @@ export default function Map() {
   };
 
   const handleSetNameMarker = () => {
-    namingMarkerRef.current = markerMenu.marker;
+    namingTargetRef.current = { type: "marker", target: markerMenu.marker };
     setMarkerMenu(null);
     setNameAlert(true);
   };
@@ -3946,33 +4239,26 @@ export default function Map() {
 
   const handleFeatureShare = () => {
     if (!selectedFeature) return;
-    const center = mapRef.current.getCenter();
-    const zoom = mapRef.current.getZoom();
-    const bearing = mapRef.current.getBearing();
-    const pitch = mapRef.current.getPitch();
+    let url = null;
     if (selectedFeature.type === "marker") {
-      const ll = selectedFeature.marker.getLngLat();
-      const params = new URLSearchParams({
-        lat: center.lat.toFixed(6), long: center.lng.toFixed(6),
-        zoom: zoom.toFixed(2), bearing: bearing.toFixed(1), pitch: pitch.toFixed(1),
-        marker: selectedFeature.marker._markerName
-          ? `${ll.lat.toFixed(6)}-${ll.lng.toFixed(6)}-${encodeURIComponent(selectedFeature.marker._markerName)}`
-          : `${ll.lat.toFixed(6)}-${ll.lng.toFixed(6)}`,
-      });
-      navigator.clipboard.writeText(`https://rontomap.web.app/?${params}`);
-      setToastMsg("Link copied.");
+      url = buildMarkerUrl(selectedFeature.marker);
     } else if (selectedFeature.type === "path") {
-      const path = selectedFeature.path;
-      if (path.vertices.length === 0) return;
-      const start = path.vertices[0].lngLat;
-      const params = new URLSearchParams({
-        lat: start[1].toFixed(6), long: start[0].toFixed(6),
-        zoom: zoom.toFixed(2), bearing: bearing.toFixed(1), pitch: pitch.toFixed(1),
-      });
-      navigator.clipboard.writeText(`https://rontomap.web.app/?${params}`);
-      setToastMsg("Link copied.");
+      url = buildPathUrl(selectedFeature.path);
     }
-    setTimeout(() => setToastMsg(null), 2000);
+    if (!url) return;
+    shareOrCopy({ url, kind: "Link" });
+  };
+
+  const handleFeatureEmbed = () => {
+    if (!selectedFeature) return;
+    let url = null;
+    if (selectedFeature.type === "marker") {
+      url = buildMarkerUrl(selectedFeature.marker);
+    } else if (selectedFeature.type === "path") {
+      url = buildPathUrl(selectedFeature.path);
+    }
+    if (!url) return;
+    shareOrCopy({ text: buildEmbedCode(url), kind: "Embed code" });
   };
 
   const handleFeatureTrace = () => {
@@ -4036,29 +4322,37 @@ export default function Map() {
     setMapClickMenu(null);
   };
 
-  const handleToggleMarkerDrag = () => {
-    const marker = markerMenu.marker;
-    marker.setDraggable(!marker.isDraggable());
-    setMarkerMenu(null);
-  };
-
   const handleAddMarkerFromMenu = () => {
     const m = createMarkerRef.current(mapClickMenu.lngLat);
-    if (featuresLockedRef.current) {
-      m.setDraggable(false);
-    }
     setMapClickMenu(null);
+    // Auto-open the detail panel; the selectedFeature effect handles drag enable.
+    setSelectedFeature({ type: "marker", marker: m });
+    setIsSheetExpanded(false);
   };
 
-  const handleStartPathCreation = (overrideLngLat) => {
+  const handleStartPathCreation = (opts) => {
     if (isRecordingTrackRef.current) {
       setMapClickMenu(null);
       setToastMsg("Stop recording first.");
       setTimeout(() => setToastMsg(null), 2000);
       return;
     }
-    const ll = overrideLngLat || mapClickMenu.lngLat;
-    const lngLat = [ll.lng, ll.lat];
+
+    // Determine starting location and whether to auto-create the first vertex.
+    // - From context menu (no opts): use mapClickMenu.lngLat and adopt the context dot as the start vertex.
+    // - From side menu (opts.noAutoVertex === true): no starting point — user must click the map.
+    const fromContextMenu = !opts || (!opts.noAutoVertex && !opts.overrideLngLat);
+    let ll = null;
+    let adoptedDot = null;
+    if (fromContextMenu) {
+      if (!mapClickMenu) return;
+      ll = mapClickMenu.lngLat;
+      // Detach the context dot so the mapClickMenu cleanup effect won't remove it.
+      adoptedDot = contextDotRef.current;
+      contextDotRef.current = null;
+    } else if (opts && opts.overrideLngLat) {
+      ll = opts.overrideLngLat;
+    }
     setMapClickMenu(null);
 
     // Finish any active unfinished path
@@ -4106,15 +4400,39 @@ export default function Map() {
     const h = pathHelpersRef.current;
     h.ensurePathLayer(newPath);
 
-    // Create first vertex
-    const marker = h.createPathVertex(lngLat);
-    const vertex = { lngLat, marker, path: newPath };
-    newPath.vertices.push(vertex);
-    setPathVertexCount(1);
-    h.attachVertexDragHandler(vertex);
-    h.attachFinishHandler(vertex);
-    h.updatePathLine(newPath);
-    h.updateVertexStyles(newPath);
+    if (ll) {
+      // Create first vertex — adopt the context dot's DOM element when available
+      // so the dot visually transforms into the start point.
+      const lngLat = [ll.lng, ll.lat];
+      let marker;
+      if (adoptedDot) {
+        const el = adoptedDot.getElement();
+        // Reuse the same element but swap classes to path-vertex
+        el.className = "path-vertex active-path-feature";
+        adoptedDot.remove();
+        marker = new mapboxgl.Marker({ element: el, draggable: true, anchor: "center" })
+          .setLngLat(lngLat)
+          .addTo(mapRef.current);
+        const origSetDraggable = marker.setDraggable.bind(marker);
+        marker.setDraggable = (v) => {
+          origSetDraggable(v);
+          if (v) el.classList.remove("not-draggable");
+          else el.classList.add("not-draggable");
+        };
+      } else {
+        marker = h.createPathVertex(lngLat);
+      }
+      const vertex = { lngLat, marker, path: newPath };
+      newPath.vertices.push(vertex);
+      setPathVertexCount(1);
+      h.attachVertexDragHandler(vertex);
+      h.attachFinishHandler(vertex);
+      h.updatePathLine(newPath);
+      h.updateVertexStyles(newPath);
+    } else {
+      setPathVertexCount(0);
+    }
+
     setToastMsg("Click on map to add path points.");
     setTimeout(() => {
       setToastMsg(null);
@@ -4153,7 +4471,6 @@ export default function Map() {
     isRecordingPausedRef.current = false;
     setRecordingElapsed(0);
     setRecordingDistance(0);
-    setRecordingSnapMode(null);
     pathUndoStackRef.current = [];
     pathRedoStackRef.current = [];
     setCanUndo(false);
@@ -4216,7 +4533,6 @@ export default function Map() {
       midpoints: [],
       isFinished: false,
       isTrack: true,
-      roadSnap: recordingSnapMode,
     };
     pathsRef.current.push(newPath);
     trackPathRef.current = newPath;
@@ -4232,10 +4548,11 @@ export default function Map() {
     newPath.vertices.push({ lngLat: [userLng, userLat], marker: startMarker, path: newPath });
     h.updateVertexStyles(newPath);
 
-    // Activate wake lock for continuous GPS
-    await ctrl._requestWakeLock();
-
     setIsRecordingStarted(true);
+
+    // Start bearing tracking — this also acquires the wake lock and shows the
+    // stop_tracking_bearing icon, which the user clicks to pause recording.
+    await ctrl._handleTrackBearing();
 
     // Start elapsed timer
     recordingStartTimeRef.current = Date.now();
@@ -4292,7 +4609,7 @@ export default function Map() {
       bgWatcherIdRef.current = watcherId;
     }
 
-    setToastMsg("Click tracking icon to pause.");
+    setToastMsg("Click stop tracking to pause recording.");
     setTimeout(() => setToastMsg(null), 3000);
   };
 
@@ -4319,7 +4636,8 @@ export default function Map() {
     }
     setIsRecordingPaused(false);
     isRecordingPausedRef.current = false;
-    setToastMsg("Recording resumed. Click tracking icon to pause.");
+    locationControlRef.current?._handleTrackBearing();
+    setToastMsg("Recording resumed. Click stop tracking to pause.");
     setTimeout(() => setToastMsg(null), 2000);
   };
 
@@ -4429,8 +4747,15 @@ export default function Map() {
       bgWatcherIdRef.current = null;
     }
 
-    // Release wake lock
-    locationControlRef.current?._releaseWakeLock();
+    // If bearing tracking is still active (e.g. user stopped from side menu while tracking),
+    // exit it cleanly so the map returns to free view.
+    const ctrl = locationControlRef.current;
+    if (ctrl?.isTrackingBearing()) {
+      ctrl._handleStopTrackingBearing();
+    }
+
+    // Release wake lock (no-op if _handleStopTrackingBearing already released it)
+    ctrl?._releaseWakeLock();
 
     setIsRecordingRoute(false);
     trackPathRef.current = null;
@@ -5339,9 +5664,25 @@ export default function Map() {
     const path = mapClickMenu.path;
     setMapClickMenu(null);
     if (path && path.vertices.length > 0) {
-      namingMarkerRef.current = path.vertices[0].marker;
+      namingTargetRef.current = { type: "path", target: path };
       setNameAlert(true);
     }
+  };
+
+  const handleCopyLinkPath = () => {
+    const path = mapClickMenu?.path;
+    setMapClickMenu(null);
+    if (!path) return;
+    const url = buildPathUrl(path);
+    if (url) shareOrCopy({ url, kind: "Link" });
+  };
+
+  const handleCopyPathCode = () => {
+    const path = mapClickMenu?.path;
+    setMapClickMenu(null);
+    if (!path) return;
+    const url = buildPathUrl(path);
+    if (url) shareOrCopy({ text: buildEmbedCode(url), kind: "Embed code" });
   };
 
 
@@ -5403,9 +5744,14 @@ export default function Map() {
               input.focus();
               input.addEventListener("keydown", (e) => {
                 if (e.key === "Enter") {
-                  if (namingMarkerRef.current) {
-                    namingMarkerRef.current._markerName = input.value || "";
-                    updateMarkerLabel(namingMarkerRef.current);
+                  const t = namingTargetRef.current;
+                  if (t) {
+                    if (t.type === "path") {
+                      t.target.name = input.value || "";
+                    } else {
+                      t.target._markerName = input.value || "";
+                      updateMarkerLabel(t.target);
+                    }
                   }
                   setNameAlert(false);
                 }
@@ -5413,27 +5759,43 @@ export default function Map() {
             }
           }, 100);
         }}
-        header="Marker name"
+        header={namingTargetRef.current?.type === "path" ? "Path name" : "Marker name"}
         inputs={[
-          { name: "name", type: "text", placeholder: "Enter name", value: namingMarkerRef.current?._markerName ?? "" },
+          {
+            name: "name",
+            type: "text",
+            placeholder: "Enter name",
+            value:
+              namingTargetRef.current?.type === "path"
+                ? namingTargetRef.current?.target?.name ?? ""
+                : namingTargetRef.current?.target?._markerName ?? "",
+          },
         ]}
         buttons={[
           { text: "Cancel", role: "cancel" },
           {
             text: "Clear",
             handler: () => {
-              if (namingMarkerRef.current) {
-                namingMarkerRef.current._markerName = "";
-                updateMarkerLabel(namingMarkerRef.current);
+              const t = namingTargetRef.current;
+              if (!t) return;
+              if (t.type === "path") {
+                t.target.name = "";
+              } else {
+                t.target._markerName = "";
+                updateMarkerLabel(t.target);
               }
             },
           },
           {
             text: "OK",
             handler: (data) => {
-              if (namingMarkerRef.current) {
-                namingMarkerRef.current._markerName = data.name || "";
-                updateMarkerLabel(namingMarkerRef.current);
+              const t = namingTargetRef.current;
+              if (!t) return;
+              if (t.type === "path") {
+                t.target.name = data.name || "";
+              } else {
+                t.target._markerName = data.name || "";
+                updateMarkerLabel(t.target);
               }
             },
           },
@@ -5565,14 +5927,11 @@ export default function Map() {
             <button onClick={handleCenterToMarker}>{markerMenu.marker._sightPath ? "Center to sight" : "Center to marker"}</button>
             <button onClick={handleNavigateToMarker}>{markerMenu.marker._sightPath ? "Navigate to sight" : "Navigate to marker"}</button>
             <button onClick={handleCopyLinkMarker}>{markerMenu.marker._sightPath ? "Copy link to sight" : "Copy link to marker"}</button>
-            <button onClick={handleCopyMarkerCode}>{markerMenu.marker._sightPath ? "Copy sight code" : "Copy marker code"}</button>
+            <button onClick={handleCopyMarkerCode}>{markerMenu.marker._sightPath ? "Copy embeded sight" : "Copy embeded marker"}</button>
             {markerMenu.marker._sightPath && <button onClick={handleDetachSight}>Detach from path</button>}
             <button onClick={handleSetNameMarker}>{markerMenu.marker._sightPath ? "Set name to sight" : "Set name to marker"}</button>
             <button onClick={handleRecordMarkerView}>{markerMenu.marker._sightPath ? "Record sight view" : "Record marker view"}</button>
             <button onClick={handleExportMarker}>{markerMenu.marker._sightPath ? "Export sight" : "Export marker"}</button>
-            <button onClick={handleToggleMarkerDrag}>
-              {markerMenu.marker.isDraggable() ? "Disable drag" : "Enable drag"}
-            </button>
             <button onClick={handleDeleteMarker}>{markerMenu.marker._sightPath ? "Delete sight" : "Delete marker"}</button>
           </div>
         </>
@@ -5580,10 +5939,13 @@ export default function Map() {
       {isSideMenuOpen && (
         <>
           <div className="side-menu-overlay" onClick={() => setIsSideMenuOpen(false)} />
-          <div className={`side-menu${idMapStyle === "rontomap_streets_dark" ? " side-menu-dark" : ""}`}>
+          <div
+            {...sideMenuSwipe}
+            className={`side-menu${idMapStyle === "rontomap_streets_dark" ? " side-menu-dark" : ""}`}
+          >
             <button onClick={() => {
               setIsSideMenuOpen(false);
-              handleStartPathCreation(mapRef.current.getCenter());
+              handleStartPathCreation({ noAutoVertex: true });
             }}>Start path creation</button>
             {isRecordingTrack ? (
               <button onClick={() => { setIsSideMenuOpen(false); handleStopTrackRecording(); }}>Stop path recording</button>
@@ -5593,7 +5955,7 @@ export default function Map() {
             <div className="side-menu-separator" />
             <button onClick={() => { setIsSideMenuOpen(false); handleImportFeatures(); }}>Import features</button>
             <button onClick={() => { setIsSideMenuOpen(false); handleExportAll(); }}>Export features</button>
-            <button onClick={() => { setIsSideMenuOpen(false); handleCopyFeaturesCode(); }}>Copy features code</button>
+            <button onClick={() => { setIsSideMenuOpen(false); handleCopyFeaturesCode(); }}>Copy embeded feature</button>
             <button onClick={() => { setIsSideMenuOpen(false); handleCopyFeatures(); }}>Copy link to features</button>
             <div className="side-menu-separator" />
             <button onClick={() => { setIsSideMenuOpen(false); handleDeleteAllFeatures(); }}>Delete all features</button>
@@ -5638,6 +6000,8 @@ export default function Map() {
                 <button onClick={handleTracePath}>Trace path</button>
                 <button onClick={handleSetPathName}>Set path name</button>
                 <button onClick={handleRecordPathView}>Record path view</button>
+                <button onClick={handleCopyLinkPath}>Copy link to path</button>
+                <button onClick={handleCopyPathCode}>Copy embeded path</button>
                 <button onClick={handleExportPath}>Export path</button>
                 <button onClick={handleDeletePath}>Delete path</button>
               </>
@@ -5768,41 +6132,28 @@ export default function Map() {
       )}
       {isRecordingMode && (
         <div className={`path-actions${idMapStyle === "rontomap_streets_dark" ? " path-actions-dark" : ""}`}>
-          <div className="path-actions-group">
-            <button className="undo-btn" disabled={!canUndo} onClick={undoRecordingPath}>
-              Undo
-            </button>
-            <button className="redo-btn" disabled={!canRedo} onClick={redoRecordingPath}>
-              Redo
-            </button>
-            <button className="cancel-btn" onClick={handleStopTrackRecording}>
-              Stop
-            </button>
-            {!isRecordingStarted ? (
-              <button className="save-btn" onClick={handleStartRecording}>
-                Start
+          {(!isRecordingStarted || isRecordingPaused) && (
+            <div className="path-actions-group">
+              <button className="undo-btn" disabled={!canUndo} onClick={undoRecordingPath}>
+                Undo
               </button>
-            ) : (
-              <button
-                className="save-btn"
-                onClick={isRecordingPaused ? handleResumeRecording : handlePauseRecording}
-              >
-                {isRecordingPaused ? "Resume" : "Pause"}
+              <button className="redo-btn" disabled={!canRedo} onClick={redoRecordingPath}>
+                Redo
               </button>
-            )}
-          </div>
-          <div className="snap-toggle">
-            {[null, "foot", "bike", "car"].map((mode) => (
-              <button
-                key={mode ?? "none"}
-                className={recordingSnapMode === mode ? "active" : ""}
-                disabled={isRecordingStarted}
-                onClick={() => setRecordingSnapMode(mode)}
-              >
-                {mode === null ? "Free" : mode === "foot" ? "Foot" : mode === "bike" ? "Bike" : "Car"}
+              <button className="cancel-btn" onClick={handleStopTrackRecording}>
+                Stop
               </button>
-            ))}
-          </div>
+              {!isRecordingStarted ? (
+                <button className="save-btn" onClick={handleStartRecording}>
+                  Start
+                </button>
+              ) : (
+                <button className="save-btn" onClick={handleResumeRecording}>
+                  Resume
+                </button>
+              )}
+            </div>
+          )}
           {isRecordingStarted && (
             <div className="route-info">
               <span>{formatDistance(recordingDistance)}</span>
@@ -5814,9 +6165,12 @@ export default function Map() {
       )}
       {selectedFeature && (
         <>
-          <div className="feature-panel-overlay" onClick={() => setSelectedFeature(null)} />
           <div
-            ref={featurePanelRef}
+            {...featurePanelSwipe}
+            ref={(el) => {
+              featurePanelRef.current = el;
+              featurePanelSwipe.ref(el);
+            }}
             className={`feature-panel${idMapStyle === "rontomap_streets_dark" ? " feature-panel-dark" : ""}${isSheetExpanded ? " feature-panel-expanded" : ""}`}
           >
             <div
@@ -5829,28 +6183,43 @@ export default function Map() {
               <div className="feature-panel-handle-bar" />
             </div>
             <div className="feature-panel-actions">
-              <button onClick={handleFeatureFlyTo} title="Fly to">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>
-              </button>
-              <button onClick={handleFeatureCenterTo} title="Center to">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/></svg>
-              </button>
-              <button onClick={handleFeatureNavigateTo} title="Navigate to">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg>
-              </button>
-              <button onClick={handleFeatureShare} title="Share">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
-              </button>
-              {selectedFeature.type === "path" && (
-                <button onClick={handleFeatureTrace} title="Trace path">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 19L19 5"/><polyline points="15 5 19 5 19 9"/><circle cx="5" cy="19" r="2"/></svg>
+              <LongPressTooltip label="Fly to">
+                <button onClick={handleFeatureFlyTo}>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>
                 </button>
+              </LongPressTooltip>
+              <LongPressTooltip label="Center to">
+                <button onClick={handleFeatureCenterTo}>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/></svg>
+                </button>
+              </LongPressTooltip>
+              <LongPressTooltip label="Navigate to">
+                <button onClick={handleFeatureNavigateTo}>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg>
+                </button>
+              </LongPressTooltip>
+              <LongPressTooltip label="Share">
+                <button onClick={handleFeatureShare}>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+                </button>
+              </LongPressTooltip>
+              <LongPressTooltip label="Embed">
+                <button onClick={handleFeatureEmbed}>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+                </button>
+              </LongPressTooltip>
+              {selectedFeature.type === "path" && (
+                <LongPressTooltip label="Trace path">
+                  <button onClick={handleFeatureTrace}>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 19L19 5"/><polyline points="15 5 19 5 19 9"/><circle cx="5" cy="19" r="2"/></svg>
+                  </button>
+                </LongPressTooltip>
               )}
             </div>
             <div className="feature-panel-name">
               {selectedFeature.type === "marker"
                 ? selectedFeature.marker._markerName || (selectedFeature.marker._sightPath ? "Sight" : "Marker")
-                : selectedFeature.path.startName || "Path"}
+                : selectedFeature.path.name || "Path"}
             </div>
             <div className="feature-panel-details">
               {selectedFeature.type === "marker" && (
@@ -5858,11 +6227,35 @@ export default function Map() {
                   {selectedFeature.marker.getLngLat().lat.toFixed(6)}, {selectedFeature.marker.getLngLat().lng.toFixed(6)}
                 </div>
               )}
-              {selectedFeature.type === "path" && selectedFeature.path.vertices.length > 0 && (
-                <div className="feature-panel-coords">
-                  {selectedFeature.path.vertices[0].lngLat[1].toFixed(6)}, {selectedFeature.path.vertices[0].lngLat[0].toFixed(6)}
-                </div>
-              )}
+              {selectedFeature.type === "path" && selectedFeature.path.vertices.length > 0 && (() => {
+                const path = selectedFeature.path;
+                const snapLabel =
+                  path.roadSnap === "foot" ? "Foot"
+                  : path.roadSnap === "bike" ? "Bike"
+                  : path.roadSnap === "car" ? "Car"
+                  : "Free";
+                let dist = path.routeDistance;
+                if (dist == null && path.vertices.length >= 2) {
+                  dist = haversineDistance(path.vertices.map((v) => v.lngLat));
+                }
+                return (
+                  <div className="feature-panel-meta">
+                    <span>{snapLabel}</span>
+                    {dist != null && (
+                      <>
+                        <span className="route-info-separator">&middot;</span>
+                        <span>{formatDistance(dist)}</span>
+                      </>
+                    )}
+                    {path.routeDuration != null && (
+                      <>
+                        <span className="route-info-separator">&middot;</span>
+                        <span>{formatDuration(path.routeDuration)}</span>
+                      </>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           </div>
         </>
