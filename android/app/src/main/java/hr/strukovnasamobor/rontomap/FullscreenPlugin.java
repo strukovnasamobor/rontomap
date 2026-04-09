@@ -33,4 +33,18 @@ public class FullscreenPlugin extends Plugin {
             call.reject("Activity not available");
         }
     }
+
+    @PluginMethod
+    public void setNavigationBarColor(PluginCall call) {
+        final String color = call.getString("color");
+        MainActivity activity = (MainActivity) getActivity();
+        if (activity != null) {
+            activity.runOnUiThread(() -> {
+                activity.setNavigationBarColor(color);
+                call.resolve();
+            });
+        } else {
+            call.reject("Activity not available");
+        }
+    }
 }

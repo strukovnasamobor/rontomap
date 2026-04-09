@@ -1,22 +1,24 @@
+RESOLVING PARALLEL ACTIONS
+id|action                       | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10|  
+=========================================================================
+ 1| search                      | - | + | + | + | S | + | + | + | + | + |
+ 2| import/export/copy/delete   | - | - | - | - | - | - | - | - | - | - |
+ 3| compass & style change      | - | - | - | - | - | - | - | - | - | - |
+ 4| user tracking location      | - | - | - | - | - | - | - | - | - | - |
+ 5| user tracking bearing       | - | - | - | - | - | - | - | - | - | - |                                              
+ 6| path creation               | - | - | - | - | - | - | - | - | - | - |                                             
+ 7| path recording              | - | - | - | - | - | - | - | - | - | - |                                              
+ 8| path tracing                | - | - | - | - | - | - | - | - | - | - |                                               
+ 9| route navigation            | - | - | - | - | - | - | - | - | - | - |                                               
+10| feature actions             | - | - | - | - | - | - | - | - | - | - |
+
 - in recording path start tracking user bearing same as clicking start/resume, on start show toast msg "Click stop tracking to pause recording". 
   elapsed time in format hh:mm (do not count time in pause), on geolocate remove tost msg "recording paused",
   tracking info at bottom
-
-- conflicting action in parallel
-  ? when user tracking bearing
-  - path creation - disable new path creation - allow path recording, path tracing, rote navigation
-  - path recording
-  - path tracing
-  - route navigation
-  - features and menu actions
-
-? on web put background white nav bar and change in dark for dark map
-? on mobile show detail panel above navigation buttons, nav buttons background put in white and for dark map in black
-- action ordering, icons, new actions, description on focus/tap/hover?
-- whre to show marker/path list
+- add menu option to show features list in detail panel
 
 OFLINE MAPS AND NAVIGATION
-- menu options for offline maps
+- menu options for offline maps 
 - offline first data
 
 - deploy version 1.3. (4), generate functionalities description
@@ -64,14 +66,21 @@ UI DESIGN & INTERACTIONS
     - middle - toast msg
     - right - map change style & location icon (in embedded hidden)
 - right sidebar - menu 
-- left mouse click / tap on feature opens detail panel
+- left mouse click / tap on feature => detail panel opens
     - on landscape - left sidebar
     - on portrait - peeking bottom sheet
-        - actiopn icons: fly to, center to, navigate to, copy link, copy embed code, for path - path tracing
+        - action icons: 
+            - marker: Center to marker, Fly to marker, Navigate to marker, Copy link to marker, Copy embedded marker 
+            - sight: Center to sight, Fly to sight, Navigate to sight, Copy link to sight, Copy embedded sight
+            - path: Center to path, Fly to path, Navigate to path start, Copy link to path, Copy embedded path, Trace path
         - name of feature
         - for marker/sight - coordinates, for path - snapping, length, duration
 - double left mouse click / double tap => fullscreen enter/exit
-- right mouse click / long tap on map/feature => context menu open
+- right mouse click / long tap on map/feature => context menu opens
+    - map: Center here, Navigate here, Add marker here, Create path here
+    - marker: Center to marker, Fly to marker, Navigate to marker, Copy link to marker, Copy embedded marker, Set name to marker, Save view to marker, Export marker, Delete marker
+    - sight: Center to sight, Fly to sight, Navigate to sight, Copy link to sight, Copy embedded sight, Set name to sight, Save view to sight, Export sight, Detach sight, Delete sight
+    - path: Center to path, Fly to path, Navigate to path start, Copy link to path, Copy embedded path, Trace path, Edit path, Reverse path, Add sight to path, Set name to path, Save view to path, Export path, Delete path
 - mouse wheel => zoom in/out
 - mouse over locked feature (alias cursor icon)
 - mouse over unlocked feature (grab cursor icon)
@@ -158,15 +167,15 @@ SHARING LINKS & EMBEDDED CODE
     https://rontomap.web.app/
     ?lat=<center_lat>&long=<center_lng>&zoom=<z>&bearing=<b>&pitch=<p>
     &marker=<lat>-<lng>-<urlEncodedName>
-    &saved_view=<lat>-<lng>-<z>-<b>-<p>      [optional, only if marker._savedView]
+    &saved_view=<lat>-<lng>-<z>-<b>-<p>     [optional, only if marker._savedView]
 - path
     https://rontomap.web.app/
     ?lat=<center_lat>&long=<center_lng>&zoom=<z>&bearing=<b>&pitch=<p>
-    &path=<urlEncodedName>                     [optional]
+    &path=<urlEncodedName>                  [optional]
     &road_snap=<free|foot|bike|car>
-    &is_circuit=<true|false>                   [optional, only if true]
-    &sight=<segIdx>-<t>-<urlEncodedName>       [repeated, one per sight]
-    &saved_view=<lat>-<lng>-<z>-<b>-<p>        [optional, only if path.savedView]
+    &is_circuit=<true|false>                [optional, only if true]
+    &sight=<segIdx>-<t>-<urlEncodedName>    [repeated, one per sight]
+    &saved_view=<lat>-<lng>-<z>-<b>-<p>     [optional, only if path.savedView]
 - features
     ?lat=<center_lat>&long=<center_lng>&zoom=<z>&bearing=<b>&pitch=<p>
     &features_collection=<docId>

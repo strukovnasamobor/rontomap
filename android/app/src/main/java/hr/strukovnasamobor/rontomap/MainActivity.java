@@ -1,6 +1,8 @@
 package hr.strukovnasamobor.rontomap;
 
 import android.content.Intent;
+import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -8,6 +10,7 @@ import android.util.Base64;
 import android.view.View;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
+import android.webkit.WebView;
 import com.getcapacitor.BridgeActivity;
 
 import java.io.ByteArrayOutputStream;
@@ -23,13 +26,63 @@ public class MainActivity extends BridgeActivity {
 
         super.onCreate(savedInstanceState);
 
-        // Set navigation bar to black on startup
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            getWindow().setNavigationBarColor(android.graphics.Color.parseColor("#000000"));
-            getWindow().setStatusBarColor(android.graphics.Color.parseColor("#000000"));
+        // Edge-to-edge: draw content behind the system bars so a transparent
+        // nav/status bar actually reveals the map underneath (instead of the
+        // window background). Must be set before the bars are made transparent.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            getWindow().setDecorFitsSystemWindows(false);
+        } else {
+            View decor = getWindow().getDecorView();
+            decor.setSystemUiVisibility(
+                    decor.getSystemUiVisibility()
+                            | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+            );
         }
 
+        // Transparent system bars so the map shows through. The nav-bar color
+        // is then driven from JS (setNavigationBarColor) to match the feature
+        // panel when it's open in portrait.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            getWindow().setStatusBarColor(Color.TRANSPARENT);
+            getWindow().setNavigationBarColor(Color.TRANSPARENT);
+        }
+        // Android 10+ enforces a contrast scrim on transparent system bars by
+        // default — opt out so "transparent" is actually transparent.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            getWindow().setNavigationBarContrastEnforced(false);
+            getWindow().setStatusBarContrastEnforced(false);
+        }
+
+        // Window background must be a non-null drawable; black so that any
+        // strip not covered by the WebView (e.g. on MIUI's reported viewport)
+        // is black, not the AppCompat DayNight default (~white).
+        getWindow().setBackgroundDrawable(new ColorDrawable(Color.BLACK));
+
+        // Force the Capacitor WebView itself transparent. Capacitor's Bridge
+        // does this only if "backgroundColor" is set in capacitor.config.json
+        // (now done), but we also re-apply it here as a hard guarantee. We
+        // post() it so it runs after the bridge has finished laying out the
+        // view tree — some MIUI ROMs reset the WebView background mid-init.
+        applyWebViewTransparent();
+
         handleDeepLink(getIntent());
+    }
+
+    private void applyWebViewTransparent() {
+        if (getBridge() == null || getBridge().getWebView() == null) return;
+        final WebView wv = getBridge().getWebView();
+        wv.setBackgroundColor(Color.TRANSPARENT);
+        wv.post(() -> wv.setBackgroundColor(Color.TRANSPARENT));
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        // Re-apply on resume — some MIUI configurations reset the WebView
+        // background when the activity returns from background.
+        applyWebViewTransparent();
     }
 
     @Override
@@ -151,6 +204,21 @@ public class MainActivity extends BridgeActivity {
         }
     }
 
+    public void setNavigationBarColor(String colorStr) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) return;
+        int color;
+        if (colorStr == null || "transparent".equalsIgnoreCase(colorStr)) {
+            color = android.graphics.Color.TRANSPARENT;
+        } else {
+            try {
+                color = android.graphics.Color.parseColor(colorStr);
+            } catch (IllegalArgumentException e) {
+                return;
+            }
+        }
+        getWindow().setNavigationBarColor(color);
+    }
+
     public void exitFullscreen() {
         // Use new API for Android 11+ (API 30+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -170,10 +238,11 @@ public class MainActivity extends BridgeActivity {
             decorView.setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
         }
 
-        // Reset to default system bar colors
+        // Reset to transparent bars; JS (setNavigationBarColor) will re-apply
+        // the panel color on the next feature-panel effect run.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            getWindow().setStatusBarColor(android.graphics.Color.parseColor("#000000"));
-            getWindow().setNavigationBarColor(android.graphics.Color.parseColor("#000000"));
+            getWindow().setStatusBarColor(android.graphics.Color.TRANSPARENT);
+            getWindow().setNavigationBarColor(android.graphics.Color.TRANSPARENT);
         }
     }
 }

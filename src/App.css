@@ -1,3 +1,9 @@
+html, body {
+  /* Black so a transparent Android nav bar reveals black, not white,
+     in the strip beneath the WebView's reported viewport on MIUI/Xiaomi. */
+  background: #000000;
+}
+
 body {
   /* Prevent history back and forward on swipe */
   overscroll-behavior-x: none; /* Prevent left/right overscroll chaining */

@@ -1,7 +1,15 @@
 import "./Map.css";
 import PageFixedLayout from "../components/PageFixedLayout";
 import Fullscreen from "../plugins/Fullscreen";
-import { useIonViewWillEnter, IonAlert } from "@ionic/react";
+import { useIonViewWillEnter, IonAlert, IonIcon } from "@ionic/react";
+import {
+  locateOutline,
+  rocketOutline,
+  navigateOutline,
+  linkOutline,
+  codeSlashOutline,
+  golfOutline,
+} from "ionicons/icons";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useDoubleTap } from "use-double-tap";
 import { useSwipeable } from "react-swipeable";
@@ -85,6 +93,69 @@ const deserializeSnappedSegments = (segments) =>
         : seg.type,
     coords: seg.coords.map((c) => [c.lng, c.lat]),
   }));
+
+// Icon button used in the feature panel: shows a tooltip with the action name on
+// desktop hover and on touch long-press (long-press also suppresses the click).
+function ActionIconButton({ label, onClick, children }) {
+  const [tooltipVisible, setTooltipVisible] = useState(false);
+  const longPressTimerRef = useRef(null);
+  const longPressFiredRef = useRef(false);
+
+  const clearLongPress = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
+
+  const handleTouchStart = () => {
+    longPressFiredRef.current = false;
+    clearLongPress();
+    longPressTimerRef.current = setTimeout(() => {
+      longPressFiredRef.current = true;
+      setTooltipVisible(true);
+    }, 500);
+  };
+
+  const handleTouchEnd = () => {
+    clearLongPress();
+    if (longPressFiredRef.current) {
+      setTimeout(() => setTooltipVisible(false), 1200);
+    }
+  };
+
+  const handleClick = (e) => {
+    if (longPressFiredRef.current) {
+      longPressFiredRef.current = false;
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    onClick?.(e);
+  };
+
+  return (
+    <button
+      type="button"
+      className="action-icon-btn"
+      onClick={handleClick}
+      onMouseEnter={() => setTooltipVisible(true)}
+      onMouseLeave={() => setTooltipVisible(false)}
+      onTouchStart={handleTouchStart}
+      onTouchMove={clearLongPress}
+      onTouchEnd={handleTouchEnd}
+      onTouchCancel={() => {
+        clearLongPress();
+        setTooltipVisible(false);
+      }}
+    >
+      {children}
+      <span className={`action-icon-tooltip${tooltipVisible ? " action-icon-tooltip-visible" : ""}`}>
+        {label}
+      </span>
+    </button>
+  );
+}
 
 export default function Map() {
   const mapRef = useRef(null);
@@ -3822,15 +3893,6 @@ export default function Map() {
     if (markerMenu || mapClickMenu || isSideMenuOpen) setSelectedFeature(null);
   }, [markerMenu, mapClickMenu, isSideMenuOpen]);
 
-  // Show a transient toast labeling the icon-only button the user just touched.
-  // Re-armable: tapping another button replaces the message and resets the timer.
-  const buttonToastTimerRef = useRef(null);
-  const showButtonToast = (label) => {
-    setToastMsg(label);
-    if (buttonToastTimerRef.current) clearTimeout(buttonToastTimerRef.current);
-    buttonToastTimerRef.current = setTimeout(() => setToastMsg(null), 1500);
-  };
-
   // Dynamic toast position: 10px above feature panel in portrait
   const [toastBottom, setToastBottom] = useState(null);
   useEffect(() => {
@@ -3855,6 +3917,23 @@ export default function Map() {
     return () => clearTimeout(tid);
   }, [selectedFeature, isSheetExpanded]);
 
+  // Android: paint the system nav-bar background to match the feature panel in
+  // portrait mode so the panel appears to extend through the nav buttons area.
+  // Transparent otherwise (no panel, or landscape where the panel is a side sheet).
+  useEffect(() => {
+    if (!isNativeAndroid()) return;
+    const apply = () => {
+      const isPortrait = window.matchMedia("(orientation: portrait)").matches;
+      const isDark = idMapStyle === "rontomap_streets_dark";
+      const color = selectedFeature && isPortrait ? (isDark ? "#1a1a1a" : "#ffffff") : "transparent";
+      Fullscreen.setNavigationBarColor({ color }).catch(() => {});
+    };
+    apply();
+    const mq = window.matchMedia("(orientation: portrait)");
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, [selectedFeature, idMapStyle, fullscreen]);
+
   // Reposition marker menu on window resize or map move
   useEffect(() => {
     if (!markerMenu) return;
@@ -3872,7 +3951,7 @@ export default function Map() {
     setMarkerMenu(null);
   };
 
-  const handleRecordMarkerView = () => {
+  const handleSaveMarkerView = () => {
     const marker = markerMenu.marker;
     setMarkerMenu(null);
     if (!marker) return;
@@ -5652,7 +5731,7 @@ export default function Map() {
     setNavRouteDuration(null);
   };
 
-  const handleRecordPathView = () => {
+  const handleSavePathView = () => {
     const path = mapClickMenu.path;
     setMapClickMenu(null);
     if (!path) return;
@@ -6003,15 +6082,15 @@ export default function Map() {
             style={{ left: menuPos.x, top: menuPos.y }}
             onContextMenu={(e) => e.preventDefault()}
           >
-            <button onClick={handleFlyToMarker}>{markerMenu.marker._sightPath ? "Fly to sight" : "Fly to marker"}</button>
             <button onClick={handleCenterToMarker}>{markerMenu.marker._sightPath ? "Center to sight" : "Center to marker"}</button>
+            <button onClick={handleFlyToMarker}>{markerMenu.marker._sightPath ? "Fly to sight" : "Fly to marker"}</button>
             <button onClick={handleNavigateToMarker}>{markerMenu.marker._sightPath ? "Navigate to sight" : "Navigate to marker"}</button>
             <button onClick={handleCopyLinkMarker}>{markerMenu.marker._sightPath ? "Copy link to sight" : "Copy link to marker"}</button>
             <button onClick={handleCopyMarkerCode}>{markerMenu.marker._sightPath ? "Copy embedded sight" : "Copy embedded marker"}</button>
-            {markerMenu.marker._sightPath && <button onClick={handleDetachSight}>Detach from path</button>}
             <button onClick={handleSetNameMarker}>{markerMenu.marker._sightPath ? "Set name to sight" : "Set name to marker"}</button>
-            <button onClick={handleRecordMarkerView}>{markerMenu.marker._sightPath ? "Record sight view" : "Record marker view"}</button>
+            <button onClick={handleSaveMarkerView}>{markerMenu.marker._sightPath ? "Save view to sight" : "Save view to marker"}</button>
             <button onClick={handleExportMarker}>{markerMenu.marker._sightPath ? "Export sight" : "Export marker"}</button>
+            {markerMenu.marker._sightPath && <button onClick={handleDetachSight}>Detach sight</button>}
             <button onClick={handleDeleteMarker}>{markerMenu.marker._sightPath ? "Delete sight" : "Delete marker"}</button>
           </div>
         </>
@@ -6076,17 +6155,17 @@ export default function Map() {
           >
             {mapClickMenu.path ? (
               <>
-                <button onClick={handleFlyToPath}>Fly to path</button>
                 <button onClick={handleCenterToPath}>Center to path</button>
+                <button onClick={handleFlyToPath}>Fly to path</button>
                 <button onClick={handleNavigateToPath}>Navigate to path start</button>
-                <button onClick={handleAddSight}>Add sight to path</button>
-                <button onClick={handleEditPath}>Edit path</button>
-                <button onClick={handleReversePath}>Reverse path</button>
-                <button onClick={handleTracePath}>Trace path</button>
-                <button onClick={handleSetPathName}>Set path name</button>
-                <button onClick={handleRecordPathView}>Record path view</button>
                 <button onClick={handleCopyLinkPath}>Copy link to path</button>
                 <button onClick={handleCopyEmbeddedPath}>Copy embedded path</button>
+                <button onClick={handleTracePath}>Trace path</button>
+                <button onClick={handleEditPath}>Edit path</button>
+                <button onClick={handleReversePath}>Reverse path</button>
+                <button onClick={handleAddSight}>Add sight to path</button>
+                <button onClick={handleSetPathName}>Set name to path</button>
+                <button onClick={handleSavePathView}>Save view to path</button>
                 <button onClick={handleExportPath}>Export path</button>
                 <button onClick={handleDeletePath}>Delete path</button>
               </>
@@ -6267,28 +6346,39 @@ export default function Map() {
             >
               <div className="feature-panel-handle-bar" />
             </div>
-            <div className="feature-panel-actions">
-              <button onPointerDown={() => showButtonToast("Fly to")} onClick={handleFeatureFlyTo}>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>
-              </button>
-              <button onPointerDown={() => showButtonToast("Center to")} onClick={handleFeatureCenterTo}>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/></svg>
-              </button>
-              <button onPointerDown={() => showButtonToast("Navigate to")} onClick={handleFeatureNavigateTo}>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg>
-              </button>
-              <button onPointerDown={() => showButtonToast("Share")} onClick={handleFeatureShare}>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
-              </button>
-              <button onPointerDown={() => showButtonToast("Embed")} onClick={handleFeatureEmbed}>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-              </button>
-              {selectedFeature.type === "path" && (
-                <button onPointerDown={() => showButtonToast("Trace path")} onClick={handleFeatureTrace}>
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 19L19 5"/><polyline points="15 5 19 5 19 9"/><circle cx="5" cy="19" r="2"/></svg>
-                </button>
-              )}
-            </div>
+            {(() => {
+              const featureNoun =
+                selectedFeature.type === "marker"
+                  ? (selectedFeature.marker._sightPath ? "sight" : "marker")
+                  : "path";
+              return (
+                <div className="feature-panel-actions">
+                  <ActionIconButton label={`Center to ${featureNoun}`} onClick={handleFeatureCenterTo}>
+                    <IonIcon icon={locateOutline} />
+                  </ActionIconButton>
+                  <ActionIconButton label={`Fly to ${featureNoun}`} onClick={handleFeatureFlyTo}>
+                    <IonIcon icon={rocketOutline} />
+                  </ActionIconButton>
+                  <ActionIconButton
+                    label={selectedFeature.type === "path" ? "Navigate to path start" : `Navigate to ${featureNoun}`}
+                    onClick={handleFeatureNavigateTo}
+                  >
+                    <IonIcon icon={navigateOutline} />
+                  </ActionIconButton>
+                  <ActionIconButton label={`Copy link to ${featureNoun}`} onClick={handleFeatureShare}>
+                    <IonIcon icon={linkOutline} />
+                  </ActionIconButton>
+                  <ActionIconButton label={`Copy embedded ${featureNoun}`} onClick={handleFeatureEmbed}>
+                    <IonIcon icon={codeSlashOutline} />
+                  </ActionIconButton>
+                  {selectedFeature.type === "path" && (
+                    <ActionIconButton label="Trace path" onClick={handleFeatureTrace}>
+                      <IonIcon icon={golfOutline} />
+                    </ActionIconButton>
+                  )}
+                </div>
+              );
+            })()}
             <div className="feature-panel-name">
               {selectedFeature.type === "marker"
                 ? selectedFeature.marker._markerName || (selectedFeature.marker._sightPath ? "Sight" : "Marker")
@@ -6339,7 +6429,7 @@ export default function Map() {
       <div
         ref={mapContainerRef}
         {...bind}
-        className={`map-container${idMapStyle === "rontomap_streets_dark" ? " map-style-dark" : ""}${idMapStyle === "rontomap_satellite" ? " map-style-satellite" : ""}${isPathMode ? " path-editing" : ""}${featuresLocked ? " features-locked" : ""}${isEmbeddedRef.current ? " embedded" : ""}`}
+        className={`map-container${idMapStyle === "rontomap_streets_dark" ? " map-style-dark" : ""}${idMapStyle === "rontomap_satellite" ? " map-style-satellite" : ""}${isPathMode ? " path-editing" : ""}${featuresLocked ? " features-locked" : ""}${isEmbeddedRef.current ? " embedded" : ""}${selectedFeature ? " feature-panel-open" : ""}`}
       >
         <div className="bottom-safe-area" aria-hidden="true" />
       </div>

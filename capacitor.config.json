@@ -2,12 +2,14 @@
   "appId": "hr.strukovnasamobor.rontomap",
   "appName": "RontoMap",
   "webDir": "dist",
+  "backgroundColor": "#00000000",
   "plugins": {
     "ScreenOrientation": {
       "orientations": ["portrait", "landscape"]
     }
   },
   "android": {
-    "allowMixedContent": true
+    "allowMixedContent": true,
+    "backgroundColor": "#00000000"
   }
 }
