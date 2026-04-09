@@ -120,6 +120,22 @@
   z-index: 1001 !important;
 }
 
+/* Backdrop fill for the bottom safe-area (Android system nav buttons / iOS home indicator). */
+.bottom-safe-area {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: env(safe-area-inset-bottom, 0px);
+  background: #ffffff;
+  pointer-events: none;
+  z-index: 1000;
+}
+
+.map-style-dark .bottom-safe-area {
+  background: #000000;
+}
+
 .mapboxgl-ctrl-top-right,
 .mapboxgl-ctrl-bottom-right {
   right: env(safe-area-inset-right) !important;
@@ -612,9 +628,9 @@
   .feature-panel {
     left: 0;
     right: 0;
-    bottom: 0;
+    bottom: env(safe-area-inset-bottom, 0px);
     border-radius: 16px 16px 0 0;
-    padding: 0 16px calc(env(safe-area-inset-bottom, 0px) + 16px);
+    padding: 0 16px 16px;
     max-height: 70vh;
     transform: translateY(calc(100% - 140px));
     transition: transform 0.3s ease;

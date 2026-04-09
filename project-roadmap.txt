@@ -1,20 +1,22 @@
-? in recording path start tracking user bearing same as clicking start/resume, on start show toast msg "Click stop tracking to pause recording". 
-  elapsed time in format hh:mm (do not count time in pause), on geolocate remove tost msg "recording paused"
+- in recording path start tracking user bearing same as clicking start/resume, on start show toast msg "Click stop tracking to pause recording". 
+  elapsed time in format hh:mm (do not count time in pause), on geolocate remove tost msg "recording paused",
+  tracking info at bottom
 
 - conflicting action in parallel
-  - path creation
+  ? when user tracking bearing
+  - path creation - disable new path creation - allow path recording, path tracing, rote navigation
   - path recording
   - path tracing
   - route navigation
   - features and menu actions
 
-- white nav bar, white nav panel detail, change in dark for dark map
-- on mobile show detail panel above navigation buttons
-- action ordering, icons, new actions
-
+? on web put background white nav bar and change in dark for dark map
+? on mobile show detail panel above navigation buttons, nav buttons background put in white and for dark map in black
+- action ordering, icons, new actions, description on focus/tap/hover?
+- whre to show marker/path list
 
 OFLINE MAPS AND NAVIGATION
-- context menu option download, update, delete
+- menu options for offline maps
 - offline first data
 
 - deploy version 1.3. (4), generate functionalities description

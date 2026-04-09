@@ -4396,7 +4396,7 @@ export default function Map() {
     setMapClickMenu(null);
   };
 
-  const handleAddMarkerFromMenu = () => {
+  const handleAddMarkerHere = () => {
     const m = createMarkerRef.current(mapClickMenu.lngLat);
     setMapClickMenu(null);
     // Auto-open the detail panel; the selectedFeature effect handles drag enable.
@@ -6007,7 +6007,7 @@ export default function Map() {
             <button onClick={handleCenterToMarker}>{markerMenu.marker._sightPath ? "Center to sight" : "Center to marker"}</button>
             <button onClick={handleNavigateToMarker}>{markerMenu.marker._sightPath ? "Navigate to sight" : "Navigate to marker"}</button>
             <button onClick={handleCopyLinkMarker}>{markerMenu.marker._sightPath ? "Copy link to sight" : "Copy link to marker"}</button>
-            <button onClick={handleCopyEmbeddedPath}>{markerMenu.marker._sightPath ? "Copy embedded sight" : "Copy embedded marker"}</button>
+            <button onClick={handleCopyMarkerCode}>{markerMenu.marker._sightPath ? "Copy embedded sight" : "Copy embedded marker"}</button>
             {markerMenu.marker._sightPath && <button onClick={handleDetachSight}>Detach from path</button>}
             <button onClick={handleSetNameMarker}>{markerMenu.marker._sightPath ? "Set name to sight" : "Set name to marker"}</button>
             <button onClick={handleRecordMarkerView}>{markerMenu.marker._sightPath ? "Record sight view" : "Record marker view"}</button>
@@ -6094,8 +6094,8 @@ export default function Map() {
               <>
                 <button onClick={handleCenterHere}>Center here</button>
                 <button onClick={handleNavigateHere}>Navigate here</button>
-                <button onClick={handleAddMarkerFromMenu}>Add marker</button>
-                <button onClick={handleCreatePath}>Create path</button>
+                <button onClick={handleAddMarkerHere}>Add marker here</button>
+                <button onClick={handleCreatePath}>Create path here</button>
               </>
             )}
           </div>
@@ -6340,7 +6340,9 @@ export default function Map() {
         ref={mapContainerRef}
         {...bind}
         className={`map-container${idMapStyle === "rontomap_streets_dark" ? " map-style-dark" : ""}${idMapStyle === "rontomap_satellite" ? " map-style-satellite" : ""}${isPathMode ? " path-editing" : ""}${featuresLocked ? " features-locked" : ""}${isEmbeddedRef.current ? " embedded" : ""}`}
-      />
+      >
+        <div className="bottom-safe-area" aria-hidden="true" />
+      </div>
     </PageFixedLayout>
   );
 }
