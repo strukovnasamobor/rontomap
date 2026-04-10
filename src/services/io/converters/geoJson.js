@@ -66,6 +66,8 @@ export function toRonto(content) {
       }
       if (props.isRoute) pathData.isRoute = true;
       if (props.roadSnap) pathData.roadSnap = props.roadSnap;
+      if (props.routeDistance != null) pathData.routeDistance = props.routeDistance;
+      if (props.routeDuration != null) pathData.routeDuration = props.routeDuration;
       if (props.savedView) pathData.savedView = props.savedView;
       paths.push(pathData);
     }
@@ -130,6 +132,8 @@ export function fromRonto(data, scope) {
     if (p.isCircuit) props.isCircuit = true;
     if (p.isRoute) props.isRoute = true;
     if (p.roadSnap) props.roadSnap = p.roadSnap;
+    if (p.routeDistance != null) props.routeDistance = p.routeDistance;
+    if (p.routeDuration != null) props.routeDuration = p.routeDuration;
     if (p.savedView) props.savedView = p.savedView;
 
     features.push({

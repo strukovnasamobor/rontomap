@@ -34,6 +34,8 @@ export function collectFeatures(markersRef, pathsRef, serializeSnappedSegments) 
     if (p.savedView) pathData.savedView = p.savedView;
     if (p.roadSnap) pathData.roadSnap = p.roadSnap;
     if (p.snappedSegments) pathData.snappedSegments = serializeSnappedSegments(p.snappedSegments);
+    if (p.routeDistance != null) pathData.routeDistance = p.routeDistance;
+    if (p.routeDuration != null) pathData.routeDuration = p.routeDuration;
     if (p.isCircuit) pathData.isCircuit = true;
     if (p.closingForced) pathData.closingForced = true;
     if (p.isRoute) pathData.isRoute = true;
@@ -83,6 +85,8 @@ export function collectPath(path, serializeSnappedSegments) {
   if (path.savedView) pathData.savedView = path.savedView;
   if (path.roadSnap) pathData.roadSnap = path.roadSnap;
   if (path.snappedSegments) pathData.snappedSegments = serializeSnappedSegments(path.snappedSegments);
+  if (path.routeDistance != null) pathData.routeDistance = path.routeDistance;
+  if (path.routeDuration != null) pathData.routeDuration = path.routeDuration;
   if (path.isCircuit) pathData.isCircuit = true;
   if (path.closingForced) pathData.closingForced = true;
   if (path.isRoute) pathData.isRoute = true;
@@ -197,6 +201,8 @@ export function materializePathFromShape(entry, deps) {
       h.fetchRoadSnap(path);
     }
   }
+  if (entry.routeDistance != null) path.routeDistance = entry.routeDistance;
+  if (entry.routeDuration != null) path.routeDuration = entry.routeDuration;
 
   const sightsData = entry.sights || entry.attachedMarkers;
   if (sightsData) {

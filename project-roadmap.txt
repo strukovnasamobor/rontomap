@@ -1,21 +1,28 @@
-RESOLVING PARALLEL ACTIONS
-id|action                       | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10|  
-=========================================================================
- 1| search                      | - | + | + | + | S | + | + | + | + | + |
- 2| import/export/copy/delete   | - | - | - | - | - | - | - | - | - | - |
- 3| compass & style change      | - | - | - | - | - | - | - | - | - | - |
- 4| user tracking location      | - | - | - | - | - | - | - | - | - | - |
- 5| user tracking bearing       | - | - | - | - | - | - | - | - | - | - |                                              
- 6| path creation               | - | - | - | - | - | - | - | - | - | - |                                             
- 7| path recording              | - | - | - | - | - | - | - | - | - | - |                                              
- 8| path tracing                | - | - | - | - | - | - | - | - | - | - |                                               
- 9| route navigation            | - | - | - | - | - | - | - | - | - | - |                                               
-10| feature actions             | - | - | - | - | - | - | - | - | - | - |
-
+PARALLEL ACTIONS
+id | action                      | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10|  
+==========================================================================
+ 1 | search                      | - | + | + | + | S | + | + | + | + | + |
+ 2 | import/export/copy/delete   | - | - | - | - | - | - | - | - | - | - |
+ 3 | compass & style change      | - | - | - | - | - | - | - | - | - | - |
+ 4 | user tracking location      | - | - | - | - | - | - | - | - | - | - |
+ 5 | user tracking bearing       | - | - | - | - | - | - | - | - | - | - |                                              
+ 6 | path creation               | - | - | - | - | - | - | - | - | - | - |                                             
+ 7 | path recording              | - | - | - | - | - | - | - | - | - | - |                                              
+ 8 | path tracing                | - | - | - | - | - | - | - | - | - | - |                                               
+ 9 | route navigation            | - | - | - | - | - | - | - | - | - | - |                                               
+10 | feature actions             | - | - | - | - | - | - | - | - | - | - |
+==========================================================================
+ - | action is not allowed
+ + | action is allowed
+ S | action is stopped implicitly
+==========================================================================
 - in recording path start tracking user bearing same as clicking start/resume, on start show toast msg "Click stop tracking to pause recording". 
   elapsed time in format hh:mm (do not count time in pause), on geolocate remove tost msg "recording paused",
   tracking info at bottom
+
+- menu close button style as for panel close
 - add menu option to show features list in detail panel
+
 
 OFLINE MAPS AND NAVIGATION
 - menu options for offline maps 
@@ -70,17 +77,17 @@ UI DESIGN & INTERACTIONS
     - on landscape - left sidebar
     - on portrait - peeking bottom sheet
         - action icons: 
-            - marker: Center to marker, Fly to marker, Navigate to marker, Copy link to marker, Copy embedded marker 
-            - sight: Center to sight, Fly to sight, Navigate to sight, Copy link to sight, Copy embedded sight
-            - path: Center to path, Fly to path, Navigate to path start, Copy link to path, Copy embedded path, Trace path
+            - marker: Center to marker, Fly to marker, Navigate to marker, Copy link to marker, Copy embedded marker, Export marker 
+            - sight: Center to sight, Fly to sight, Navigate to sight, Copy link to sight, Copy embedded sight, Export sight
+            - path: Center to path, Fly to path, Navigate to path start, Copy link to path, Copy embedded path, Export path
         - name of feature
-        - for marker/sight - coordinates, for path - snapping, length, duration
+        - for marker/sight - coordinates, for path - snapping, distance, duration (for snapped paths), trace path (action text)
 - double left mouse click / double tap => fullscreen enter/exit
 - right mouse click / long tap on map/feature => context menu opens
     - map: Center here, Navigate here, Add marker here, Create path here
-    - marker: Center to marker, Fly to marker, Navigate to marker, Copy link to marker, Copy embedded marker, Set name to marker, Save view to marker, Export marker, Delete marker
-    - sight: Center to sight, Fly to sight, Navigate to sight, Copy link to sight, Copy embedded sight, Set name to sight, Save view to sight, Export sight, Detach sight, Delete sight
-    - path: Center to path, Fly to path, Navigate to path start, Copy link to path, Copy embedded path, Trace path, Edit path, Reverse path, Add sight to path, Set name to path, Save view to path, Export path, Delete path
+    - marker: Center to marker, Fly to marker, Navigate to marker, Copy link to marker, Copy embedded marker, Export marker, Set name to marker, Save view to marker, Delete marker
+    - sight: Center to sight, Fly to sight, Navigate to sight, Copy link to sight, Copy embedded sight, Export sight, Set name to sight, Save view to sight, Detach sight, Delete sight
+    - path: Center to path, Fly to path, Navigate to path start, Copy link to path, Copy embedded path, Export path, Set name to path, Save view to path, Edit path, Reverse path, Add sight to path, Trace path, Delete path
 - mouse wheel => zoom in/out
 - mouse over locked feature (alias cursor icon)
 - mouse over unlocked feature (grab cursor icon)
@@ -176,6 +183,7 @@ SHARING LINKS & EMBEDDED CODE
     &is_circuit=<true|false>                [optional, only if true]
     &sight=<segIdx>-<t>-<urlEncodedName>    [repeated, one per sight]
     &saved_view=<lat>-<lng>-<z>-<b>-<p>     [optional, only if path.savedView]
+    #polyline_encoded_path
 - features
     ?lat=<center_lat>&long=<center_lng>&zoom=<z>&bearing=<b>&pitch=<p>
     &features_collection=<docId>

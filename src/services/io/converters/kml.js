@@ -114,6 +114,10 @@ export function toRonto(content) {
         if (sv) pathData.savedView = sv;
         const snap = parseExtRoadSnap(pm);
         if (snap) pathData.roadSnap = snap;
+        const kmlDist = parseFloat(parseExtData(pm, "routeDistance"));
+        if (isFinite(kmlDist)) pathData.routeDistance = kmlDist;
+        const kmlDur = parseFloat(parseExtData(pm, "routeDuration"));
+        if (isFinite(kmlDur)) pathData.routeDuration = kmlDur;
         paths.push(pathData);
       }
     }
@@ -241,6 +245,8 @@ export function fromRonto(data, scope) {
     if (p.sights && p.sights.length > 0) extData.push(`      <Data name="pathId"><value>${escapeXml(p.id)}</value></Data>`);
     if (p.savedView) extData.push(`      <Data name="savedView"><value>${serializeSavedView(p.savedView)}</value></Data>`);
     if (p.roadSnap) extData.push(`      <Data name="roadSnap"><value>${escapeXml(typeof p.roadSnap === "string" ? p.roadSnap : "car")}</value></Data>`);
+    if (p.routeDistance != null) extData.push(`      <Data name="routeDistance"><value>${p.routeDistance}</value></Data>`);
+    if (p.routeDuration != null) extData.push(`      <Data name="routeDuration"><value>${p.routeDuration}</value></Data>`);
     if (extData.length > 0) {
       lines.push(`    <ExtendedData>`);
       lines.push(...extData);

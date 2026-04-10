@@ -8,7 +8,8 @@ import {
   navigateOutline,
   linkOutline,
   codeSlashOutline,
-  golfOutline,
+  downloadOutline,
+  closeOutline,
 } from "ionicons/icons";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useDoubleTap } from "use-double-tap";
@@ -3070,6 +3071,20 @@ export default function Map() {
       }
     });
 
+    geocoder.on("clear", () => {
+      // geocoder.clear() calls _inputEl.focus() after emitting "clear",
+      // which re-expands the input. Use setTimeout to collapse after focus.
+      setTimeout(() => {
+        const geocoderEl = document.querySelector(".mapboxgl-ctrl-geocoder");
+        if (geocoderEl) {
+          const input = geocoderEl.querySelector("input");
+          input?.blur();
+          document.activeElement?.blur();
+          geocoderEl.classList.add("mapboxgl-ctrl-geocoder--collapsed");
+        }
+      }, 10);
+    });
+
     // Initialize custom location control
     locationControlRef.current = new LocationControl(geolocateRef.current, mapRef.current);
     mapRef.current.addControl(locationControlRef.current, "top-right");
@@ -3404,6 +3419,8 @@ export default function Map() {
           isCircuit: getQueryParams("is_circuit") === "true",
           closingForced: extras.cf === true,
           snappedSegments,
+          routeDistance: extras.rd ?? undefined,
+          routeDuration: extras.rt ?? undefined,
           sights: sights.length ? sights : undefined,
           savedView: parsedSavedView
             ? {
@@ -4047,6 +4064,8 @@ export default function Map() {
         return [SEG_TYPE_TO_CODE[seg.type] || seg.type, polyline.encode(simplified.map(([lng, lat]) => [lat, lng]))];
       });
     }
+    if (path.routeDistance != null) extras.rd = path.routeDistance;
+    if (path.routeDuration != null) extras.rt = path.routeDuration;
     if (path.sights?.length) {
       const sv = {};
       path.sights.forEach((m, idx) => {
@@ -4384,6 +4403,21 @@ export default function Map() {
     }
     if (!url) return;
     shareOrCopy({ text: buildEmbedCode(url), kind: "Embed code" });
+  };
+
+  const handleFeatureExport = () => {
+    if (!selectedFeature) return;
+    if (selectedFeature.type === "marker") {
+      const marker = selectedFeature.marker;
+      const data = collectMarker(marker);
+      const baseName = marker._markerName || (marker._sightPath ? "sight" : "marker");
+      setExportAlert({ data, scope: { type: "marker", marker: data.markers[0] }, baseName });
+    } else if (selectedFeature.type === "path") {
+      const path = selectedFeature.path;
+      const data = collectPath(path, serializeSnappedSegments);
+      const baseName = path.name || (path.isTrack ? "track" : "path");
+      setExportAlert({ data, scope: { type: "path", path: data.paths[0] }, baseName });
+    }
   };
 
   const handleFeatureTrace = () => {
@@ -6087,9 +6121,9 @@ export default function Map() {
             <button onClick={handleNavigateToMarker}>{markerMenu.marker._sightPath ? "Navigate to sight" : "Navigate to marker"}</button>
             <button onClick={handleCopyLinkMarker}>{markerMenu.marker._sightPath ? "Copy link to sight" : "Copy link to marker"}</button>
             <button onClick={handleCopyMarkerCode}>{markerMenu.marker._sightPath ? "Copy embedded sight" : "Copy embedded marker"}</button>
+            <button onClick={handleExportMarker}>{markerMenu.marker._sightPath ? "Export sight" : "Export marker"}</button>
             <button onClick={handleSetNameMarker}>{markerMenu.marker._sightPath ? "Set name to sight" : "Set name to marker"}</button>
             <button onClick={handleSaveMarkerView}>{markerMenu.marker._sightPath ? "Save view to sight" : "Save view to marker"}</button>
-            <button onClick={handleExportMarker}>{markerMenu.marker._sightPath ? "Export sight" : "Export marker"}</button>
             {markerMenu.marker._sightPath && <button onClick={handleDetachSight}>Detach sight</button>}
             <button onClick={handleDeleteMarker}>{markerMenu.marker._sightPath ? "Delete sight" : "Delete marker"}</button>
           </div>
@@ -6107,6 +6141,13 @@ export default function Map() {
             ref={(el) => { sideMenuRef.current = el; sideMenuSwipe.ref(el); }}
             className={`side-menu${idMapStyle === "rontomap_streets_dark" ? " side-menu-dark" : ""}`}
           >
+            <div className="side-menu-header">
+              <img src="/logo192.png" alt="" className="side-menu-logo" />
+              <span className="side-menu-title">RontoMap</span>
+              <button className="side-menu-close" onClick={() => setIsSideMenuOpen(false)}>
+                <IonIcon icon={closeOutline} />
+              </button>
+            </div>
             <button onClick={() => {
               setIsSideMenuOpen(false);
               handleCreatePath({ noAutoVertex: true });
@@ -6160,13 +6201,13 @@ export default function Map() {
                 <button onClick={handleNavigateToPath}>Navigate to path start</button>
                 <button onClick={handleCopyLinkPath}>Copy link to path</button>
                 <button onClick={handleCopyEmbeddedPath}>Copy embedded path</button>
-                <button onClick={handleTracePath}>Trace path</button>
+                <button onClick={handleExportPath}>Export path</button>
+                <button onClick={handleSetPathName}>Set name to path</button>
+                <button onClick={handleSavePathView}>Save view to path</button>
                 <button onClick={handleEditPath}>Edit path</button>
                 <button onClick={handleReversePath}>Reverse path</button>
                 <button onClick={handleAddSight}>Add sight to path</button>
-                <button onClick={handleSetPathName}>Set name to path</button>
-                <button onClick={handleSavePathView}>Save view to path</button>
-                <button onClick={handleExportPath}>Export path</button>
+                <button onClick={handleTracePath}>Trace path</button>
                 <button onClick={handleDeletePath}>Delete path</button>
               </>
             ) : (
@@ -6371,11 +6412,12 @@ export default function Map() {
                   <ActionIconButton label={`Copy embedded ${featureNoun}`} onClick={handleFeatureEmbed}>
                     <IonIcon icon={codeSlashOutline} />
                   </ActionIconButton>
-                  {selectedFeature.type === "path" && (
-                    <ActionIconButton label="Trace path" onClick={handleFeatureTrace}>
-                      <IonIcon icon={golfOutline} />
-                    </ActionIconButton>
-                  )}
+                  <ActionIconButton label={`Export ${featureNoun}`} onClick={handleFeatureExport}>
+                    <IonIcon icon={downloadOutline} />
+                  </ActionIconButton>
+                  <ActionIconButton label="Close" onClick={() => setSelectedFeature(null)}>
+                    <IonIcon icon={closeOutline} />
+                  </ActionIconButton>
                 </div>
               );
             })()}
@@ -6416,6 +6458,8 @@ export default function Map() {
                         <span>{formatDuration(path.routeDuration)}</span>
                       </>
                     )}
+                    <span className="route-info-separator">&middot;</span>
+                    <span className="feature-panel-trace-link" onClick={handleFeatureTrace}>Trace path</span>
                   </div>
                 );
               })()}

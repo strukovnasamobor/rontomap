@@ -87,6 +87,10 @@ export function toRonto(content) {
     if (sv) pathData.savedView = sv;
     const snap = parseExtRoadSnap(rte);
     if (snap) pathData.roadSnap = snap;
+    const rteDist = parseFloat(parseExtValue(rte, "routeDistance"));
+    if (isFinite(rteDist)) pathData.routeDistance = rteDist;
+    const rteDur = parseFloat(parseExtValue(rte, "routeDuration"));
+    if (isFinite(rteDur)) pathData.routeDuration = rteDur;
     paths.push(pathData);
   }
 
@@ -200,6 +204,12 @@ export function fromRonto(data, scope) {
     }
     if (p.roadSnap) {
       rteExtensions.push(`      <rontomap:roadSnap>${escapeXml(typeof p.roadSnap === "string" ? p.roadSnap : "car")}</rontomap:roadSnap>`);
+    }
+    if (p.routeDistance != null) {
+      rteExtensions.push(`      <rontomap:routeDistance>${p.routeDistance}</rontomap:routeDistance>`);
+    }
+    if (p.routeDuration != null) {
+      rteExtensions.push(`      <rontomap:routeDuration>${p.routeDuration}</rontomap:routeDuration>`);
     }
     if (rteExtensions.length > 0) {
       lines.push(`    <extensions>`);

@@ -43,11 +43,13 @@ export async function toRonto(content) {
         coords.pop();
       }
 
-      // Use sport name if available
+      // Use sport name and distance/duration if available
       const session = data.sessions?.[0];
       if (session?.sport) {
         pathData.name = session.sport.charAt(0).toUpperCase() + session.sport.slice(1);
       }
+      if (session?.total_distance != null) pathData.routeDistance = session.total_distance;
+      if (session?.total_elapsed_time != null) pathData.routeDuration = session.total_elapsed_time;
 
       // Laps as sights
       const laps = data.laps || [];
