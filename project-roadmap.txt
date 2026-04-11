@@ -1,26 +1,28 @@
 PARALLEL ACTIONS
 id | action                      | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10|  
 ==========================================================================
- 1 | search                      | - | + | + | + | S | + | + | + | + | + |
- 2 | import/export/copy/delete   | - | - | - | - | - | - | - | - | - | - |
- 3 | compass & style change      | - | - | - | - | - | - | - | - | - | - |
- 4 | user tracking location      | - | - | - | - | - | - | - | - | - | - |
- 5 | user tracking bearing       | - | - | - | - | - | - | - | - | - | - |                                              
- 6 | path creation               | - | - | - | - | - | - | - | - | - | - |                                             
- 7 | path recording              | - | - | - | - | - | - | - | - | - | - |                                              
- 8 | path tracing                | - | - | - | - | - | - | - | - | - | - |                                               
- 9 | route navigation            | - | - | - | - | - | - | - | - | - | - |                                               
-10 | feature actions             | - | - | - | - | - | - | - | - | - | - |
+ 1 | search result clicked       | - | + | + | + | S | + | + | + | + | + |
+ 2 | menu opens                  | - | - | - | - | - | - | - | - | - | - |
+ 3 | reset north                 | - | - | - | - | - | - | - | - | - | - |
+ 4 | map style change            | - | - | - | - | - | - | - | - | - | - |
+ 5 | user tracking location      | - | - | - | - | - | - | - | - | - | - |
+ 6 | user tracking bearing       | - | - | - | - | - | - | - | - | - | - |                                              
+ 7 | path creation               | - | - | - | - | - | - | - | - | - | - |                                             
+ 8 | path recording              | - | - | - | - | - | - | - | - | - | - |                                              
+ 9 | path tracing                | - | - | - | - | - | - | - | - | - | - |                                               
+10  | route navigation           | - | - | - | - | - | - | - | - | - | - |                                               
+11 | feature actions             | - | - | - | - | - | - | - | - | - | - |
+12 | import/export/copy/delete   | - | - | - | - | - | - | - | - | - | - |
 ==========================================================================
  - | action is not allowed
  + | action is allowed
- S | action is stopped implicitly
+ S | previous action is stopped with no alert
+ A | previous action is stopped with with alert
 ==========================================================================
 - in recording path start tracking user bearing same as clicking start/resume, on start show toast msg "Click stop tracking to pause recording". 
   elapsed time in format hh:mm (do not count time in pause), on geolocate remove tost msg "recording paused",
   tracking info at bottom
 
-- fix embedded click to move, allow detail panel and left click (cursor icon to alias)
 - add menu option to show features list in detail panel
 
 
@@ -83,14 +85,14 @@ UI DESIGN & INTERACTIONS
         - name of feature
         - for marker/sight - coordinates, for path - snapping, distance, duration (for snapped paths), trace path (action text)
 - double left mouse click / double tap => fullscreen enter/exit
-- right mouse click / long tap on map/feature => context menu opens
+- right mouse click / long tap on map/feature => context menu opens  (in embedded disabled)
     - map: Center here, Navigate here, Add marker here, Create path here
     - marker: Center to marker, Fly to marker, Navigate to marker, Copy link to marker, Copy embedded marker, Export marker, Set name to marker, Save view to marker, Delete marker
     - sight: Center to sight, Fly to sight, Navigate to sight, Copy link to sight, Copy embedded sight, Export sight, Set name to sight, Save view to sight, Detach sight, Delete sight
     - path: Center to path, Fly to path, Navigate to path start, Copy link to path, Copy embedded path, Export path, Set name to path, Save view to path, Edit path, Reverse path, Add sight to path, Trace path, Delete path
 - mouse wheel => zoom in/out
-- mouse over locked feature (alias cursor icon)
-- mouse over unlocked feature (grab cursor icon)
+- mouse over feature (alias cursor icon)
+- mouse over draggable feature (grab cursor icon)
 - left mouse click & drag on map (all-scroll cursor icon) / touch drag => map drag
 - left mouse click & drag on feature dragging option (grabbing cursor icon) / touch drag => feature drag
 - right mouse click & drag (croosshair cursor icon) => map rotation and tilt camera orbiting

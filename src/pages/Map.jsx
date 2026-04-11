@@ -119,9 +119,39 @@ function addMapControlTooltip(button, label, position = "left") {
   tooltip.textContent = label;
   button.appendChild(tooltip);
 
-  // Desktop hover only
-  button.addEventListener("mouseenter", () => tooltip.classList.add("map-ctrl-tooltip-visible"));
+  let recentTouch = false;
+
+  // Desktop hover (skip emulated mouse events after touch)
+  button.addEventListener("mouseenter", () => {
+    if (!recentTouch) tooltip.classList.add("map-ctrl-tooltip-visible");
+  });
   button.addEventListener("mouseleave", () => tooltip.classList.remove("map-ctrl-tooltip-visible"));
+
+  // Hide on click
+  button.addEventListener("click", () => tooltip.classList.remove("map-ctrl-tooltip-visible"));
+
+  // Mobile long-press (500ms to show, 1200ms display)
+  let longPressTimer = null;
+  button.addEventListener("touchstart", () => {
+    recentTouch = true;
+    longPressTimer = setTimeout(() => {
+      tooltip.classList.add("map-ctrl-tooltip-visible");
+      longPressTimer = null;
+    }, 500);
+  }, { passive: true });
+  button.addEventListener("touchmove", () => {
+    if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+  }, { passive: true });
+  button.addEventListener("touchend", () => {
+    if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+    setTimeout(() => tooltip.classList.remove("map-ctrl-tooltip-visible"), 1200);
+    setTimeout(() => { recentTouch = false; }, 500);
+  });
+  button.addEventListener("touchcancel", () => {
+    if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+    tooltip.classList.remove("map-ctrl-tooltip-visible");
+    setTimeout(() => { recentTouch = false; }, 500);
+  });
 }
 
 // Icon button used in the feature panel: shows a tooltip with the action name on
@@ -161,6 +191,7 @@ function ActionIconButton({ label, onClick, children }) {
       e.stopPropagation();
       return;
     }
+    setTooltipVisible(false);
     onClick?.(e);
   };
 
@@ -680,10 +711,7 @@ export default function Map() {
     const createMarker = (lngLat, color = "#ff6f00") => {
       const marker = new mapboxgl.Marker({ color, draggable: false }).setLngLat(lngLat).addTo(mapRef.current);
       const el = marker.getElement();
-      // In embedded mode, leave cursor to CSS (.embedded rule sets it to default).
-      // Inline !important would otherwise override CSS.
       const setCursor = (value) => {
-        if (isEmbeddedRef.current) return;
         el.style.setProperty("cursor", value, "important");
       };
       setCursor("alias");
@@ -751,7 +779,6 @@ export default function Map() {
         e.stopPropagation();
         if (wasDragged) return;
         if (isPathModeRef.current) return;
-        if (isEmbeddedRef.current) return;
         // Debounce so a second click within 300ms toggles fullscreen instead of opening details
         if (markerClickTimer) {
           clearTimeout(markerClickTimer);
@@ -824,7 +851,6 @@ export default function Map() {
         });
         path._hitLayerId = hitLayerId;
         map.on("mouseenter", hitLayerId, () => {
-          if (isEmbeddedRef.current) return;
           if (!isPathModeRef.current) map.getCanvas().style.cursor = "alias";
         });
         map.on("mouseleave", hitLayerId, () => {
@@ -1577,7 +1603,7 @@ export default function Map() {
         const path = vertexEntry.path;
         const verts = path.vertices;
         // Left-click on a finished path's start or end vertex → open detail panel
-        if (path.isFinished && !isPathModeRef.current && !isEmbeddedRef.current) {
+        if (path.isFinished && !isPathModeRef.current) {
           if (verts[0] === vertexEntry || verts[verts.length - 1] === vertexEntry) {
             pathClickHandledRef.current = true;
             setTimeout(() => {
@@ -2227,14 +2253,14 @@ export default function Map() {
         trackLocationBtn.appendChild(createIonIcon(locateOutline));
         trackBearingBtn.appendChild(createIonIcon(compassOutline));
         stopTrackingBtn.appendChild(createIonIcon(pauseCircleOutline));
-        addMapControlTooltip(trackLocationBtn, "Track Location", "above");
-        addMapControlTooltip(trackBearingBtn, "Track Bearing", "above");
-        addMapControlTooltip(stopTrackingBtn, "Stop Tracking", "above");
+        addMapControlTooltip(trackLocationBtn, "Track Location", "left");
+        addMapControlTooltip(trackBearingBtn, "Track Bearing", "left");
+        addMapControlTooltip(stopTrackingBtn, "Stop Tracking", "left");
 
         // Inject Ionic icons and tooltips into map style buttons
         this._container.querySelectorAll(".ctrl-mapstyle-container button").forEach((btn) => {
           btn.appendChild(createIonIcon(layersOutline));
-          addMapControlTooltip(btn, "Change Map Style", "above");
+          addMapControlTooltip(btn, "Change Map Style", "left");
         });
 
         this._locationDiv = this._container.querySelector(".ctrl-location-container");
@@ -2799,8 +2825,7 @@ export default function Map() {
           return;
         }
 
-        // Embedded mode: ignore single clicks (toggle is on dblclick)
-        if (isEmbeddedRef.current) return;
+
 
         // Feature selection: click on finished path opens detail panel
         if (!isPathModeRef.current) {
@@ -3043,6 +3068,7 @@ export default function Map() {
           "background-image: url('/logo512_nobg.png') !important; background-size: 29px 29px !important;";
 
         logoBtn.appendChild(logoSpan);
+        addMapControlTooltip(logoBtn, "Open in RontoMap", "right");
         logoContainer.appendChild(logoBtn);
 
         const topLeft = mapRef.current.getContainer().querySelector(".mapboxgl-ctrl-top-left");
@@ -3170,12 +3196,12 @@ export default function Map() {
         if (zoomInBtn) {
           zoomInBtn.querySelector("span.mapboxgl-ctrl-icon")?.remove();
           zoomInBtn.appendChild(createIonIcon(addOutline));
-          addMapControlTooltip(zoomInBtn, "Zoom In", "below");
+          addMapControlTooltip(zoomInBtn, "Zoom In", "left");
         }
         if (zoomOutBtn) {
           zoomOutBtn.querySelector("span.mapboxgl-ctrl-icon")?.remove();
           zoomOutBtn.appendChild(createIonIcon(removeOutline));
-          addMapControlTooltip(zoomOutBtn, "Zoom Out", "below");
+          addMapControlTooltip(zoomOutBtn, "Zoom Out", "left");
         }
       } else {
         // Normal mode: hamburger menu button
@@ -3186,7 +3212,7 @@ export default function Map() {
         menuBtn.className = "ctrl-menu-btn";
         menuBtn.setAttribute("aria-label", "Menu");
         menuBtn.appendChild(createIonIcon(menuOutline));
-        addMapControlTooltip(menuBtn, "Menu", "below");
+        addMapControlTooltip(menuBtn, "Menu", "left");
         menuBtn.addEventListener("click", () => {
           setIsSideMenuOpen((prev) => !prev);
         });
@@ -3225,7 +3251,7 @@ export default function Map() {
     // Hide compass when bearing is 0
     const compassBtn = nav._container.querySelector(".mapboxgl-ctrl-compass");
     if (compassBtn) {
-      addMapControlTooltip(compassBtn, "Reset North", "below");
+      addMapControlTooltip(compassBtn, "Reset North", "left");
       const updateCompassVisibility = () => {
         const bearing = mapRef.current?.getBearing() ?? 0;
         compassBtn.style.display = Math.abs(bearing) < 0.5 ? "none" : "";

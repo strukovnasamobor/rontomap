@@ -77,25 +77,18 @@ ion-page:has(#map-ioncontent) {
   cursor: grab !important;
 }
 
-/* Locked features: alias cursor (skip in embedded mode — embedded uses default arrow) */
-.features-locked:not(.path-editing):not(.embedded)
+/* Locked features: alias cursor */
+.features-locked:not(.path-editing)
   .mapboxgl-marker:not(.context-dot):not(.mapboxgl-user-location):not(.mapboxgl-user-location-accuracy-circle),
-.features-locked:not(.path-editing):not(.embedded) .path-vertex,
-.features-locked:not(.path-editing):not(.embedded) .path-midpoint {
+.features-locked:not(.path-editing) .path-vertex,
+.features-locked:not(.path-editing) .path-midpoint {
   cursor: alias !important;
 }
 
-/* Embedded mode: default cursor on all features (left-click is disabled) */
-.embedded:not(.path-editing) .mapboxgl-marker:not(.context-dot):not(.mapboxgl-user-location):not(.mapboxgl-user-location-accuracy-circle),
-.embedded:not(.path-editing) .path-vertex,
-.embedded:not(.path-editing) .path-midpoint {
-  cursor: default !important;
-}
-
-/* Locked features on mousedown: all-scroll (same as map) — skip in embedded mode */
-.map-mousedown.features-locked:not(.path-editing):not(.embedded) .mapboxgl-marker:not(.mapboxgl-user-location),
-.map-mousedown.features-locked:not(.path-editing):not(.embedded) .path-vertex,
-.map-mousedown.features-locked:not(.path-editing):not(.embedded) .path-midpoint {
+/* Locked features on mousedown: all-scroll (same as map) */
+.map-mousedown.features-locked:not(.path-editing) .mapboxgl-marker:not(.mapboxgl-user-location),
+.map-mousedown.features-locked:not(.path-editing) .path-vertex,
+.map-mousedown.features-locked:not(.path-editing) .path-midpoint {
   cursor: all-scroll !important;
 }
 
@@ -882,8 +875,8 @@ ion-icon.mapboxgl-ctrl-geocoder--icon-search {
     right: 0;
     bottom: 0;
     border-radius: 16px 16px 0 0;
-    padding: 0 16px calc(16px + env(safe-area-inset-bottom, 0px));
-    max-height: 70vh;
+    padding: 0 10px calc(10px + env(safe-area-inset-bottom, 0px));
+    width: 332px;
     transform: translateY(calc(100% - 140px));
     transition: transform 0.3s ease;
     box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.15);
@@ -973,7 +966,7 @@ ion-icon.mapboxgl-ctrl-geocoder--icon-search {
   position: relative;
   touch-action: none;
 }
-.map-container:not(.embedded) .path-vertex.not-draggable {
+.path-vertex.not-draggable {
   cursor: alias !important;
 }
 
