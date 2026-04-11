@@ -24,13 +24,14 @@ id | action                      | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10| 11| 1
  + | action is allowed
  S | previous action is stopped with no alert
  A | previous action is stopped with with alert
-==========================================================================
+==========================================================================================================
 - in recording path start tracking user bearing same as clicking start/resume, on start show toast msg "Click stop tracking to pause recording". 
   elapsed time in format hh:mm (do not count time in pause), on geolocate remove tost msg "recording paused",
   tracking info at bottom
 
 FEATURES LIST
 - add menu option "Show features list" before import features
+- show features list (markers, paths, sights) in detail panel
 
 
 OFLINE MAPS AND NAVIGATION

@@ -85,6 +85,13 @@ ion-page:has(#map-ioncontent) {
   cursor: alias !important;
 }
 
+/* Embedded: let clicks/touches pass through features to the map */
+.embedded .mapboxgl-marker:not(.mapboxgl-user-location):not(.mapboxgl-user-location-accuracy-circle),
+.embedded .path-vertex,
+.embedded .path-midpoint {
+  pointer-events: none !important;
+}
+
 /* Locked features on mousedown: all-scroll (same as map) */
 .map-mousedown.features-locked:not(.path-editing) .mapboxgl-marker:not(.mapboxgl-user-location),
 .map-mousedown.features-locked:not(.path-editing) .path-vertex,
