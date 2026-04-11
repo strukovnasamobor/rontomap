@@ -407,7 +407,7 @@ export default function Map() {
       if (shouldClose) {
         el.style.transform = "translateX(-100%)";
         setTimeout(() => {
-          setSelectedFeature(null);
+          dismissPanel();
           if (featurePanelRef.current) {
             featurePanelRef.current.style.transform = "";
             featurePanelRef.current.style.transition = "";
@@ -4455,7 +4455,8 @@ export default function Map() {
     if (!selectedFeature && !showFeaturesList) return {};
     const isPortrait = window.matchMedia("(orientation: portrait)").matches;
     if (isPortrait) {
-      const bottom = Math.round(window.innerHeight * (isSheetExpanded ? 0.5 : 0.25));
+      const panel = featurePanelRef.current;
+      const bottom = panel ? Math.round(window.innerHeight - panel.getBoundingClientRect().top) : 140;
       return { bottom };
     }
     return { left: 332 };
@@ -4731,23 +4732,64 @@ export default function Map() {
   };
 
   // Bottom sheet drag handlers (portrait mode)
+  const dismissPanel = () => {
+    if (showFeaturesList) setShowFeaturesList(false);
+    else setSelectedFeature(null);
+  };
+  const getSheetPeekHeight = () => {
+    if (showFeaturesList) return Math.round(window.innerHeight * 0.25);
+    return 140;
+  };
   const handleSheetDragStart = (e) => {
     sheetDragRef.current.startY = e.touches[0].clientY;
     sheetDragRef.current.dragging = true;
-    if (featurePanelRef.current) featurePanelRef.current.style.transition = "none";
+    const panel = featurePanelRef.current;
+    if (panel) {
+      panel.style.transition = "none";
+      sheetDragRef.current.startHeight = panel.offsetHeight;
+    }
   };
   const handleSheetDragMove = (e) => {
     if (!sheetDragRef.current.dragging || !featurePanelRef.current) return;
     const deltaY = e.touches[0].clientY - sheetDragRef.current.startY;
     const panel = featurePanelRef.current;
-    if (isSheetExpanded) {
-      // Expanded: allow dragging down only
-      if (deltaY > 0) panel.style.transform = `translateY(${deltaY}px)`;
+    const isList = panel.classList.contains("feature-list-panel");
+
+    if (isList) {
+      // Features list: resize panel by adjusting maxHeight
+      const vh = window.innerHeight;
+      const minH = vh * 0.25;
+      const maxH = vh * 0.5;
+      if (isSheetExpanded) {
+        // Dragging down from expanded: shrink
+        const newH = sheetDragRef.current.startHeight - deltaY;
+        if (newH >= minH) {
+          panel.style.maxHeight = `${newH}px`;
+          panel.style.transform = "";
+        } else {
+          // Below min — translate down for dismiss
+          panel.style.maxHeight = `${minH}px`;
+          panel.style.transform = `translateY(${minH - newH}px)`;
+        }
+      } else {
+        if (deltaY < 0) {
+          // Dragging up from collapsed: grow
+          const newH = Math.min(maxH, sheetDragRef.current.startHeight - deltaY);
+          panel.style.maxHeight = `${newH}px`;
+        } else {
+          // Dragging down: translate for dismiss
+          panel.style.transform = `translateY(${deltaY}px)`;
+        }
+      }
     } else {
-      // Peek: allow dragging up only
-      const peekTranslate = panel.offsetHeight - 140;
-      const newTranslate = Math.max(0, peekTranslate + deltaY);
-      panel.style.transform = `translateY(${newTranslate}px)`;
+      // Detail panel: existing transform approach
+      if (isSheetExpanded) {
+        if (deltaY > 0) panel.style.transform = `translateY(${deltaY}px)`;
+      } else {
+        const peekTranslate = panel.offsetHeight - getSheetPeekHeight();
+        const newTranslate = Math.max(0, peekTranslate + deltaY);
+        panel.style.transform = `translateY(${newTranslate}px)`;
+      }
     }
   };
   const handleSheetDragEnd = (e) => {
@@ -4756,40 +4798,41 @@ export default function Map() {
     const panel = featurePanelRef.current;
     panel.style.transition = "";
     const deltaY = e.changedTouches[0].clientY - sheetDragRef.current.startY;
+    const isList = panel.classList.contains("feature-list-panel");
+
+    const cleanupPanel = () => {
+      if (featurePanelRef.current) {
+        featurePanelRef.current.style.transform = "";
+        featurePanelRef.current.style.maxHeight = "";
+      }
+    };
 
     if (isSheetExpanded) {
       if (deltaY > 200) {
-        // Dismiss from expanded
+        panel.style.maxHeight = "";
         panel.style.transform = "translateY(100%)";
-        setTimeout(() => {
-          setSelectedFeature(null);
-          if (featurePanelRef.current) featurePanelRef.current.style.transform = "";
-        }, 300);
+        setTimeout(() => { dismissPanel(); cleanupPanel(); }, 300);
         return;
       }
       if (deltaY > 60) {
         setIsSheetExpanded(false);
-        panel.style.transform = "";
+        cleanupPanel();
         return;
       }
     } else {
       if (deltaY > 80) {
-        // Dismiss from peek
+        panel.style.maxHeight = "";
         panel.style.transform = "translateY(100%)";
-        setTimeout(() => {
-          setSelectedFeature(null);
-          if (featurePanelRef.current) featurePanelRef.current.style.transform = "";
-        }, 300);
+        setTimeout(() => { dismissPanel(); cleanupPanel(); }, 300);
         return;
       }
       if (deltaY < -60) {
         setIsSheetExpanded(true);
-        panel.style.transform = "";
+        cleanupPanel();
         return;
       }
     }
-    // Snap back to current state
-    panel.style.transform = "";
+    cleanupPanel();
   };
 
   const handleCenterHere = () => {
@@ -6663,7 +6706,11 @@ export default function Map() {
         const [sortField, sortDir] = featListSort.split("-");
         const darkClass = idMapStyle === "rontomap_streets_dark" ? " feature-panel-dark" : "";
         return (
-          <div className={`feature-panel feature-list-panel${darkClass}${isSheetExpanded ? " feature-panel-expanded" : ""}`}>
+          <div
+            {...featurePanelSwipe}
+            ref={(el) => { featurePanelRef.current = el; featurePanelSwipe.ref(el); }}
+            className={`feature-panel feature-list-panel${darkClass}${isSheetExpanded ? " feature-panel-expanded" : ""}`}
+          >
             <div
               className="feature-panel-handle"
               onTouchStart={handleSheetDragStart}

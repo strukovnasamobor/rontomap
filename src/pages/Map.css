@@ -890,8 +890,13 @@ ion-icon.mapboxgl-ctrl-geocoder--icon-search {
   }
 
   .feature-list-panel {
+    max-height: 25dvh;
+    transform: translateY(0);
+    transition: transform 0.3s ease, max-height 0.3s ease;
+  }
+
+  .feature-list-panel.feature-panel-expanded {
     max-height: 50dvh;
-    transform: translateY(calc(100% - 25dvh));
   }
 
   .feature-panel-expanded {
@@ -927,6 +932,7 @@ ion-icon.mapboxgl-ctrl-geocoder--icon-search {
 .feature-list-panel {
   display: flex;
   flex-direction: column;
+  overflow: hidden !important;
 }
 
 .sort-dir-icon {
@@ -941,6 +947,9 @@ ion-icon.mapboxgl-ctrl-geocoder--icon-search {
   padding-top: 10px;
   overflow-y: auto;
   flex: 1;
+  min-height: 0;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
 
 .feature-list-item {
