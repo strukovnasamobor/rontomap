@@ -1,8 +1,8 @@
 PARALLEL ACTIONS
 id | action                      | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10| 11| 12| 13| 14| 15| 16| 17| 18|      
 ==========================================================================================================
- 1 | search input opening        | - | + | + | + | S | + | + | + | + | + | - | - | - | - | - | - | - | - |
- 2 | search result clicking      | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
+ 1 | search input opening        | - | + | + | + | + | + | + | + | + | + | - | - | - | - | - | - | - | - |
+ 2 | search result clicking      | + | - | + | - | + | - | - | - | - | - | - | - | - | - | - | - | - | - |
  3 | menu opening                | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
  4 | reseting north              | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
  5 | map style changing          | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
@@ -28,11 +28,6 @@ id | action                      | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10| 11| 1
 - in recording path start tracking user bearing same as clicking start/resume, on start show toast msg "Click stop tracking to pause recording". 
   elapsed time in format hh:mm (do not count time in pause), on geolocate remove tost msg "recording paused",
   tracking info at bottom
-
-FEATURES LIST
-- add menu option "Show features list" before import features
-- show features list (markers, paths, sights) in detail panel
-
 
 OFLINE MAPS AND NAVIGATION
 - menu options for offline maps 
@@ -72,6 +67,11 @@ TERMINOLOGY
 - Circuit Route - a specific path to get from point A to point B and back to point A by Foot/Bike/Car
 - Track - a recorded path of GPS points over time
 
+SCREEN SIZE
+- minimum: width = 360px
+- small devices: width < 768px
+- large devices: width >= 768px
+
 UI DESIGN & INTERACTIONS
 - map on full width and height
 - top
@@ -86,7 +86,7 @@ UI DESIGN & INTERACTIONS
 - left mouse click / tap on feature => detail panel opens (in embedded disabled)
     - on landscape - left sidebar
     - on portrait - peeking bottom sheet
-        - action icons: 
+        - action icons ("locate-outline", "rocket-outline", "navigate-outline", "link-outline", "code-slash-outline", "download-outline", "close-outline"): 
             - marker: Center to marker, Fly to marker, Navigate to marker, Copy link to marker, Copy embedded marker, Export marker 
             - sight: Center to sight, Fly to sight, Navigate to sight, Copy link to sight, Copy embedded sight, Export sight
             - path: Center to path, Fly to path, Navigate to path start, Copy link to path, Copy embedded path, Export path
@@ -107,11 +107,6 @@ UI DESIGN & INTERACTIONS
 - mouse wheel click & drag (croosshair cursor icon) => map rotation and tilt camera panning
 - two fingers twisting => map rotation
 - two fingers tilt => map tilt
-
-SCREEN SIZE
-- minimum: width = 360px
-- small devices: width < 768px
-- large devices: width >= 768px
 
 COLORS
 - https://htmlcolorcodes.com/
@@ -155,6 +150,19 @@ COLORS
     - start point (circle) - #0000ff
     - end point (rectangle) - #0000ff
     - segments - #0000ff
+
+FEATURES LIST
+- menu option "Show features list"
+- show features list (markers, paths, sights) in detail panel (expanded in portrait) with icon actions:
+    - sort by name (asc/desc) - ion-icon "text-outline" - not showing additional data
+    - sort by distance from map center (asc/desc) - ion-icon name="radio-outline" - show distance from map center
+    - sort by length (asc/desc) - ion-icon name="resize-outline" - show path length
+    - markers (toggle on/off for filtering) - ion-icon name="location-outline"
+    - sights (toggle on/off for filtering) - ion-icon name="pin-outline"
+    - paths (toggle on/off for filtering) - ion-icon name="analytics-outline"
+    - close icon - ion-icon name="close-outline"
+- after feature name show for marker/sight - coordinates, for path - snapping, distance, duration (for snapped paths)
+- when feature is clicked center to map and glow, do not open features details
 
 IMPORT/EXPORT FEATURES
 - import map features (support: RontoJSON, GeoJSON, GPX, KML, FIT)

@@ -17,6 +17,14 @@ import {
   addOutline,
   removeOutline,
   pauseCircleOutline,
+  textOutline,
+  radioOutline,
+  resizeOutline,
+  chevronUpOutline,
+  chevronDownOutline,
+  locationOutline,
+  pinOutline,
+  analyticsOutline,
 } from "ionicons/icons";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useDoubleTap } from "use-double-tap";
@@ -249,6 +257,10 @@ export default function Map() {
   const [isSideMenuOpen, setIsSideMenuOpen] = useState(false);
   const [selectedFeature, setSelectedFeature] = useState(null);
   const [isSheetExpanded, setIsSheetExpanded] = useState(false);
+  const [showFeaturesList, setShowFeaturesList] = useState(false);
+  const [featListSort, setFeatListSort] = useState("name-asc");
+  const [featListFilter, setFeatListFilter] = useState({ markers: true, sights: true, paths: true });
+  const featListGlowCleanupRef = useRef(null);
   const sheetDragRef = useRef({ startY: 0, dragging: false });
   const featurePanelRef = useRef(null);
 
@@ -672,6 +684,14 @@ export default function Map() {
       total += 6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     }
     return total;
+  };
+
+  const haversinePoint = (lat1, lon1, lat2, lon2) => {
+    const toRad = (d) => (d * Math.PI) / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+    return 6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   };
 
   const formatDistance = (meters) => {
@@ -4003,8 +4023,19 @@ export default function Map() {
 
   // Close the feature detail panel whenever a context menu or the side menu opens
   useEffect(() => {
-    if (markerMenu || mapClickMenu || isSideMenuOpen) setSelectedFeature(null);
+    if (markerMenu || mapClickMenu || isSideMenuOpen) {
+      setSelectedFeature(null);
+      setShowFeaturesList(false);
+    }
   }, [markerMenu, mapClickMenu, isSideMenuOpen]);
+
+  // Clean up feature list glow when list closes
+  useEffect(() => {
+    if (!showFeaturesList && featListGlowCleanupRef.current) {
+      featListGlowCleanupRef.current();
+      featListGlowCleanupRef.current = null;
+    }
+  }, [showFeaturesList]);
 
   // Dynamic toast position: 10px above feature panel in portrait
   const [toastBottom, setToastBottom] = useState(null);
@@ -4421,9 +4452,13 @@ export default function Map() {
 
   // === Feature panel action handlers ===
   const getPanelPadding = () => {
-    if (!selectedFeature) return {};
+    if (!selectedFeature && !showFeaturesList) return {};
     const isPortrait = window.matchMedia("(orientation: portrait)").matches;
-    return isPortrait ? { bottom: 140 } : { left: 332 };
+    if (isPortrait) {
+      const bottom = Math.round(window.innerHeight * (isSheetExpanded ? 0.5 : 0.25));
+      return { bottom };
+    }
+    return { left: 332 };
   };
 
   const handleFeatureFlyTo = () => {
@@ -4545,6 +4580,154 @@ export default function Map() {
     }
     setSelectedFeature(null);
     confirmTracePath(path.roadSnap ?? null, path);
+  };
+
+  // === Features list handlers ===
+  const toggleFeatListSort = (field) => {
+    setFeatListSort((prev) => (prev === `${field}-asc` ? `${field}-desc` : `${field}-asc`));
+  };
+
+  const buildFeaturesList = () => {
+    const map = mapRef.current;
+    if (!map) return [];
+    const center = map.getCenter();
+    const items = [];
+
+    if (featListFilter.markers) {
+      for (const m of markersRef.current) {
+        if (m._sightPath) continue;
+        const ll = m.getLngLat();
+        items.push({
+          type: "marker",
+          name: m._markerName || "Marker",
+          lngLat: ll,
+          dist: haversinePoint(center.lat, center.lng, ll.lat, ll.lng),
+          length: 0,
+          ref: m,
+        });
+      }
+    }
+
+    if (featListFilter.sights) {
+      for (const p of pathsRef.current) {
+        if (!p.sights) continue;
+        for (const s of p.sights) {
+          const ll = s.getLngLat();
+          items.push({
+            type: "sight",
+            name: s._markerName || "Sight",
+            lngLat: ll,
+            dist: haversinePoint(center.lat, center.lng, ll.lat, ll.lng),
+            length: 0,
+            ref: s,
+          });
+        }
+      }
+    }
+
+    if (featListFilter.paths) {
+      for (const p of pathsRef.current) {
+        if (!p.isFinished) continue;
+        const bounds = new mapboxgl.LngLatBounds();
+        if (p.snappedSegments) {
+          p.snappedSegments.forEach((seg) => seg.coords.forEach((c) => bounds.extend(c)));
+        } else {
+          p.vertices.forEach((v) => bounds.extend(v.lngLat));
+        }
+        const c = bounds.getCenter();
+        let dist = p.routeDistance;
+        if (dist == null && p.vertices.length >= 2) {
+          dist = haversineDistance(p.vertices.map((v) => v.lngLat));
+        }
+        items.push({
+          type: "path",
+          name: p.name || "Path",
+          lngLat: c,
+          dist: haversinePoint(center.lat, center.lng, c.lat, c.lng),
+          length: dist || 0,
+          snap: p.roadSnap,
+          duration: p.routeDuration,
+          ref: p,
+        });
+      }
+    }
+
+    const [field, dir] = featListSort.split("-");
+    const mul = dir === "desc" ? -1 : 1;
+    items.sort((a, b) => {
+      if (field === "name") return mul * a.name.localeCompare(b.name);
+      if (field === "dist") return mul * (a.dist - b.dist);
+      if (field === "length") return mul * (a.length - b.length);
+      return 0;
+    });
+
+    return items;
+  };
+
+  const handleFeatureListClick = (item) => {
+    // Clear previous glow
+    if (featListGlowCleanupRef.current) {
+      featListGlowCleanupRef.current();
+      featListGlowCleanupRef.current = null;
+    }
+
+    const map = mapRef.current;
+    const pp = getPanelPadding();
+    const glowEls = [];
+
+    if (item.type === "path") {
+      const path = item.ref;
+      // Glow path line
+      if (map.getLayer(path.layerId)) {
+        map.setPaintProperty(path.layerId, "line-width", 6);
+        map.setPaintProperty(path.layerId, "line-opacity", 0.8);
+      }
+      // Glow vertices
+      path.vertices.forEach((v) => {
+        v.marker.getElement().classList.add("feature-glow");
+        glowEls.push(v.marker.getElement());
+      });
+      if (path.sights) {
+        path.sights.forEach((s) => {
+          s.getElement().classList.add("feature-glow");
+          glowEls.push(s.getElement());
+        });
+      }
+      // Center
+      const bounds = new mapboxgl.LngLatBounds();
+      if (path.snappedSegments) {
+        path.snappedSegments.forEach((seg) => seg.coords.forEach((c) => bounds.extend(c)));
+      } else {
+        path.vertices.forEach((v) => bounds.extend(v.lngLat));
+      }
+      map.easeTo({ center: bounds.getCenter(), padding: pp, duration: 500 });
+
+      featListGlowCleanupRef.current = () => {
+        if (map.getLayer(path.layerId)) {
+          map.setPaintProperty(path.layerId, "line-width", ["coalesce", ["get", "width"], 3]);
+          map.setPaintProperty(path.layerId, "line-opacity", 1);
+        }
+        glowEls.forEach((el) => el.classList.remove("feature-glow"));
+      };
+    } else {
+      const el = item.ref.getElement();
+      el.classList.add("feature-glow");
+      glowEls.push(el);
+      map.easeTo({ center: item.ref.getLngLat(), padding: pp, duration: 500 });
+
+      featListGlowCleanupRef.current = () => {
+        glowEls.forEach((el) => el.classList.remove("feature-glow"));
+      };
+    }
+
+    // Auto-clear glow after 2s
+    const cleanup = featListGlowCleanupRef.current;
+    setTimeout(() => {
+      if (featListGlowCleanupRef.current === cleanup) {
+        cleanup();
+        featListGlowCleanupRef.current = null;
+      }
+    }, 2000);
   };
 
   // Bottom sheet drag handlers (portrait mode)
@@ -6264,6 +6447,7 @@ export default function Map() {
               <button onClick={() => { setIsSideMenuOpen(false); handleRecordPath(); }}>Record path</button>
             )}
             <div className="side-menu-separator" />
+            <button onClick={() => { setIsSideMenuOpen(false); setSelectedFeature(null); setShowFeaturesList(true); }}>Show features list</button>
             <button onClick={() => { setIsSideMenuOpen(false); handleImportFeatures(); }}>Import features</button>
             <button onClick={() => { setIsSideMenuOpen(false); handleExportAll(); }}>Export features</button>
             <button onClick={() => { setIsSideMenuOpen(false); handleCopyEmbeddedFeatures(); }}>Copy embedded features</button>
@@ -6474,6 +6658,72 @@ export default function Map() {
           )}
         </div>
       )}
+      {showFeaturesList && !selectedFeature && (() => {
+        const items = buildFeaturesList();
+        const [sortField, sortDir] = featListSort.split("-");
+        const darkClass = idMapStyle === "rontomap_streets_dark" ? " feature-panel-dark" : "";
+        return (
+          <div className={`feature-panel feature-list-panel${darkClass}${isSheetExpanded ? " feature-panel-expanded" : ""}`}>
+            <div
+              className="feature-panel-handle"
+              onTouchStart={handleSheetDragStart}
+              onTouchMove={handleSheetDragMove}
+              onTouchEnd={handleSheetDragEnd}
+              onClick={() => setIsSheetExpanded((v) => !v)}
+            >
+              <div className="feature-panel-handle-bar" />
+            </div>
+            <div className="feature-panel-actions">
+              <ActionIconButton label={`Sort by name${sortField === "name" ? (sortDir === "asc" ? " (A-Z)" : " (Z-A)") : ""}`} onClick={() => toggleFeatListSort("name")}>
+                <IonIcon icon={textOutline} />
+                {sortField === "name" && <IonIcon icon={sortDir === "asc" ? chevronUpOutline : chevronDownOutline} className="sort-dir-icon" />}
+              </ActionIconButton>
+              <ActionIconButton label={`Sort by distance${sortField === "dist" ? (sortDir === "asc" ? " (nearest)" : " (farthest)") : ""}`} onClick={() => toggleFeatListSort("dist")}>
+                <IonIcon icon={radioOutline} />
+                {sortField === "dist" && <IonIcon icon={sortDir === "asc" ? chevronUpOutline : chevronDownOutline} className="sort-dir-icon" />}
+              </ActionIconButton>
+              <ActionIconButton label={`Sort by length${sortField === "length" ? (sortDir === "asc" ? " (shortest)" : " (longest)") : ""}`} onClick={() => toggleFeatListSort("length")}>
+                <IonIcon icon={resizeOutline} />
+                {sortField === "length" && <IonIcon icon={sortDir === "asc" ? chevronUpOutline : chevronDownOutline} className="sort-dir-icon" />}
+              </ActionIconButton>
+              <ActionIconButton label={featListFilter.markers ? "Hide markers" : "Show markers"} onClick={() => setFeatListFilter((f) => ({ ...f, markers: !f.markers }))}>
+                <IonIcon icon={locationOutline} style={featListFilter.markers ? undefined : { opacity: 0.3 }} />
+              </ActionIconButton>
+              <ActionIconButton label={featListFilter.sights ? "Hide sights" : "Show sights"} onClick={() => setFeatListFilter((f) => ({ ...f, sights: !f.sights }))}>
+                <IonIcon icon={pinOutline} style={featListFilter.sights ? undefined : { opacity: 0.3 }} />
+              </ActionIconButton>
+              <ActionIconButton label={featListFilter.paths ? "Hide paths" : "Show paths"} onClick={() => setFeatListFilter((f) => ({ ...f, paths: !f.paths }))}>
+                <IonIcon icon={analyticsOutline} style={featListFilter.paths ? undefined : { opacity: 0.3 }} />
+              </ActionIconButton>
+              <ActionIconButton label="Close" onClick={() => setShowFeaturesList(false)}>
+                <IonIcon icon={closeOutline} />
+              </ActionIconButton>
+            </div>
+            <div className="feature-list-items">
+              {items.map((item, i) => (
+                <div key={i} className="feature-list-item" onClick={() => handleFeatureListClick(item)}>
+                  <IonIcon icon={item.type === "path" ? analyticsOutline : item.type === "sight" ? pinOutline : locationOutline} className={`feature-list-icon feature-list-icon-${item.type}`} />
+                  <div className="feature-list-text">
+                    <span className="feature-list-name">{item.name}</span>
+                    <span className="feature-list-info">
+                      {item.type === "path"
+                        ? [
+                            item.snap === "foot" ? "Foot" : item.snap === "bike" ? "Bike" : item.snap === "car" ? "Car" : "Free",
+                            item.length > 0 ? formatDistance(item.length) : null,
+                            item.duration != null ? formatDuration(item.duration) : null,
+                          ].filter(Boolean).join(" \u00b7 ")
+                        : `${item.lngLat.lat.toFixed(6)}, ${item.lngLat.lng.toFixed(6)}`}
+                    </span>
+                  </div>
+                  {sortField === "dist" && <span className="feature-list-meta">{formatDistance(item.dist)}</span>}
+                  {sortField === "length" && item.type === "path" && item.length > 0 && <span className="feature-list-meta">{formatDistance(item.length)}</span>}
+                </div>
+              ))}
+              {items.length === 0 && <div className="feature-list-empty">No features</div>}
+            </div>
+          </div>
+        );
+      })()}
       {selectedFeature && (
         <>
           <div
