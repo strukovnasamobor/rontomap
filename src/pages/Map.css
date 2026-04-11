@@ -195,6 +195,10 @@ ion-page:has(#map-ioncontent) {
   cursor: pointer !important;
 }
 
+.mapboxgl-ctrl-attrib {
+  max-width: calc(100dvw - 100px);
+}
+
 .mapboxgl-ctrl-scale {
   margin-left: 0px !important;
   height: 20px !important;
@@ -213,6 +217,10 @@ ion-page:has(#map-ioncontent) {
   color: white !important;
 }
 
+.mapboxgl-ctrl-attrib-button {
+  position: relative;
+  overflow: visible !important;
+}
 .map-style-dark .mapboxgl-ctrl-attrib-button {
   filter: invert(1) !important;
 }
@@ -224,14 +232,11 @@ ion-page:has(#map-ioncontent) {
 .map-style-dark .mapboxgl-ctrl-group button {
   background: #1a1a1a !important;
 }
-.map-style-dark .mapboxgl-ctrl-group button .mapboxgl-ctrl-icon {
+.map-style-dark .mapboxgl-ctrl-group button.mapboxgl-ctrl-compass .mapboxgl-ctrl-icon {
   filter: invert(0.8) !important;
 }
 .map-style-dark .rontomap-logo button .mapboxgl-ctrl-icon {
   filter: none !important;
-}
-.map-style-dark .mapboxgl-ctrl-group button.mapboxgl-ctrl-compass  .mapboxgl-ctrl-icon {
-  filter: invert(0.8) !important;
 }
 
 /* Dark mode: search geocoder */
@@ -269,6 +274,22 @@ ion-page:has(#map-ioncontent) {
   background-color: #1a1a1a !important;
 }
 
+/* Hover effect on map control buttons */
+.mapboxgl-ctrl-group button:hover {
+  background: #f0f0f0 !important;
+}
+.map-style-dark .mapboxgl-ctrl-group button:hover {
+  background: #2a2a2a !important;
+}
+
+/* Hover on geocoder clear/close button */
+.mapboxgl-ctrl-geocoder--button:hover {
+  background: #f0f0f0 !important;
+}
+.map-style-dark .mapboxgl-ctrl-geocoder--button:hover {
+  background: #2a2a2a !important;
+}
+
 .mapboxgl-ctrl-group button + button {
   border-top: none !important;
 }
@@ -283,34 +304,99 @@ ion-page:has(#map-ioncontent) {
   box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.1) !important;
 }
 
-.ctrl-menu-btn {
-  background: none !important;
-  border: none;
-  cursor: pointer;
-  position: relative;
-}
-.ctrl-menu-btn::before {
-  content: "";
-  display: block;
-  position: absolute;
-  left: 9px;
-  right: 9px;
-  top: 50%;
-  height: 2px;
-  transform: translateY(-50%);
-  background: #333;
-  border-radius: 1px;
-  box-shadow: 0 -6px 0 #333, 0 6px 0 #333;
-}
-
-.map-style-dark .ctrl-menu-btn::before {
-  background: #ccc;
-  box-shadow: 0 -6px 0 #ccc, 0 6px 0 #ccc;
+.ctrl-menu-btn ion-icon {
+  font-size: 28px !important;
 }
 
 .mapboxgl-ctrl-group button {
   width: 36px !important;
   height: 36px !important;
+  position: relative;
+  overflow: visible !important;
+}
+.mapboxgl-ctrl-group button:hover {
+  z-index: 1;
+}
+.mapboxgl-ctrl-group:has(button:hover) {
+  z-index: 10;
+}
+
+/* Ion-icon inside map control buttons */
+.mapboxgl-ctrl-group button ion-icon {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 20px;
+  color: #333;
+  pointer-events: none;
+}
+.map-style-dark .mapboxgl-ctrl-group button ion-icon {
+  color: #ccc;
+}
+
+/* Map control tooltips */
+.map-ctrl-tooltip {
+  position: absolute;
+  background: rgba(0, 0, 0, 0.85);
+  color: white;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  z-index: 1010;
+}
+.map-ctrl-tooltip-visible {
+  opacity: 1;
+}
+.map-ctrl-tooltip-left {
+  right: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+}
+.map-ctrl-tooltip-right {
+  left: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+}
+.map-ctrl-tooltip-above {
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+}
+.map-ctrl-tooltip-below {
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+/* Right-side controls: anchor tooltip to right edge */
+.mapboxgl-ctrl-top-right .map-ctrl-tooltip-below,
+.mapboxgl-ctrl-top-right .map-ctrl-tooltip-above,
+.mapboxgl-ctrl-bottom-right .map-ctrl-tooltip-below,
+.mapboxgl-ctrl-bottom-right .map-ctrl-tooltip-above {
+  left: auto;
+  right: 0;
+  transform: none;
+}
+
+/* Left-side controls: anchor tooltip to left edge */
+.mapboxgl-ctrl-bottom-left .map-ctrl-tooltip-above,
+.mapboxgl-ctrl-bottom-left .map-ctrl-tooltip-below {
+  left: 0;
+  transform: none;
+}
+
+.map-style-dark .map-ctrl-tooltip {
+  background: rgba(255, 255, 255, 0.9);
+  color: #1a1a1a;
+}
+/* Hide geocoder tooltip when expanded */
+.mapboxgl-ctrl-geocoder:not(.mapboxgl-ctrl-geocoder--collapsed) .map-ctrl-tooltip {
+  display: none;
 }
 
 .mapboxgl-ctrl-geocoder {
@@ -322,6 +408,11 @@ ion-page:has(#map-ioncontent) {
   min-width: 36px !important;
 }
 
+/* Show clear/close button as soon as geocoder is expanded */
+.mapboxgl-ctrl-geocoder:not(.mapboxgl-ctrl-geocoder--collapsed) .mapboxgl-ctrl-geocoder--button {
+  display: block !important;
+}
+
 .mapboxgl-ctrl-geocoder--input {
   height: 36px !important;
   padding: 6px 35px !important;
@@ -331,6 +422,21 @@ ion-page:has(#map-ioncontent) {
   left: 7px !important;
   width: 20px !important;
   height: 20px !important;
+}
+
+/* Ion-icon replacement for geocoder search icon */
+ion-icon.mapboxgl-ctrl-geocoder--icon-search {
+  position: absolute;
+  left: 7px !important;
+  top: 8px !important;
+  width: 20px !important;
+  height: 20px !important;
+  font-size: 20px;
+  color: #757575;
+  pointer-events: none;
+}
+.map-style-dark ion-icon.mapboxgl-ctrl-geocoder--icon-search {
+  color: white;
 }
 
 .mapboxgl-ctrl-geocoder--icon {
@@ -470,12 +576,11 @@ ion-page:has(#map-ioncontent) {
   right: 0;
   top: 0;
   bottom: 0;
-  width: 260px;
-  max-width: 80vw;
+  width: 332px;
   background: white;
   z-index: 1003;
-  padding-top: calc(env(safe-area-inset-top, 0px) + 12px);
-  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-top: calc(env(safe-area-inset-top, 0px) + 10px);
+  padding-bottom: calc(env(safe-area-inset-top, 0px) + 10px);
   overflow-y: auto;
   box-shadow: -2px 0 12px rgba(0, 0, 0, 0.15);
   animation: side-menu-slide-in 0.2s ease-out;
@@ -494,13 +599,13 @@ ion-page:has(#map-ioncontent) {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 12px 12px 20px;
+  padding: 0 10px;
 }
 
 .side-menu-logo {
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
+  width: 36px;
+  height: 36px;
+  border-radius: 4px;
 }
 
 .side-menu-title {
@@ -511,18 +616,19 @@ ion-page:has(#map-ioncontent) {
 }
 
 .side-menu-close {
-  width: 32px;
-  height: 32px;
-  border: 1px solid rgba(0, 0, 0, 0.1);
-  background: rgba(0, 0, 0, 0.04);
+  width: 36px;
+  height: 36px;
+  border-radius: 4px;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.1);
+  background: white;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 20px;
-  color: #666;
-  border-radius: 50%;
+  color: #333;
   margin-left: auto;
+  font-size: 20px;
 }
 
 .side-menu-close:hover {
@@ -531,8 +637,9 @@ ion-page:has(#map-ioncontent) {
 
 .side-menu button:not(.side-menu-close) {
   display: block;
+  height: 36px;
   width: 100%;
-  padding: 12px 20px;
+  padding: 10px 10px;
   text-align: left;
   background: none;
   border: none;
@@ -548,7 +655,7 @@ ion-page:has(#map-ioncontent) {
 .side-menu-separator {
   height: 1px;
   background: rgba(0, 0, 0, 0.1);
-  margin: 4px 12px;
+  margin: 10px 0;
 }
 
 .side-menu-dark {
@@ -597,15 +704,16 @@ ion-page:has(#map-ioncontent) {
 
 .feature-panel-actions {
   display: flex;
-  gap: 12px;
-  padding: 12px 0;
+  justify-content: center;
+  gap: 10px;
+  padding-bottom: 10px;
 }
 
 .feature-panel-actions button {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  border: 1px solid rgba(0, 0, 0, 0.1);
+  width: 36px;
+  height: 36px;
+  border-radius: 4px;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.1);
   background: white;
   cursor: pointer;
   display: flex;
@@ -625,7 +733,7 @@ ion-page:has(#map-ioncontent) {
 
 .action-icon-tooltip {
   position: absolute;
-  bottom: calc(100% + 6px);
+  top: calc(100% + 6px);
   left: 50%;
   transform: translateX(-50%);
   background: rgba(0, 0, 0, 0.85);
@@ -656,6 +764,15 @@ ion-page:has(#map-ioncontent) {
   transform: none;
 }
 
+/* Portrait: action icon tooltips above instead of below */
+@media (orientation: portrait) {
+  .action-icon-tooltip {
+    top: auto;
+    bottom: calc(100% + 6px);
+  }
+}
+
+
 .feature-panel-dark .action-icon-tooltip {
   background: rgba(255, 255, 255, 0.9);
   color: #1a1a1a;
@@ -664,7 +781,7 @@ ion-page:has(#map-ioncontent) {
 .feature-panel-name {
   font-size: 16px;
   font-weight: 600;
-  padding: 4px 0 8px;
+  padding: 10px 0;
 }
 
 .feature-panel-coords {
@@ -734,18 +851,22 @@ ion-page:has(#map-ioncontent) {
     left: 0;
     top: 0;
     bottom: 0;
-    width: 300px;
-    padding: calc(env(safe-area-inset-top, 0px) + 12px) 12px 16px calc(env(safe-area-inset-left, 0px) + 12px);
+    width: 332px;
+    padding: calc(env(safe-area-inset-top, 0px) + 10px) 10px 10px calc(env(safe-area-inset-left, 0px) + 10px);
     box-shadow: 2px 0 12px rgba(0, 0, 0, 0.15);
     animation: feature-panel-slide-left 0.2s ease-out;
   }
 
   .feature-panel .feature-panel-actions {
-    gap: 6px;
+    gap: 10px;
   }
 
   .feature-panel-details {
     display: block;
+  }
+
+  .feature-panel .feature-panel-actions {
+    padding-bottom: 20px;
   }
 }
 
@@ -759,9 +880,9 @@ ion-page:has(#map-ioncontent) {
   .feature-panel {
     left: 0;
     right: 0;
-    bottom: env(safe-area-inset-bottom, 0px);
+    bottom: 0;
     border-radius: 16px 16px 0 0;
-    padding: 0 16px 16px;
+    padding: 0 16px calc(16px + env(safe-area-inset-bottom, 0px));
     max-height: 70vh;
     transform: translateY(calc(100% - 140px));
     transition: transform 0.3s ease;
@@ -775,7 +896,7 @@ ion-page:has(#map-ioncontent) {
   .feature-panel-handle {
     display: flex;
     justify-content: center;
-    padding: 12px 0 4px;
+    padding: 10px;
     cursor: pointer;
     touch-action: none;
   }
@@ -789,6 +910,11 @@ ion-page:has(#map-ioncontent) {
 
   .feature-panel-details {
     overflow: hidden;
+  }
+
+  .feature-panel .feature-panel-actions {
+    padding-top: 10px;
+    padding-bottom: 0;
   }
 }
 
@@ -1035,7 +1161,7 @@ ion-page:has(#map-ioncontent) {
   display: none !important;
 }
 
-@media (max-width: 500px) {
+@media (width < 768px) {
   .attrib-open .mapboxgl-ctrl-scale {
     display: none !important;
   }

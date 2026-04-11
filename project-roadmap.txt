@@ -20,7 +20,7 @@ id | action                      | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10|
   elapsed time in format hh:mm (do not count time in pause), on geolocate remove tost msg "recording paused",
   tracking info at bottom
 
-- menu close button style as for panel close
+- fix embedded click to move, allow detail panel and left click (cursor icon to alias)
 - add menu option to show features list in detail panel
 
 

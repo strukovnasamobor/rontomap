@@ -10,6 +10,13 @@ import {
   codeSlashOutline,
   downloadOutline,
   closeOutline,
+  searchOutline,
+  menuOutline,
+  compassOutline,
+  layersOutline,
+  addOutline,
+  removeOutline,
+  pauseCircleOutline,
 } from "ionicons/icons";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useDoubleTap } from "use-double-tap";
@@ -94,6 +101,28 @@ const deserializeSnappedSegments = (segments) =>
         : seg.type,
     coords: seg.coords.map((c) => [c.lng, c.lat]),
   }));
+
+// Create an <ion-icon> DOM element for use in Mapbox map controls.
+function createIonIcon(iconData, size = "20px") {
+  const el = document.createElement("ion-icon");
+  el.setAttribute("icon", iconData);
+  el.style.fontSize = size;
+  el.style.pointerEvents = "none";
+  return el;
+}
+
+// Add a hover/long-press tooltip to a DOM button (mirrors ActionIconButton behavior).
+// position: "left" | "right"
+function addMapControlTooltip(button, label, position = "left") {
+  const tooltip = document.createElement("span");
+  tooltip.className = `map-ctrl-tooltip map-ctrl-tooltip-${position}`;
+  tooltip.textContent = label;
+  button.appendChild(tooltip);
+
+  // Desktop hover only
+  button.addEventListener("mouseenter", () => tooltip.classList.add("map-ctrl-tooltip-visible"));
+  button.addEventListener("mouseleave", () => tooltip.classList.remove("map-ctrl-tooltip-visible"));
+}
 
 // Icon button used in the feature panel: shows a tooltip with the action name on
 // desktop hover and on touch long-press (long-press also suppresses the click).
@@ -2147,61 +2176,66 @@ export default function Map() {
               <button
                   class="mapboxgl-ctrl-geolocate hidden"
                   type="button"
-                  title="Track User Location"
                   aria-label="Track User Location"
                   data-control="track_location"
               >
-                  <span class="mapboxgl-ctrl-icon"></span>
               </button>
               <button
                   class="mapboxgl-ctrl-geolocate hidden"
                   type="button"
-                  title="Track User Bearing"
                   aria-label="Track User Bearing"
                   data-control="track_bearing"
               >
-                  <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/start_tracking_bearing.svg');"></span>
               </button>
               <button
                   class="mapboxgl-ctrl-geolocate hidden"
                   type="button"
-                  title="Stop Tracking User Bearing"
-                  aria-label="Tracking User Bearing"
+                  aria-label="Stop Tracking"
                   data-control="stop_tracking_bearing"
               >
-                  <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/stop_tracking_bearing.svg');"></span>
               </button>
           </div>
           <div class="ctrl-mapstyle-container mapboxgl-ctrl mapboxgl-ctrl-group">
               <button
                   type="button"
-                  class="mapboxgl-ctrl-icon ${idMapStyle === "rontomap_satellite" ? "" : "hidden"}"
-                  title="Change Map Style"
+                  class="${idMapStyle === "rontomap_satellite" ? "" : "hidden"}"
                   aria-label="Change Map Style"
                   data-control="change_map_style_rontomap_streets_light"
               >
-                  <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/map_style_change.svg');"></span>
               </button>
               <button
                   type="button"
-                  class="mapboxgl-ctrl-icon ${idMapStyle === "rontomap_streets_light" ? "" : "hidden"}"
-                  title="Change Map Style"
+                  class="${idMapStyle === "rontomap_streets_light" ? "" : "hidden"}"
                   aria-label="Change Map Style"
                   data-control="change_map_style_rontomap_streets_dark"
               >
-                  <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/map_style_change.svg');"></span>
               </button>
               <button
                   type="button"
-                  class="mapboxgl-ctrl-icon ${idMapStyle === "rontomap_streets_dark" ? "" : "hidden"}"
-                  title="Change Map Style"
+                  class="${idMapStyle === "rontomap_streets_dark" ? "" : "hidden"}"
                   aria-label="Change Map Style"
                   data-control="change_map_style_rontomap_satellite"
               >
-                  <span class="mapboxgl-ctrl-icon" style="background-image: url('assets/map_style_change.svg');"></span>
               </button>
           </div>
         `;
+
+        // Inject Ionic icons and tooltips into location buttons
+        const trackLocationBtn = this._container.querySelector('[data-control="track_location"]');
+        const trackBearingBtn = this._container.querySelector('[data-control="track_bearing"]');
+        const stopTrackingBtn = this._container.querySelector('[data-control="stop_tracking_bearing"]');
+        trackLocationBtn.appendChild(createIonIcon(locateOutline));
+        trackBearingBtn.appendChild(createIonIcon(compassOutline));
+        stopTrackingBtn.appendChild(createIonIcon(pauseCircleOutline));
+        addMapControlTooltip(trackLocationBtn, "Track Location", "above");
+        addMapControlTooltip(trackBearingBtn, "Track Bearing", "above");
+        addMapControlTooltip(stopTrackingBtn, "Stop Tracking", "above");
+
+        // Inject Ionic icons and tooltips into map style buttons
+        this._container.querySelectorAll(".ctrl-mapstyle-container button").forEach((btn) => {
+          btn.appendChild(createIonIcon(layersOutline));
+          addMapControlTooltip(btn, "Change Map Style", "above");
+        });
 
         this._locationDiv = this._container.querySelector(".ctrl-location-container");
         this._container.addEventListener("click", this._handleClick);
@@ -3018,6 +3052,14 @@ export default function Map() {
           const input = geocoderEl.querySelector("input");
           input?.focus();
         });
+
+        // Replace Mapbox search SVG with Ionic icon
+        const searchSvg = geocoderEl.querySelector(".mapboxgl-ctrl-geocoder--icon-search");
+        if (searchSvg) {
+          const ionSearch = createIonIcon(searchOutline, "20px");
+          ionSearch.classList.add("mapboxgl-ctrl-geocoder--icon-search");
+          searchSvg.parentNode.replaceChild(ionSearch, searchSvg);
+        }
       }
 
       // Disable right-click on geocoder suggestions (block selection + context menu)
@@ -3121,15 +3163,30 @@ export default function Map() {
         });
         mapRef.current.addControl(zoomNav, "top-right");
         topRight.insertBefore(zoomNav._container, topRight.firstChild);
+
+        // Replace zoom icons with Ionic icons
+        const zoomInBtn = zoomNav._container.querySelector(".mapboxgl-ctrl-zoom-in");
+        const zoomOutBtn = zoomNav._container.querySelector(".mapboxgl-ctrl-zoom-out");
+        if (zoomInBtn) {
+          zoomInBtn.querySelector("span.mapboxgl-ctrl-icon")?.remove();
+          zoomInBtn.appendChild(createIonIcon(addOutline));
+          addMapControlTooltip(zoomInBtn, "Zoom In", "below");
+        }
+        if (zoomOutBtn) {
+          zoomOutBtn.querySelector("span.mapboxgl-ctrl-icon")?.remove();
+          zoomOutBtn.appendChild(createIonIcon(removeOutline));
+          addMapControlTooltip(zoomOutBtn, "Zoom Out", "below");
+        }
       } else {
         // Normal mode: hamburger menu button
         const menuContainer = document.createElement("div");
         menuContainer.className = "mapboxgl-ctrl mapboxgl-ctrl-group ctrl-menu-container";
         const menuBtn = document.createElement("button");
         menuBtn.type = "button";
-        menuBtn.className = "mapboxgl-ctrl-icon ctrl-menu-btn";
-        menuBtn.title = "Menu";
+        menuBtn.className = "ctrl-menu-btn";
         menuBtn.setAttribute("aria-label", "Menu");
+        menuBtn.appendChild(createIonIcon(menuOutline));
+        addMapControlTooltip(menuBtn, "Menu", "below");
         menuBtn.addEventListener("click", () => {
           setIsSideMenuOpen((prev) => !prev);
         });
@@ -3149,6 +3206,11 @@ export default function Map() {
         mapRef.current?.getContainer()?.classList.toggle("attrib-open", open);
       });
       observer.observe(attribEl, { attributes: true, attributeFilter: ["class"] });
+
+      const attribBtn = attribEl.querySelector(".mapboxgl-ctrl-attrib-button");
+      if (attribBtn) {
+        addMapControlTooltip(attribBtn, "Attribution", "above");
+      }
     }
 
     // Add custom className to the compass container
@@ -3163,6 +3225,7 @@ export default function Map() {
     // Hide compass when bearing is 0
     const compassBtn = nav._container.querySelector(".mapboxgl-ctrl-compass");
     if (compassBtn) {
+      addMapControlTooltip(compassBtn, "Reset North", "below");
       const updateCompassVisibility = () => {
         const bearing = mapRef.current?.getBearing() ?? 0;
         compassBtn.style.display = Math.abs(bearing) < 0.5 ? "none" : "";
@@ -6148,6 +6211,7 @@ export default function Map() {
                 <IonIcon icon={closeOutline} />
               </button>
             </div>
+            <div className="side-menu-separator" />
             <button onClick={() => {
               setIsSideMenuOpen(false);
               handleCreatePath({ noAutoVertex: true });
