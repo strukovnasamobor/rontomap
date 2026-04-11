@@ -1,19 +1,25 @@
 PARALLEL ACTIONS
-id | action                      | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10|  
-==========================================================================
- 1 | search result clicked       | - | + | + | + | S | + | + | + | + | + |
- 2 | menu opens                  | - | - | - | - | - | - | - | - | - | - |
- 3 | reset north                 | - | - | - | - | - | - | - | - | - | - |
- 4 | map style change            | - | - | - | - | - | - | - | - | - | - |
- 5 | user tracking location      | - | - | - | - | - | - | - | - | - | - |
- 6 | user tracking bearing       | - | - | - | - | - | - | - | - | - | - |                                              
- 7 | path creation               | - | - | - | - | - | - | - | - | - | - |                                             
- 8 | path recording              | - | - | - | - | - | - | - | - | - | - |                                              
- 9 | path tracing                | - | - | - | - | - | - | - | - | - | - |                                               
-10  | route navigation           | - | - | - | - | - | - | - | - | - | - |                                               
-11 | feature actions             | - | - | - | - | - | - | - | - | - | - |
-12 | import/export/copy/delete   | - | - | - | - | - | - | - | - | - | - |
-==========================================================================
+id | action                      | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10| 11| 12| 13| 14| 15| 16| 17| 18|      
+==========================================================================================================
+ 1 | search input opening        | - | + | + | + | S | + | + | + | + | + | - | - | - | - | - | - | - | - |
+ 2 | search result clicking      | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
+ 3 | menu opening                | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
+ 4 | reseting north              | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
+ 5 | map style changing          | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
+ 6 | user tracking location      | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
+ 7 | user tracking bearing       | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |                                   
+ 8 | path creation               | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |                                             
+ 9 | path recording              | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |                                             
+10 | path tracing                | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |                                               
+11 | route navigating            | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |                                               
+12 | feature centering           | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
+13 | features listing            | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
+14 | importing features          | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
+15 | exporting features          | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
+16 | copying embedded features   | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
+17 | deleting all features       | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
+18 | offline maps handling       | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
+==========================================================================================================
  - | action is not allowed
  + | action is allowed
  S | previous action is stopped with no alert
@@ -23,7 +29,8 @@ id | action                      | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10|
   elapsed time in format hh:mm (do not count time in pause), on geolocate remove tost msg "recording paused",
   tracking info at bottom
 
-- add menu option to show features list in detail panel
+FEATURES LIST
+- add menu option "Show features list" before import features
 
 
 OFLINE MAPS AND NAVIGATION
@@ -75,7 +82,7 @@ UI DESIGN & INTERACTIONS
     - middle - toast msg
     - right - map change style & location icon (in embedded hidden)
 - right sidebar - menu 
-- left mouse click / tap on feature => detail panel opens
+- left mouse click / tap on feature => detail panel opens (in embedded disabled)
     - on landscape - left sidebar
     - on portrait - peeking bottom sheet
         - action icons: 
@@ -85,7 +92,7 @@ UI DESIGN & INTERACTIONS
         - name of feature
         - for marker/sight - coordinates, for path - snapping, distance, duration (for snapped paths), trace path (action text)
 - double left mouse click / double tap => fullscreen enter/exit
-- right mouse click / long tap on map/feature => context menu opens  (in embedded disabled)
+- right mouse click / long tap on map/feature => context menu opens (in embedded disabled)
     - map: Center here, Navigate here, Add marker here, Create path here
     - marker: Center to marker, Fly to marker, Navigate to marker, Copy link to marker, Copy embedded marker, Export marker, Set name to marker, Save view to marker, Delete marker
     - sight: Center to sight, Fly to sight, Navigate to sight, Copy link to sight, Copy embedded sight, Export sight, Set name to sight, Save view to sight, Detach sight, Delete sight

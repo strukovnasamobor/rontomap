@@ -714,7 +714,7 @@ export default function Map() {
       const setCursor = (value) => {
         el.style.setProperty("cursor", value, "important");
       };
-      setCursor("alias");
+      if (!isEmbeddedRef.current) setCursor("alias");
       let wasDragged = false;
       el.addEventListener("mousedown", () => {
         if (!marker.isDraggable()) return;
@@ -779,6 +779,7 @@ export default function Map() {
         e.stopPropagation();
         if (wasDragged) return;
         if (isPathModeRef.current) return;
+        if (isEmbeddedRef.current) return;
         // Debounce so a second click within 300ms toggles fullscreen instead of opening details
         if (markerClickTimer) {
           clearTimeout(markerClickTimer);
@@ -796,7 +797,7 @@ export default function Map() {
       const origSetDraggable = marker.setDraggable.bind(marker);
       marker.setDraggable = (v) => {
         origSetDraggable(v);
-        setCursor(v ? "grab" : "alias");
+        if (!isEmbeddedRef.current) setCursor(v ? "grab" : "alias");
       };
       marker._markerName = "";
       markersRef.current.push(marker);
@@ -851,7 +852,7 @@ export default function Map() {
         });
         path._hitLayerId = hitLayerId;
         map.on("mouseenter", hitLayerId, () => {
-          if (!isPathModeRef.current) map.getCanvas().style.cursor = "alias";
+          if (!isPathModeRef.current && !isEmbeddedRef.current) map.getCanvas().style.cursor = "alias";
         });
         map.on("mouseleave", hitLayerId, () => {
           map.getCanvas().style.cursor = "";
@@ -2828,7 +2829,7 @@ export default function Map() {
 
 
         // Feature selection: click on finished path opens detail panel
-        if (!isPathModeRef.current) {
+        if (!isPathModeRef.current && !isEmbeddedRef.current) {
           let hitPath = null;
           for (const p of pathsRef.current) {
             if (!p.isFinished || !p._hitLayerId) continue;
@@ -3325,10 +3326,12 @@ export default function Map() {
         map.dragPan.disable();
 
         // Track focus to enable/disable drag
-        window.addEventListener("focus", () => {
+        const enableDrag = () => {
           embeddedFocusedRef.current = true;
           map.dragPan.enable();
-        });
+        };
+        window.addEventListener("focus", enableDrag);
+        container.addEventListener("touchstart", enableDrag, { passive: true });
         window.addEventListener("blur", () => {
           embeddedFocusedRef.current = false;
           map.dragPan.disable();
@@ -3369,10 +3372,12 @@ export default function Map() {
         map.scrollZoom.disable();
 
         // Track focus to enable/disable scroll zoom
-        window.addEventListener("focus", () => {
+        const enableScroll = () => {
           embeddedFocusedRef.current = true;
           map.scrollZoom.enable();
-        });
+        };
+        window.addEventListener("focus", enableScroll);
+        container.addEventListener("click", enableScroll);
         window.addEventListener("blur", () => {
           embeddedFocusedRef.current = false;
           map.scrollZoom.disable();
@@ -3956,6 +3961,7 @@ export default function Map() {
       return () => {
         glowEls.forEach((el) => el.classList.remove("feature-glow"));
         if (!wasDraggable) m.setDraggable(false);
+        map.easeTo({ padding: { top: 0, bottom: 0, left: 0, right: 0 }, duration: 0 });
       };
     }
     if (selectedFeature.type === "path") {
@@ -3990,6 +3996,7 @@ export default function Map() {
         }
         glowEls.forEach((el) => el.classList.remove("feature-glow"));
         restoreDrag.forEach((m) => m.setDraggable(false));
+        map.easeTo({ padding: { top: 0, bottom: 0, left: 0, right: 0 }, duration: 0 });
       };
     }
   }, [selectedFeature]);
@@ -4413,20 +4420,28 @@ export default function Map() {
   };
 
   // === Feature panel action handlers ===
+  const getPanelPadding = () => {
+    if (!selectedFeature) return {};
+    const isPortrait = window.matchMedia("(orientation: portrait)").matches;
+    return isPortrait ? { bottom: 140 } : { left: 332 };
+  };
+
   const handleFeatureFlyTo = () => {
     if (!selectedFeature) return;
     const map = mapRef.current;
     if (selectedFeature.type === "marker") {
       const marker = selectedFeature.marker;
+      const pp = getPanelPadding();
       if (marker._savedView) {
-        map.flyTo({ center: marker.getLngLat(), zoom: marker._savedView.zoom, pitch: marker._savedView.pitch, bearing: marker._savedView.bearing, duration: 1500 });
+        map.flyTo({ center: marker.getLngLat(), zoom: marker._savedView.zoom, pitch: marker._savedView.pitch, bearing: marker._savedView.bearing, padding: pp, duration: 1500 });
       } else {
-        map.flyTo({ center: marker.getLngLat(), zoom: 18, duration: 1500 });
+        map.flyTo({ center: marker.getLngLat(), zoom: 18, padding: pp, duration: 1500 });
       }
     } else if (selectedFeature.type === "path") {
       const path = selectedFeature.path;
+      const pp = getPanelPadding();
       if (path.savedView) {
-        map.flyTo({ center: path.savedView.center, zoom: path.savedView.zoom, pitch: path.savedView.pitch, bearing: path.savedView.bearing, duration: 1500 });
+        map.flyTo({ center: path.savedView.center, zoom: path.savedView.zoom, pitch: path.savedView.pitch, bearing: path.savedView.bearing, padding: pp, duration: 1500 });
       } else if (path.vertices.length > 0) {
         const bounds = new mapboxgl.LngLatBounds();
         if (path.snappedSegments) {
@@ -4434,15 +4449,16 @@ export default function Map() {
         } else {
           path.vertices.forEach((v) => bounds.extend(v.lngLat));
         }
-        map.fitBounds(bounds, { padding: 60, bearing: map.getBearing(), pitch: map.getPitch(), duration: 1500 });
+        map.fitBounds(bounds, { padding: { top: 60, bottom: (pp.bottom || 0) + 60, left: (pp.left || 0) + 60, right: 60 }, bearing: map.getBearing(), pitch: map.getPitch(), duration: 1500 });
       }
     }
   };
 
   const handleFeatureCenterTo = () => {
     if (!selectedFeature) return;
+    const pp = getPanelPadding();
     if (selectedFeature.type === "marker") {
-      mapRef.current.easeTo({ center: selectedFeature.marker.getLngLat(), duration: 500 });
+      mapRef.current.easeTo({ center: selectedFeature.marker.getLngLat(), padding: pp, duration: 500 });
     } else if (selectedFeature.type === "path") {
       const path = selectedFeature.path;
       if (path.vertices.length === 0) return;
@@ -4453,7 +4469,7 @@ export default function Map() {
       } else {
         path.vertices.forEach((v) => bounds.extend(v.lngLat));
       }
-      map.easeTo({ center: bounds.getCenter(), duration: 500 });
+      map.easeTo({ center: bounds.getCenter(), padding: pp, duration: 500 });
     }
   };
 
@@ -6252,8 +6268,8 @@ export default function Map() {
             <button onClick={() => { setIsSideMenuOpen(false); handleExportAll(); }}>Export features</button>
             <button onClick={() => { setIsSideMenuOpen(false); handleCopyEmbeddedFeatures(); }}>Copy embedded features</button>
             <button onClick={() => { setIsSideMenuOpen(false); handleCopyFeatures(); }}>Copy link to features</button>
-            <div className="side-menu-separator" />
             <button onClick={() => { setIsSideMenuOpen(false); handleDeleteAllFeatures(); }}>Delete all features</button>
+            <div className="side-menu-separator" />
           </div>
         </>
       )}

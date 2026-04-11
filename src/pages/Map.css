@@ -78,10 +78,10 @@ ion-page:has(#map-ioncontent) {
 }
 
 /* Locked features: alias cursor */
-.features-locked:not(.path-editing)
+.features-locked:not(.path-editing):not(.embedded)
   .mapboxgl-marker:not(.context-dot):not(.mapboxgl-user-location):not(.mapboxgl-user-location-accuracy-circle),
-.features-locked:not(.path-editing) .path-vertex,
-.features-locked:not(.path-editing) .path-midpoint {
+.features-locked:not(.path-editing):not(.embedded) .path-vertex,
+.features-locked:not(.path-editing):not(.embedded) .path-midpoint {
   cursor: alias !important;
 }
 
@@ -789,7 +789,7 @@ ion-icon.mapboxgl-ctrl-geocoder--icon-search {
   color: #555;
   padding: 4px 0;
   display: flex;
-  gap: 6px;
+  gap: 4px;
   align-items: center;
   flex-wrap: wrap;
 }
@@ -876,7 +876,7 @@ ion-icon.mapboxgl-ctrl-geocoder--icon-search {
     bottom: 0;
     border-radius: 16px 16px 0 0;
     padding: 0 10px calc(10px + env(safe-area-inset-bottom, 0px));
-    width: 332px;
+    max-height: 70dvh;
     transform: translateY(calc(100% - 140px));
     transition: transform 0.3s ease;
     box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.15);
