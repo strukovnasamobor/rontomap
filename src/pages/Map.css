@@ -882,32 +882,38 @@ ion-icon.mapboxgl-ctrl-geocoder--icon-search {
     right: 0;
     bottom: 0;
     border-radius: 16px 16px 0 0;
-    padding: 0 10px calc(10px + env(safe-area-inset-bottom, 0px));
-    max-height: 50dvh;
-    transform: translateY(calc(100% - 140px));
-    transition: transform 0.3s ease;
+    padding: 0 10px calc(20px + env(safe-area-inset-bottom, 0px));
+    max-height: 25dvh;
+    transform: translateY(0);
+    transition: transform 0.3s ease, height 0.3s ease, max-height 0.3s ease;
     box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.15);
   }
 
   .feature-list-panel {
     max-height: 25dvh;
+    height: auto;
     transform: translateY(0);
-    transition: transform 0.3s ease, max-height 0.3s ease;
+    transition: transform 0.3s ease, height 0.3s ease, max-height 0.3s ease;
   }
 
-  .feature-list-panel.feature-panel-expanded {
-    max-height: 50dvh;
-  }
+  .feature-list-panel.sheet-level-1 { max-height: none; height: 50dvh; }
+  .feature-list-panel.sheet-level-2 { max-height: none; height: 75dvh; }
 
   .feature-panel-expanded {
+    max-height: none;
+    height: 50dvh;
     transform: translateY(0) !important;
+    padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+    transition: transform 0.3s ease, height 0.3s ease;
   }
+
+  .feature-panel.sheet-level-2 { height: 75dvh; }
 
   .feature-panel-handle {
     display: flex;
     justify-content: center;
     padding: 10px;
-    cursor: pointer;
+    cursor: grab;
     touch-action: none;
   }
 

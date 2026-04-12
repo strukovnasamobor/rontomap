@@ -256,7 +256,7 @@ export default function Map() {
   const [mapClickMenu, setMapClickMenu] = useState(null); // { lngLat, x, y }
   const [isSideMenuOpen, setIsSideMenuOpen] = useState(false);
   const [selectedFeature, setSelectedFeature] = useState(null);
-  const [isSheetExpanded, setIsSheetExpanded] = useState(false);
+  const [sheetLevel, setSheetLevel] = useState(0);
   const [showFeaturesList, setShowFeaturesList] = useState(false);
   const [featListSort, setFeatListSort] = useState("name-asc");
   const [featListFilter, setFeatListFilter] = useState({ markers: true, sights: true, paths: true });
@@ -810,7 +810,7 @@ export default function Map() {
         markerClickTimer = setTimeout(() => {
           markerClickTimer = null;
           setSelectedFeature({ type: "marker", marker });
-          setIsSheetExpanded(false);
+          setSheetLevel(0);
         }, 300);
       });
       // Sync cursor with draggable state
@@ -1631,7 +1631,7 @@ export default function Map() {
               pathClickHandledRef.current = false;
             }, 400);
             setSelectedFeature({ type: "path", path });
-            setIsSheetExpanded(false);
+            setSheetLevel(0);
             return;
           }
         }
@@ -2858,11 +2858,12 @@ export default function Map() {
           }
           if (hitPath) {
             setSelectedFeature({ type: "path", path: hitPath });
-            setIsSheetExpanded(false);
+            setSheetLevel(0);
             return;
           }
-          // Click on empty map: close feature panel
+          // Click on empty map: close feature panel / features list
           setSelectedFeature(null);
+          setShowFeaturesList(false);
         }
 
         // Path mode: add vertex or start new path
@@ -4059,7 +4060,7 @@ export default function Map() {
     // Also measure immediately for drag-end snaps
     measure();
     return () => clearTimeout(tid);
-  }, [selectedFeature, isSheetExpanded]);
+  }, [selectedFeature, sheetLevel]);
 
   // Android: paint the system nav-bar background to match the feature panel in
   // portrait mode so the panel appears to extend through the nav buttons area.
@@ -4494,7 +4495,7 @@ export default function Map() {
     if (!selectedFeature) return;
     const pp = getPanelPadding();
     if (selectedFeature.type === "marker") {
-      mapRef.current.easeTo({ center: selectedFeature.marker.getLngLat(), padding: pp, duration: 500 });
+      mapRef.current.easeTo({ center: selectedFeature.marker.getLngLat(), padding: pp, offset: [0, 20], duration: 500 });
     } else if (selectedFeature.type === "path") {
       const path = selectedFeature.path;
       if (path.vertices.length === 0) return;
@@ -4714,7 +4715,7 @@ export default function Map() {
       const el = item.ref.getElement();
       el.classList.add("feature-glow");
       glowEls.push(el);
-      map.easeTo({ center: item.ref.getLngLat(), padding: pp, duration: 500 });
+      map.easeTo({ center: item.ref.getLngLat(), padding: pp, offset: [0, 20], duration: 500 });
 
       featListGlowCleanupRef.current = () => {
         glowEls.forEach((el) => el.classList.remove("feature-glow"));
@@ -4731,17 +4732,15 @@ export default function Map() {
     }, 2000);
   };
 
-  // Bottom sheet drag handlers (portrait mode)
+  // Bottom sheet drag handlers (portrait + desktop mouse)
   const dismissPanel = () => {
     if (showFeaturesList) setShowFeaturesList(false);
     else setSelectedFeature(null);
   };
-  const getSheetPeekHeight = () => {
-    if (showFeaturesList) return Math.round(window.innerHeight * 0.25);
-    return 140;
-  };
-  const handleSheetDragStart = (e) => {
-    sheetDragRef.current.startY = e.touches[0].clientY;
+  const getSheetPeekHeight = () => Math.round(window.innerHeight * 0.25);
+
+  const sheetDragStart = (clientY) => {
+    sheetDragRef.current.startY = clientY;
     sheetDragRef.current.dragging = true;
     const panel = featurePanelRef.current;
     if (panel) {
@@ -4749,90 +4748,115 @@ export default function Map() {
       sheetDragRef.current.startHeight = panel.offsetHeight;
     }
   };
-  const handleSheetDragMove = (e) => {
+  const sheetDragMove = (clientY) => {
     if (!sheetDragRef.current.dragging || !featurePanelRef.current) return;
-    const deltaY = e.touches[0].clientY - sheetDragRef.current.startY;
+    const deltaY = clientY - sheetDragRef.current.startY;
     const panel = featurePanelRef.current;
     const isList = panel.classList.contains("feature-list-panel");
 
     if (isList) {
-      // Features list: resize panel by adjusting maxHeight
       const vh = window.innerHeight;
       const minH = vh * 0.25;
-      const maxH = vh * 0.5;
-      if (isSheetExpanded) {
-        // Dragging down from expanded: shrink
-        const newH = sheetDragRef.current.startHeight - deltaY;
-        if (newH >= minH) {
-          panel.style.maxHeight = `${newH}px`;
-          panel.style.transform = "";
-        } else {
-          // Below min — translate down for dismiss
-          panel.style.maxHeight = `${minH}px`;
-          panel.style.transform = `translateY(${minH - newH}px)`;
-        }
+      const maxH = vh * 0.75;
+      const newH = Math.min(maxH, sheetDragRef.current.startHeight - deltaY);
+      if (newH >= minH) {
+        panel.style.height = `${newH}px`;
+        panel.style.maxHeight = "none";
+        panel.style.transform = "";
       } else {
-        if (deltaY < 0) {
-          // Dragging up from collapsed: grow
-          const newH = Math.min(maxH, sheetDragRef.current.startHeight - deltaY);
-          panel.style.maxHeight = `${newH}px`;
-        } else {
-          // Dragging down: translate for dismiss
-          panel.style.transform = `translateY(${deltaY}px)`;
-        }
+        panel.style.height = `${minH}px`;
+        panel.style.maxHeight = "none";
+        panel.style.transform = `translateY(${minH - newH}px)`;
       }
     } else {
-      // Detail panel: existing transform approach
-      if (isSheetExpanded) {
-        if (deltaY > 0) panel.style.transform = `translateY(${deltaY}px)`;
+      const vh = window.innerHeight;
+      const minH = vh * 0.25;
+      const maxH = vh * 0.75;
+      const newH = Math.min(maxH, sheetDragRef.current.startHeight - deltaY);
+      if (newH >= minH) {
+        panel.style.height = `${newH}px`;
+        panel.style.maxHeight = "none";
+        panel.style.transform = "translateY(0)";
       } else {
-        const peekTranslate = panel.offsetHeight - getSheetPeekHeight();
-        const newTranslate = Math.max(0, peekTranslate + deltaY);
-        panel.style.transform = `translateY(${newTranslate}px)`;
+        panel.style.height = `${minH}px`;
+        panel.style.maxHeight = "none";
+        panel.style.transform = `translateY(${minH - newH}px)`;
       }
     }
   };
-  const handleSheetDragEnd = (e) => {
+  const sheetDragEnd = (clientY) => {
     if (!sheetDragRef.current.dragging || !featurePanelRef.current) return;
     sheetDragRef.current.dragging = false;
     const panel = featurePanelRef.current;
     panel.style.transition = "";
-    const deltaY = e.changedTouches[0].clientY - sheetDragRef.current.startY;
     const isList = panel.classList.contains("feature-list-panel");
 
     const cleanupPanel = () => {
       if (featurePanelRef.current) {
         featurePanelRef.current.style.transform = "";
+        featurePanelRef.current.style.height = "";
         featurePanelRef.current.style.maxHeight = "";
       }
     };
 
-    if (isSheetExpanded) {
-      if (deltaY > 200) {
-        panel.style.maxHeight = "";
+    if (isList) {
+      const vh = window.innerHeight;
+      const currentH = panel.offsetHeight;
+      const translateMatch = panel.style.transform.match(/translateY\((.+?)px\)/);
+      const isBelow = translateMatch && parseFloat(translateMatch[1]) > 0;
+
+      if (isBelow || currentH < vh * 0.15) {
+        panel.style.height = "";
         panel.style.transform = "translateY(100%)";
         setTimeout(() => { dismissPanel(); cleanupPanel(); }, 300);
         return;
       }
-      if (deltaY > 60) {
-        setIsSheetExpanded(false);
-        cleanupPanel();
-        return;
+      const deltaY = clientY - sheetDragRef.current.startY;
+      if (deltaY < -40) {
+        setSheetLevel(Math.min(2, sheetLevel + 1));
+      } else if (deltaY > 40) {
+        setSheetLevel(Math.max(0, sheetLevel - 1));
       }
+      cleanupPanel();
     } else {
-      if (deltaY > 80) {
-        panel.style.maxHeight = "";
-        panel.style.transform = "translateY(100%)";
-        setTimeout(() => { dismissPanel(); cleanupPanel(); }, 300);
-        return;
+      const deltaY = clientY - sheetDragRef.current.startY;
+      if (sheetLevel === 0) {
+        if (deltaY > 80) {
+          panel.style.transform = "translateY(100%)";
+          setTimeout(() => { dismissPanel(); cleanupPanel(); }, 300);
+          return;
+        }
+        if (deltaY < -40) { setSheetLevel(1); cleanupPanel(); return; }
+      } else {
+        if (deltaY > 200) {
+          panel.style.transform = "translateY(100%)";
+          setTimeout(() => { dismissPanel(); cleanupPanel(); }, 300);
+          return;
+        }
+        if (deltaY > 40) { setSheetLevel(Math.max(0, sheetLevel - 1)); cleanupPanel(); return; }
+        if (deltaY < -40) { setSheetLevel(Math.min(2, sheetLevel + 1)); cleanupPanel(); return; }
       }
-      if (deltaY < -60) {
-        setIsSheetExpanded(true);
-        cleanupPanel();
-        return;
-      }
+      cleanupPanel();
     }
-    cleanupPanel();
+  };
+
+  // Touch handlers
+  const handleSheetDragStart = (e) => sheetDragStart(e.touches[0].clientY);
+  const handleSheetDragMove = (e) => sheetDragMove(e.touches[0].clientY);
+  const handleSheetDragEnd = (e) => sheetDragEnd(e.changedTouches[0].clientY);
+
+  // Mouse handlers (desktop)
+  const handleSheetMouseDown = (e) => {
+    e.preventDefault();
+    sheetDragStart(e.clientY);
+    const onMove = (ev) => { ev.preventDefault(); sheetDragMove(ev.clientY); };
+    const onUp = (ev) => {
+      sheetDragEnd(ev.clientY);
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
   };
 
   const handleCenterHere = () => {
@@ -4845,7 +4869,7 @@ export default function Map() {
     setMapClickMenu(null);
     // Auto-open the detail panel; the selectedFeature effect handles drag enable.
     setSelectedFeature({ type: "marker", marker: m });
-    setIsSheetExpanded(false);
+    setSheetLevel(0);
   };
 
   const handleCreatePath = (opts) => {
@@ -6490,11 +6514,11 @@ export default function Map() {
               <button onClick={() => { setIsSideMenuOpen(false); handleRecordPath(); }}>Record path</button>
             )}
             <div className="side-menu-separator" />
-            <button onClick={() => { setIsSideMenuOpen(false); setSelectedFeature(null); setShowFeaturesList(true); }}>Show features list</button>
-            <button onClick={() => { setIsSideMenuOpen(false); handleImportFeatures(); }}>Import features</button>
-            <button onClick={() => { setIsSideMenuOpen(false); handleExportAll(); }}>Export features</button>
-            <button onClick={() => { setIsSideMenuOpen(false); handleCopyEmbeddedFeatures(); }}>Copy embedded features</button>
+            <button onClick={() => { setIsSideMenuOpen(false); setSelectedFeature(null); setSheetLevel(0); setShowFeaturesList(true); }}>Show features list</button>
             <button onClick={() => { setIsSideMenuOpen(false); handleCopyFeatures(); }}>Copy link to features</button>
+            <button onClick={() => { setIsSideMenuOpen(false); handleCopyEmbeddedFeatures(); }}>Copy embedded features</button>
+            <button onClick={() => { setIsSideMenuOpen(false); handleExportAll(); }}>Export features</button>
+            <button onClick={() => { setIsSideMenuOpen(false); handleImportFeatures(); }}>Import features</button>
             <button onClick={() => { setIsSideMenuOpen(false); handleDeleteAllFeatures(); }}>Delete all features</button>
             <div className="side-menu-separator" />
           </div>
@@ -6709,14 +6733,14 @@ export default function Map() {
           <div
             {...featurePanelSwipe}
             ref={(el) => { featurePanelRef.current = el; featurePanelSwipe.ref(el); }}
-            className={`feature-panel feature-list-panel${darkClass}${isSheetExpanded ? " feature-panel-expanded" : ""}`}
+            className={`feature-panel feature-list-panel${darkClass}${sheetLevel > 0 ? ` sheet-level-${sheetLevel}` : ""}`}
           >
             <div
               className="feature-panel-handle"
               onTouchStart={handleSheetDragStart}
               onTouchMove={handleSheetDragMove}
               onTouchEnd={handleSheetDragEnd}
-              onClick={() => setIsSheetExpanded((v) => !v)}
+              onMouseDown={handleSheetMouseDown}
             >
               <div className="feature-panel-handle-bar" />
             </div>
@@ -6779,14 +6803,14 @@ export default function Map() {
               featurePanelRef.current = el;
               featurePanelSwipe.ref(el);
             }}
-            className={`feature-panel${idMapStyle === "rontomap_streets_dark" ? " feature-panel-dark" : ""}${isSheetExpanded ? " feature-panel-expanded" : ""}`}
+            className={`feature-panel${idMapStyle === "rontomap_streets_dark" ? " feature-panel-dark" : ""}${sheetLevel > 0 ? ` feature-panel-expanded sheet-level-${sheetLevel}` : ""}`}
           >
             <div
               className="feature-panel-handle"
               onTouchStart={handleSheetDragStart}
               onTouchMove={handleSheetDragMove}
               onTouchEnd={handleSheetDragEnd}
-              onClick={() => setIsSheetExpanded((v) => !v)}
+              onMouseDown={handleSheetMouseDown}
             >
               <div className="feature-panel-handle-bar" />
             </div>

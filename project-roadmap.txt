@@ -85,7 +85,7 @@ UI DESIGN & INTERACTIONS
 - right sidebar - menu 
 - left mouse click / tap on feature => detail panel opens (in embedded disabled)
     - on landscape - left sidebar
-    - on portrait - peeking bottom sheet
+    - on portrait - peeking bottom sheet (minimized - max-height: 25dvh, half state - height: 50dvh, expanded - height: 75dvh)
         - action icons ("locate-outline", "rocket-outline", "navigate-outline", "link-outline", "code-slash-outline", "download-outline", "close-outline"): 
             - marker: Center to marker, Fly to marker, Navigate to marker, Copy link to marker, Copy embedded marker, Export marker 
             - sight: Center to sight, Fly to sight, Navigate to sight, Copy link to sight, Copy embedded sight, Export sight
