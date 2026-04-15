@@ -23,6 +23,7 @@ public class MainActivity extends BridgeActivity {
         // Register plugins BEFORE super.onCreate() so the bridge picks them up
         registerPlugin(FullscreenPlugin.class);
         registerPlugin(DownloadPlugin.class);
+        registerPlugin(OfflineRoutingPlugin.class);
 
         super.onCreate(savedInstanceState);
 

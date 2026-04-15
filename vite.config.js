@@ -6,9 +6,15 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: "autoUpdate", // Automatically update service worker
-      manifest: false, // Tells plugin to use your existing manifest.json
-      includeAssets: [], // Anything used offline but not referenced in the manifest or code
+      registerType: "autoUpdate",
+      manifest: false,
+      strategies: "injectManifest",
+      srcDir: "src",
+      filename: "sw.js",
+      injectManifest: {
+        injectionPoint: "self.__WB_MANIFEST",
+      },
+      includeAssets: [],
     }),
   ],
   test: {

@@ -1,6 +1,8 @@
 import "./Map.css";
 import PageFixedLayout from "../components/PageFixedLayout";
 import Fullscreen from "../plugins/Fullscreen";
+import OfflineRouting from "../plugins/OfflineRouting";
+import { calculateTileUrls, tileCountForBounds } from "../utils/offlineTiles";
 import { useIonViewWillEnter, IonAlert, IonIcon } from "@ionic/react";
 import {
   locateOutline,
@@ -25,6 +27,9 @@ import {
   locationOutline,
   pinOutline,
   analyticsOutline,
+  mapOutline,
+  refreshOutline,
+  trashOutline,
 } from "ionicons/icons";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useDoubleTap } from "use-double-tap";
@@ -57,6 +62,21 @@ const CODE_TO_SEG_TYPE = { s: "snapped", o: "offset", f: "fallback", d: "direct"
 
 // Set Mapbox access token
 mapboxgl.accessToken = "pk.eyJ1IjoiYXVyZWxpdXMtemQiLCJhIjoiY21rcXA3cXh2MHNpZDNjcXl1a3MzbW8zciJ9.JO4VSTN6-0vRtWW0YKjlAg";
+
+const MAP_STYLE_IDS = {
+  rontomap_streets_light: "cmjmktkev00cc01sb0a6ff4i5",
+  rontomap_streets_dark: "cmjmqcp3b000101r2g5vb6bse",
+  rontomap_satellite: "cmefvgizo00ul01sc2rek321h",
+};
+
+const formatBytes = (bytes) => {
+  if (!bytes || bytes < 1024) return `${bytes || 0} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+  const mb = kb / 1024;
+  if (mb < 1024) return `${mb.toFixed(1)} MB`;
+  return `${(mb / 1024).toFixed(2)} GB`;
+};
 
 // Ramer-Douglas-Peucker simplification (~5m tolerance)
 const RDP_TOLERANCE = 0.00005;
@@ -257,7 +277,7 @@ export default function Map() {
   const [isSideMenuOpen, setIsSideMenuOpen] = useState(false);
   const [selectedFeature, setSelectedFeature] = useState(null);
   const [sheetLevel, setSheetLevel] = useState(0);
-  const [showFeaturesList, setShowFeaturesList] = useState(false);
+  const [showFeaturesList, setOpenFeaturesList] = useState(false);
   const [featListSort, setFeatListSort] = useState("name-asc");
   const [featListFilter, setFeatListFilter] = useState({ markers: true, sights: true, paths: true });
   const featListGlowCleanupRef = useRef(null);
@@ -341,6 +361,24 @@ export default function Map() {
   const [exportAlert, setExportAlert] = useState(null); // { data, scope, baseName }
   const [featuresLocked, setFeaturesLocked] = useState(false);
   const featuresLockedRef = useRef(false);
+
+  // Offline maps state
+  const [offlineRegions, setOfflineRegions] = useState([]);
+  const [showOfflineMapsPanel, setShowOfflineMapsPanel] = useState(false);
+  const [isOfflineDownloadMode, setIsOfflineDownloadMode] = useState(false);
+  const [offlineTileEstimate, setOfflineTileEstimate] = useState(null);
+  const [currentMapZoom, setCurrentMapZoom] = useState(14);
+  const [downloadProgress, setDownloadProgress] = useState(null);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [currentDownloadRegionId, setCurrentDownloadRegionId] = useState(null);
+  const [offlineDeleteAlert, setOfflineDeleteAlert] = useState(null);
+  const offlineRegionHighlightCleanupRef = useRef(null);
+  const offlineDownloadModeRef = useRef(false);
+  const offlineFlowActiveRef = useRef(false);
+  const offlineRectBoundsRef = useRef(null);
+  const offlineRectDetachedRef = useRef(false);
+  const offlineRectHandlesRef = useRef([]);
+  const rectMethodsRef = useRef(null);
   const idMapStyleRef = useRef(idMapStyle);
   const isEmbeddedRef = useRef(new URLSearchParams(window.location.search).get("embedded") === "true");
   const embeddedFocusedRef = useRef(false);
@@ -658,15 +696,15 @@ export default function Map() {
   useEffect(() => {
     console.log("useEffect > idMapStyle:", idMapStyle);
     if (idMapStyle == "rontomap_streets_light") {
-      setMapStyle("mapbox://styles/aurelius-zd/cmjmktkev00cc01sb0a6ff4i5");
+      setMapStyle(`mapbox://styles/aurelius-zd/${MAP_STYLE_IDS.rontomap_streets_light}`);
       document.querySelector('[data-control="change_map_style_rontomap_streets_light"]')?.classList.add("hidden");
       document.querySelector('[data-control="change_map_style_rontomap_streets_dark"]')?.classList.remove("hidden");
     } else if (idMapStyle == "rontomap_streets_dark") {
-      setMapStyle("mapbox://styles/aurelius-zd/cmjmqcp3b000101r2g5vb6bse");
+      setMapStyle(`mapbox://styles/aurelius-zd/${MAP_STYLE_IDS.rontomap_streets_dark}`);
       document.querySelector('[data-control="change_map_style_rontomap_streets_dark"]')?.classList.add("hidden");
       document.querySelector('[data-control="change_map_style_rontomap_satellite"]')?.classList.remove("hidden");
     } else if (idMapStyle == "rontomap_satellite") {
-      setMapStyle("mapbox://styles/aurelius-zd/cmefvgizo00ul01sc2rek321h");
+      setMapStyle(`mapbox://styles/aurelius-zd/${MAP_STYLE_IDS.rontomap_satellite}`);
       document.querySelector('[data-control="change_map_style_rontomap_satellite"]')?.classList.add("hidden");
       document.querySelector('[data-control="change_map_style_rontomap_streets_light"]')?.classList.remove("hidden");
     }
@@ -1038,11 +1076,27 @@ export default function Map() {
       let totalDuration = 0;
       for (const batch of batches) {
         const coords = batch.map((v) => v.lngLat.join(",")).join(";");
-        const res = await fetch(
-          `https://api.mapbox.com/directions/v5/mapbox/${profile}/${coords}?geometries=geojson&overview=full&access_token=${mapboxgl.accessToken}`,
-        );
-        const data = await res.json();
-        if (data.routes && data.routes.length > 0) {
+        let data = null;
+        try {
+          const res = await fetch(
+            `https://api.mapbox.com/directions/v5/mapbox/${profile}/${coords}?geometries=geojson&overview=full&access_token=${mapboxgl.accessToken}`,
+          );
+          data = await res.json();
+        } catch {
+          if (isNativeAndroid()) {
+            try {
+              const waypoints = batch.map((v) => ({ lng: v.lngLat[0], lat: v.lngLat[1] }));
+              const result = await OfflineRouting.route({
+                profile,
+                waypoints: JSON.stringify(waypoints),
+              });
+              data = JSON.parse(result.data);
+            } catch {
+              data = null;
+            }
+          }
+        }
+        if (data && data.routes && data.routes.length > 0) {
           const route = data.routes[0];
           const routeCoords = route.geometry.coordinates;
           allCoords.push(...(allCoords.length > 0 ? routeCoords.slice(1) : routeCoords));
@@ -2863,7 +2917,7 @@ export default function Map() {
           }
           // Click on empty map: close feature panel / features list
           setSelectedFeature(null);
-          setShowFeaturesList(false);
+          setOpenFeaturesList(false);
         }
 
         // Path mode: add vertex or start new path
@@ -3290,6 +3344,10 @@ export default function Map() {
     let middleLastY = 0;
     mapRef.current.getCanvas().addEventListener("mousedown", (ev) => {
       if (ev.button === 1) {
+        if (offlineFlowActiveRef.current) {
+          ev.preventDefault();
+          return;
+        }
         middleDrag = true;
         middleLastX = ev.clientX;
         middleLastY = ev.clientY;
@@ -3299,6 +3357,11 @@ export default function Map() {
     });
     window.addEventListener("mousemove", (ev) => {
       if (!middleDrag) return;
+      if (offlineFlowActiveRef.current) {
+        middleDrag = false;
+        mapRef.current.getCanvas().style.cursor = "";
+        return;
+      }
       mapRef.current.getCanvas().style.cursor = "crosshair";
       const dx = ev.clientX - middleLastX;
       const dy = ev.clientY - middleLastY;
@@ -3682,6 +3745,15 @@ export default function Map() {
         pathHelpersRef.current.ensurePassedPathLayer(active);
         pathHelpersRef.current.updatePassedPathLine(passedPathCoordsRef.current, active.roadSnap);
       }
+      // Restore offline-region rectangle + handles if in download mode
+      if (offlineDownloadModeRef.current && rectMethodsRef.current) {
+        const bounds = offlineRectBoundsRef.current;
+        if (bounds) {
+          rectMethodsRef.current.addOverlay();
+          rectMethodsRef.current.removeHandles();
+          rectMethodsRef.current.addHandles(bounds);
+        }
+      }
     });
   }, [mapStyle]);
 
@@ -4026,7 +4098,7 @@ export default function Map() {
   useEffect(() => {
     if (markerMenu || mapClickMenu || isSideMenuOpen) {
       setSelectedFeature(null);
-      setShowFeaturesList(false);
+      setOpenFeaturesList(false);
     }
   }, [markerMenu, mapClickMenu, isSideMenuOpen]);
 
@@ -4734,7 +4806,7 @@ export default function Map() {
 
   // Bottom sheet drag handlers (portrait + desktop mouse)
   const dismissPanel = () => {
-    if (showFeaturesList) setShowFeaturesList(false);
+    if (showFeaturesList) setOpenFeaturesList(false);
     else setSelectedFeature(null);
   };
   const getSheetPeekHeight = () => Math.round(window.innerHeight * 0.25);
@@ -5867,7 +5939,25 @@ export default function Map() {
           passedPathCoordsRef.current = [...passedPathCoordsRef.current, ...offCoords];
         }
       } catch {
-        passedPathCoordsRef.current = [...passedPathCoordsRef.current, ...offCoords];
+        if (isNativeAndroid()) {
+          try {
+            const waypoints = offCoords.map((c) => ({ lng: c[0], lat: c[1] }));
+            const result = await OfflineRouting.route({
+              profile,
+              waypoints: JSON.stringify(waypoints),
+            });
+            const data = JSON.parse(result.data);
+            if (data?.routes?.[0]) {
+              passedPathCoordsRef.current = [...passedPathCoordsRef.current, ...data.routes[0].geometry.coordinates];
+            } else {
+              passedPathCoordsRef.current = [...passedPathCoordsRef.current, ...offCoords];
+            }
+          } catch {
+            passedPathCoordsRef.current = [...passedPathCoordsRef.current, ...offCoords];
+          }
+        } else {
+          passedPathCoordsRef.current = [...passedPathCoordsRef.current, ...offCoords];
+        }
       }
     } else {
       passedPathCoordsRef.current = [...passedPathCoordsRef.current, ...offCoords];
@@ -6243,6 +6333,518 @@ export default function Map() {
     }
   }, []);
 
+  // ---- Offline maps ----
+
+  const refreshOfflineRegions = useCallback(async () => {
+    if (!("serviceWorker" in navigator)) return [];
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      if (!reg.active) return [];
+      return await new Promise((resolve) => {
+        const ch = new MessageChannel();
+        const t = setTimeout(() => resolve([]), 3000);
+        ch.port1.onmessage = (e) => {
+          clearTimeout(t);
+          const list = e.data?.regions || [];
+          setOfflineRegions(list);
+          resolve(list);
+        };
+        reg.active.postMessage({ type: "GET_REGIONS" }, [ch.port2]);
+      });
+    } catch {
+      return [];
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshOfflineRegions();
+  }, [refreshOfflineRegions]);
+
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) return;
+    const handler = (event) => {
+      const data = event.data;
+      if (!data || !data.type) return;
+      if (data.type === "DOWNLOAD_PROGRESS") {
+        setDownloadProgress(data);
+        if (data.regionId != null) setCurrentDownloadRegionId(data.regionId);
+        if (data.complete) {
+          setIsDownloading(false);
+          setDownloadProgress(null);
+          setCurrentDownloadRegionId(null);
+          setToastMsg("Offline map ready.");
+          setTimeout(() => setToastMsg(null), 3000);
+          refreshOfflineRegions().then(() => setShowOfflineMapsPanel(true));
+        }
+      } else if (data.type === "DOWNLOAD_CANCELLED") {
+        setIsDownloading(false);
+        setDownloadProgress(null);
+        setCurrentDownloadRegionId(null);
+        refreshOfflineRegions();
+      } else if (data.type === "DOWNLOAD_ERROR") {
+        setIsDownloading(false);
+        setDownloadProgress(null);
+        setCurrentDownloadRegionId(null);
+        setToastMsg("Download failed.");
+        setTimeout(() => setToastMsg(null), 3000);
+      } else if (data.type === "REGION_DELETED") {
+        refreshOfflineRegions();
+      }
+    };
+    navigator.serviceWorker.addEventListener("message", handler);
+    return () => navigator.serviceWorker.removeEventListener("message", handler);
+  }, [refreshOfflineRegions]);
+
+  const boundsToPolygon = (b) => ({
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        geometry: {
+          type: "Polygon",
+          coordinates: [
+            [
+              [b.west, b.south],
+              [b.east, b.south],
+              [b.east, b.north],
+              [b.west, b.north],
+              [b.west, b.south],
+            ],
+          ],
+        },
+      },
+    ],
+  });
+
+  const readMapBounds = () => {
+    const map = mapRef.current;
+    if (!map) return null;
+    const canvas = map.getCanvas();
+    const w = canvas.clientWidth;
+    const h = canvas.clientHeight;
+    const inset = 102;
+    const x1 = Math.min(inset, w / 2 - 1);
+    const y1 = Math.min(inset, h / 2 - 1);
+    const x2 = Math.max(w - inset, w / 2 + 1);
+    const y2 = Math.max(h - inset, h / 2 + 1);
+    const nw = map.unproject([x1, y1]);
+    const se = map.unproject([x2, y2]);
+    return {
+      north: nw.lat,
+      south: se.lat,
+      east: se.lng,
+      west: nw.lng,
+    };
+  };
+
+  const getOfflineRectBounds = () => {
+    if (offlineRectDetachedRef.current && offlineRectBoundsRef.current) {
+      return offlineRectBoundsRef.current;
+    }
+    return readMapBounds();
+  };
+
+  const computeOfflineEstimate = useCallback(() => {
+    const b = getOfflineRectBounds();
+    if (!b) return;
+    let areaTiles = 0;
+    for (let z = 0; z <= 16; z++) areaTiles += tileCountForBounds(b, z);
+    // Per (x,y,z) position across all 3 styles:
+    // light vector ~60KB + dark vector ~60KB + satellite (raster 80KB + vector labels 30KB) = ~230KB
+    const BYTES_PER_POSITION = 230 * 1024;
+    setOfflineTileEstimate({
+      tileCount: areaTiles * 3,
+      estimatedBytes: areaTiles * BYTES_PER_POSITION,
+    });
+  }, []);
+
+  // Lock the map to north + flat + disable rotate/tilt gestures for the
+  // entire offline-maps flow (panel open, download mode, or downloading).
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const offlineFlowActive = showOfflineMapsPanel || isOfflineDownloadMode || isDownloading;
+    offlineFlowActiveRef.current = offlineFlowActive;
+    if (!offlineFlowActive) return;
+
+    const prevBearing = map.getBearing();
+    const prevPitch = map.getPitch();
+    map.easeTo({ bearing: 0, pitch: 0, duration: 200 });
+    try { map.dragRotate?.disable(); } catch {}
+    try { map.touchZoomRotate?.disableRotation(); } catch {}
+    try { map.touchPitch?.disable?.(); } catch {}
+    try { map.keyboard?.disableRotation?.(); } catch {}
+
+    return () => {
+      offlineFlowActiveRef.current = false;
+      try { map.dragRotate?.enable(); } catch {}
+      try { map.touchZoomRotate?.enableRotation(); } catch {}
+      try { map.touchPitch?.enable?.(); } catch {}
+      try { map.keyboard?.enableRotation?.(); } catch {}
+      map.easeTo({ bearing: prevBearing, pitch: prevPitch, duration: 200 });
+    };
+  }, [showOfflineMapsPanel, isOfflineDownloadMode, isDownloading]);
+
+  useEffect(() => {
+    offlineDownloadModeRef.current = isOfflineDownloadMode;
+    const map = mapRef.current;
+    if (!isOfflineDownloadMode || !map) return;
+
+    const HANDLE_KEYS = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
+    const handleLngLat = (b, key) => {
+      const midLng = (b.west + b.east) / 2;
+      const midLat = (b.north + b.south) / 2;
+      switch (key) {
+        case "nw": return [b.west, b.north];
+        case "n":  return [midLng, b.north];
+        case "ne": return [b.east, b.north];
+        case "e":  return [b.east, midLat];
+        case "se": return [b.east, b.south];
+        case "s":  return [midLng, b.south];
+        case "sw": return [b.west, b.south];
+        case "w":  return [b.west, midLat];
+        default:   return [midLng, midLat];
+      }
+    };
+
+    const addOverlay = () => {
+      const b = getOfflineRectBounds();
+      if (!b) return;
+      const data = boundsToPolygon(b);
+      const dark = idMapStyleRef.current === "rontomap_streets_dark";
+      const rectColor = dark ? "#ff9933" : "#ff6f00";
+      if (!map.getSource("offline-region-preview")) {
+        map.addSource("offline-region-preview", { type: "geojson", data });
+        map.addLayer({
+          id: "offline-region-preview-fill",
+          type: "fill",
+          source: "offline-region-preview",
+          paint: { "fill-color": rectColor, "fill-opacity": 0.12 },
+        });
+        map.addLayer({
+          id: "offline-region-preview-line",
+          type: "line",
+          source: "offline-region-preview",
+          paint: {
+            "line-color": rectColor,
+            "line-width": 2,
+            "line-dasharray": [2, 2],
+          },
+        });
+      } else {
+        map.getSource("offline-region-preview").setData(data);
+        map.setPaintProperty("offline-region-preview-fill", "fill-color", rectColor);
+        map.setPaintProperty("offline-region-preview-line", "line-color", rectColor);
+      }
+    };
+
+    const removeOverlay = () => {
+      if (map.getLayer("offline-region-preview-line")) map.removeLayer("offline-region-preview-line");
+      if (map.getLayer("offline-region-preview-fill")) map.removeLayer("offline-region-preview-fill");
+      if (map.getSource("offline-region-preview")) map.removeSource("offline-region-preview");
+    };
+
+    const syncHandlePositions = (bounds) => {
+      offlineRectHandlesRef.current.forEach((m, i) => {
+        const [lng, lat] = handleLngLat(bounds, HANDLE_KEYS[i]);
+        m.setLngLat([lng, lat]);
+      });
+    };
+
+    const removeHandles = () => {
+      offlineRectHandlesRef.current.forEach((m) => m.remove());
+      offlineRectHandlesRef.current = [];
+    };
+
+    const addHandles = (bounds) => {
+      if (!bounds) return;
+      HANDLE_KEYS.forEach((key) => {
+        const el = document.createElement("div");
+        el.className = `offline-rect-handle offline-rect-handle-${key}`;
+        if (offlineRectDetachedRef.current) {
+          el.classList.add("offline-rect-handle--anchored");
+        }
+        const [lng, lat] = handleLngLat(bounds, key);
+        const marker = new mapboxgl.Marker({ element: el, draggable: true })
+          .setLngLat([lng, lat])
+          .addTo(map);
+        marker.on("dragstart", () => {
+          const firstDetach = !offlineRectDetachedRef.current;
+          offlineRectDetachedRef.current = true;
+          if (!offlineRectBoundsRef.current) {
+            offlineRectBoundsRef.current = { ...readMapBounds() };
+          }
+          if (firstDetach) {
+            offlineRectHandlesRef.current.forEach((m) => {
+              m.getElement().classList.add("offline-rect-handle--anchored");
+            });
+          }
+        });
+        marker.on("drag", () => {
+          const b = offlineRectBoundsRef.current;
+          if (!b) return;
+          const { lng: mLng, lat: mLat } = marker.getLngLat();
+          if (key.includes("n")) b.north = mLat;
+          if (key.includes("s")) b.south = mLat;
+          if (key.includes("e")) b.east = mLng;
+          if (key.includes("w")) b.west = mLng;
+          if (b.north <= b.south) b.north = b.south + 1e-6;
+          if (b.east <= b.west) b.east = b.west + 1e-6;
+          const src = map.getSource("offline-region-preview");
+          if (src) src.setData(boundsToPolygon(b));
+          syncHandlePositions(b);
+          computeOfflineEstimate();
+        });
+        offlineRectHandlesRef.current.push(marker);
+      });
+    };
+
+    // Seed bounds on first entry so style-switch restore has something to draw
+    if (!offlineRectBoundsRef.current) {
+      offlineRectBoundsRef.current = { ...readMapBounds() };
+    }
+
+    rectMethodsRef.current = { addHandles, removeHandles, syncHandlePositions, addOverlay };
+
+    const onMove = () => {
+      setCurrentMapZoom(map.getZoom());
+      if (offlineRectDetachedRef.current) {
+        computeOfflineEstimate();
+        return;
+      }
+      const b = readMapBounds();
+      if (!b) return;
+      offlineRectBoundsRef.current = { ...b };
+      const src = map.getSource("offline-region-preview");
+      if (src) src.setData(boundsToPolygon(b));
+      syncHandlePositions(b);
+      computeOfflineEstimate();
+    };
+
+    addOverlay();
+    addHandles(getOfflineRectBounds());
+    setCurrentMapZoom(map.getZoom());
+    computeOfflineEstimate();
+    map.on("move", onMove);
+    map.on("zoom", onMove);
+    return () => {
+      map.off("move", onMove);
+      map.off("zoom", onMove);
+      removeOverlay();
+      removeHandles();
+      rectMethodsRef.current = null;
+      offlineRectBoundsRef.current = null;
+      offlineRectDetachedRef.current = false;
+    };
+  }, [isOfflineDownloadMode, computeOfflineEstimate]);
+
+  const handleOpenOfflineMaps = () => {
+    refreshOfflineRegions();
+    setSelectedFeature(null);
+    setSheetLevel(0);
+    setShowOfflineMapsPanel(true);
+    setToastMsg("Map locked to north and flat for offline maps.");
+    setTimeout(() => setToastMsg(null), 3000);
+  };
+
+  const handleStartOfflineDownload = () => {
+    setShowOfflineMapsPanel(false);
+    setIsOfflineDownloadMode(true);
+  };
+
+  const handleCancelOfflineDownload = () => {
+    setIsOfflineDownloadMode(false);
+  };
+
+  const startRegionDownload = async (region, tileUrls) => {
+    const reg = await navigator.serviceWorker?.ready;
+    const sw = reg?.active;
+    if (!sw) {
+      setIsDownloading(false);
+      setDownloadProgress(null);
+      setToastMsg("Service worker not ready.");
+      setTimeout(() => setToastMsg(null), 2500);
+      return false;
+    }
+    sw.postMessage({ type: "DOWNLOAD_REGION", region, tileUrls });
+    return true;
+  };
+
+  const handleConfirmOfflineDownload = async () => {
+    const b = getOfflineRectBounds();
+    if (!b) return;
+    const selectedKeys = Object.keys(MAP_STYLE_IDS);
+    const styleIds = Object.values(MAP_STYLE_IDS);
+
+    try { await navigator.storage?.persist?.(); } catch {}
+
+    setIsDownloading(true);
+    setDownloadProgress({ done: 0, total: 1, percent: 0 });
+    setIsOfflineDownloadMode(false);
+
+    let urls = [];
+    let estimatedSize = 0;
+    try {
+      const res = await calculateTileUrls(b, 0, 16, styleIds, mapboxgl.accessToken);
+      urls = res.urls;
+      estimatedSize = res.estimatedSize;
+    } catch (err) {
+      console.warn("calculateTileUrls failed", err);
+      setIsDownloading(false);
+      setDownloadProgress(null);
+      setToastMsg("Failed to prepare download.");
+      setTimeout(() => setToastMsg(null), 2500);
+      return;
+    }
+
+    const centerLat = (b.north + b.south) / 2;
+    const centerLng = (b.east + b.west) / 2;
+    const region = {
+      name: `Region ${centerLat.toFixed(3)}, ${centerLng.toFixed(3)}`,
+      north: b.north,
+      south: b.south,
+      east: b.east,
+      west: b.west,
+      minZoom: 0,
+      maxZoom: 16,
+      styleIds: selectedKeys,
+      tileCount: urls.length,
+      sizeBytes: estimatedSize,
+    };
+
+    const ok = await startRegionDownload(region, urls);
+    if (!ok) return;
+
+    if (isNativeAndroid()) {
+      try {
+        await OfflineRouting.downloadRoutingData({
+          bounds: b,
+          regionName: region.name,
+        });
+      } catch (err) {
+        console.warn("OfflineRouting.downloadRoutingData failed", err);
+      }
+    }
+  };
+
+  const handleOfflineRegionClick = (region) => {
+    const map = mapRef.current;
+    if (!map) return;
+    setShowOfflineMapsPanel(false);
+    map.fitBounds(
+      [
+        [region.west, region.south],
+        [region.east, region.north],
+      ],
+      { padding: 60, duration: 600 },
+    );
+    const data = boundsToPolygon({
+      north: region.north,
+      south: region.south,
+      east: region.east,
+      west: region.west,
+    });
+    if (offlineRegionHighlightCleanupRef.current) {
+      offlineRegionHighlightCleanupRef.current();
+      offlineRegionHighlightCleanupRef.current = null;
+    }
+    const afterLoad = () => {
+      if (!map.getSource("offline-region-highlight")) {
+        map.addSource("offline-region-highlight", { type: "geojson", data });
+        map.addLayer({
+          id: "offline-region-highlight-line",
+          type: "line",
+          source: "offline-region-highlight",
+          paint: { "line-color": "#ff6f00", "line-width": 3, "line-opacity": 0.9 },
+        });
+      } else {
+        map.getSource("offline-region-highlight").setData(data);
+      }
+      const timer = setTimeout(() => {
+        if (map.getLayer("offline-region-highlight-line")) map.removeLayer("offline-region-highlight-line");
+        if (map.getSource("offline-region-highlight")) map.removeSource("offline-region-highlight");
+        offlineRegionHighlightCleanupRef.current = null;
+      }, 2500);
+      offlineRegionHighlightCleanupRef.current = () => {
+        clearTimeout(timer);
+        if (map.getLayer("offline-region-highlight-line")) map.removeLayer("offline-region-highlight-line");
+        if (map.getSource("offline-region-highlight")) map.removeSource("offline-region-highlight");
+      };
+    };
+    if (map.isStyleLoaded()) afterLoad();
+    else map.once("idle", afterLoad);
+  };
+
+  const handleUpdateOfflineRegion = async (region) => {
+    const b = {
+      north: region.north,
+      south: region.south,
+      east: region.east,
+      west: region.west,
+    };
+    const styleIds = (region.styleIds || []).map((k) => MAP_STYLE_IDS[k] || k);
+    if (styleIds.length === 0) {
+      setToastMsg("Region has no styles to update.");
+      setTimeout(() => setToastMsg(null), 2500);
+      return;
+    }
+    setIsDownloading(true);
+    setCurrentDownloadRegionId(region.id);
+    setDownloadProgress({ done: 0, total: 1, percent: 0 });
+    let urls = [];
+    try {
+      const res = await calculateTileUrls(b, region.minZoom, region.maxZoom, styleIds, mapboxgl.accessToken);
+      urls = res.urls;
+    } catch (err) {
+      console.warn("calculateTileUrls failed", err);
+      setIsDownloading(false);
+      setDownloadProgress(null);
+      setToastMsg("Failed to prepare update.");
+      setTimeout(() => setToastMsg(null), 2500);
+      return;
+    }
+    const updated = { ...region, tileCount: urls.length };
+    await startRegionDownload(updated, urls);
+    if (isNativeAndroid()) {
+      try {
+        await OfflineRouting.downloadRoutingData({
+          bounds: b,
+          regionName: region.name,
+        });
+      } catch {}
+    }
+  };
+
+  const handleDeleteOfflineRegion = (region) => {
+    setOfflineDeleteAlert(region);
+  };
+
+  const confirmDeleteOfflineRegion = async (region) => {
+    if (!region) {
+      setOfflineDeleteAlert(null);
+      return;
+    }
+    const reg = await navigator.serviceWorker?.ready;
+    const sw = reg?.active;
+    if (sw) sw.postMessage({ type: "DELETE_REGION", regionId: region.id });
+    if (isNativeAndroid()) {
+      try { await OfflineRouting.deleteRoutingData({ regionId: region.id }); } catch {}
+    }
+    setOfflineDeleteAlert(null);
+    setTimeout(() => refreshOfflineRegions(), 300);
+  };
+
+  const handleCancelDownload = async () => {
+    const reg = await navigator.serviceWorker?.ready;
+    const sw = reg?.active;
+    if (sw && currentDownloadRegionId != null) {
+      sw.postMessage({ type: "CANCEL_DOWNLOAD", regionId: currentDownloadRegionId });
+    }
+    setIsDownloading(false);
+    setDownloadProgress(null);
+    setCurrentDownloadRegionId(null);
+  };
+
   return (
     <PageFixedLayout name="map">
       <IonAlert
@@ -6514,13 +7116,14 @@ export default function Map() {
               <button onClick={() => { setIsSideMenuOpen(false); handleRecordPath(); }}>Record path</button>
             )}
             <div className="side-menu-separator" />
-            <button onClick={() => { setIsSideMenuOpen(false); setSelectedFeature(null); setSheetLevel(0); setShowFeaturesList(true); }}>Show features list</button>
+            <button onClick={() => { setIsSideMenuOpen(false); setSelectedFeature(null); setSheetLevel(0); setOpenFeaturesList(true); }}>Features list</button>
             <button onClick={() => { setIsSideMenuOpen(false); handleCopyFeatures(); }}>Copy link to features</button>
             <button onClick={() => { setIsSideMenuOpen(false); handleCopyEmbeddedFeatures(); }}>Copy embedded features</button>
             <button onClick={() => { setIsSideMenuOpen(false); handleExportAll(); }}>Export features</button>
             <button onClick={() => { setIsSideMenuOpen(false); handleImportFeatures(); }}>Import features</button>
             <button onClick={() => { setIsSideMenuOpen(false); handleDeleteAllFeatures(); }}>Delete all features</button>
             <div className="side-menu-separator" />
+            <button onClick={() => { setIsSideMenuOpen(false); handleOpenOfflineMaps(); }}>Offline maps</button>
           </div>
         </>
       )}
@@ -6582,7 +7185,7 @@ export default function Map() {
         <div className={`path-actions${idMapStyle === "rontomap_streets_dark" ? " path-actions-dark" : ""}`}>
           {!isNavigationTracking && (
             <>
-              <div className="path-actions-group">
+              <div className="actions-group">
                 <button className="undo-btn" disabled={!canUndo} onClick={undoPath}>
                   Undo
                 </button>
@@ -6695,7 +7298,7 @@ export default function Map() {
       {isRecordingMode && (
         <div className={`path-actions${idMapStyle === "rontomap_streets_dark" ? " path-actions-dark" : ""}`}>
           {(!isRecordingStarted || isRecordingPaused) && (
-            <div className="path-actions-group">
+            <div className="actions-group">
               <button className="undo-btn" disabled={!canUndo} onClick={undoRecordingPath}>
                 Undo
               </button>
@@ -6766,7 +7369,7 @@ export default function Map() {
               <ActionIconButton label={featListFilter.paths ? "Hide paths" : "Show paths"} onClick={() => setFeatListFilter((f) => ({ ...f, paths: !f.paths }))}>
                 <IonIcon icon={analyticsOutline} style={featListFilter.paths ? undefined : { opacity: 0.3 }} />
               </ActionIconButton>
-              <ActionIconButton label="Close" onClick={() => setShowFeaturesList(false)}>
+              <ActionIconButton label="Close" onClick={() => setOpenFeaturesList(false)}>
                 <IonIcon icon={closeOutline} />
               </ActionIconButton>
             </div>
@@ -6795,6 +7398,139 @@ export default function Map() {
           </div>
         );
       })()}
+      {showOfflineMapsPanel && !selectedFeature && (() => {
+        const darkClass = idMapStyle === "rontomap_streets_dark" ? " feature-panel-dark" : "";
+        return (
+          <div
+            className={`feature-panel feature-list-panel${darkClass}${sheetLevel > 0 ? ` sheet-level-${sheetLevel}` : ""}`}
+          >
+            <div
+              className="feature-panel-handle"
+              onTouchStart={handleSheetDragStart}
+              onTouchMove={handleSheetDragMove}
+              onTouchEnd={handleSheetDragEnd}
+              onMouseDown={handleSheetMouseDown}
+            >
+              <div className="feature-panel-handle-bar" />
+            </div>
+            <div className="feature-panel-actions">
+              <span className="offline-panel-title">Offline maps</span>
+              <ActionIconButton label="Add region" onClick={handleStartOfflineDownload}>
+                <IonIcon icon={addOutline} />
+              </ActionIconButton>
+              <ActionIconButton label="Close" onClick={() => setShowOfflineMapsPanel(false)}>
+                <IonIcon icon={closeOutline} />
+              </ActionIconButton>
+            </div>
+            <div className="feature-list-items">
+              {offlineRegions.length === 0 ? (
+                <div className="feature-list-empty">No offline maps yet.</div>
+              ) : (
+                offlineRegions.map((r) => (
+                  <div
+                    key={r.id}
+                    className="feature-list-item"
+                    onClick={() => handleOfflineRegionClick(r)}
+                  >
+                    <IonIcon icon={mapOutline} className="feature-list-icon" />
+                    <div className="feature-list-text">
+                      <span className="feature-list-name">{r.name}</span>
+                      <span className="feature-list-info">
+                        {`z${r.minZoom ?? 0}-${r.maxZoom} \u00b7 ${(r.styleIds || []).length} style${(r.styleIds || []).length === 1 ? "" : "s"} \u00b7 ${formatBytes(r.sizeBytes)}`}
+                      </span>
+                    </div>
+                    <ActionIconButton
+                      label="Update"
+                      onClick={(e) => { e.stopPropagation(); handleUpdateOfflineRegion(r); }}
+                    >
+                      <IonIcon icon={refreshOutline} />
+                    </ActionIconButton>
+                    <ActionIconButton
+                      label="Delete"
+                      onClick={(e) => { e.stopPropagation(); handleDeleteOfflineRegion(r); }}
+                    >
+                      <IonIcon icon={trashOutline} />
+                    </ActionIconButton>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        );
+      })()}
+      {isOfflineDownloadMode && (
+        <div
+          className={`offline-actions${idMapStyle === "rontomap_streets_dark" ? " offline-actions-dark" : ""}`}
+        >
+          <div className="actions-group">
+            <button className="cancel-btn" onClick={handleCancelOfflineDownload}>
+              Cancel
+            </button>
+            <button
+              className={`save-btn${(currentMapZoom < 10 || currentMapZoom > 14) ? " disabled" : ""}`}
+              onClick={() => {
+                if (currentMapZoom < 10) {
+                  setToastMsg("Zoom in to level 10 or higher to download.");
+                  setTimeout(() => setToastMsg(null), 3000);
+                  return;
+                }
+                if (currentMapZoom > 14) {
+                  setToastMsg("Zoom out to level 14 or lower to download.");
+                  setTimeout(() => setToastMsg(null), 3000);
+                  return;
+                }
+                handleConfirmOfflineDownload();
+              }}
+            >
+              Download
+            </button>
+          </div>
+          <div className="route-info">
+            {offlineTileEstimate ? (
+              <>
+                <span>{offlineTileEstimate.tileCount.toLocaleString()} tiles</span>
+                <span className="route-info-separator">{"\u00b7"}</span>
+                <span>~{formatBytes(offlineTileEstimate.estimatedBytes)}</span>
+              </>
+            ) : (
+              <span>Calculating{"\u2026"}</span>
+            )}
+          </div>
+        </div>
+      )}
+      {isDownloading && (
+        <div
+          className={`download-progress${idMapStyle === "rontomap_streets_dark" ? " download-progress-dark" : ""}`}
+        >
+          <span className="download-progress-label">
+            {`Downloading\u2026 ${Math.round(downloadProgress?.percent ?? 0)}%`}
+          </span>
+          <div className="progress-bar">
+            <div
+              className="progress-fill"
+              style={{ width: `${Math.round(downloadProgress?.percent ?? 0)}%` }}
+            />
+          </div>
+          <button className="cancel-btn" onClick={handleCancelDownload}>
+            Cancel
+          </button>
+        </div>
+      )}
+      <IonAlert
+        isOpen={!!offlineDeleteAlert}
+        cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
+        onDidDismiss={() => setOfflineDeleteAlert(null)}
+        header="Delete offline map?"
+        message="This removes all cached tiles for this region. Offline routing data (Android) will also be removed."
+        buttons={[
+          { text: "Cancel", role: "cancel" },
+          {
+            text: "Delete",
+            role: "destructive",
+            handler: () => confirmDeleteOfflineRegion(offlineDeleteAlert),
+          },
+        ]}
+      />
       {selectedFeature && (
         <>
           <div

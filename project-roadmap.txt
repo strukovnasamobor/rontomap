@@ -29,9 +29,20 @@ id | action                      | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10| 11| 1
   elapsed time in format hh:mm (do not count time in pause), on geolocate remove tost msg "recording paused",
   tracking info at bottom
 
-OFLINE MAPS AND NAVIGATION
-- menu options for offline maps 
-- offline first data
+
+- offline panel style it as features list, action icons add the middle, panel expands levels as features list
+- detail for offline maps are numbers of tiles and size (remove zoom and numbers of styles)
+- when closing new offline maps show offline maps panel
+- when downloading offline maps show offline maps panel with downloading circle
+- when the region in panel is clicked do not close panel, show rectangle area
+- side icons for offline region actions use ionics and make same backgound
+**** put descripton of offline map panel below
+
+- no sattelite and countour lines
+- no offline navigation
+
+? offline first data
+? chrome and PWA offline maps (3D and contour line) and routing
 
 - deploy version 1.3. (4), generate functionalities description
 
@@ -44,9 +55,9 @@ GOALS
 UPGRADES
 - features descriptions and pictures
 - organize feature collections and features
-- login
 - finding and collaboration editing public paths
 - tracing public paths
+- login - sync offline regions, sync feature collections, traced paths
 
 Ver. x.y. (z)
 - change vesrion in build gradle
@@ -83,15 +94,7 @@ UI DESIGN & INTERACTIONS
     - middle - toast msg
     - right - map change style & location icon (in embedded hidden)
 - right sidebar - menu 
-- left mouse click / tap on feature => detail panel opens (in embedded disabled)
-    - on landscape - left sidebar
-    - on portrait - peeking bottom sheet (minimized - max-height: 25dvh, half state - height: 50dvh, expanded - height: 75dvh)
-        - action icons ("locate-outline", "rocket-outline", "navigate-outline", "link-outline", "code-slash-outline", "download-outline", "close-outline"): 
-            - marker: Center to marker, Fly to marker, Navigate to marker, Copy link to marker, Copy embedded marker, Export marker 
-            - sight: Center to sight, Fly to sight, Navigate to sight, Copy link to sight, Copy embedded sight, Export sight
-            - path: Center to path, Fly to path, Navigate to path start, Copy link to path, Copy embedded path, Export path
-        - name of feature
-        - for marker/sight - coordinates, for path - snapping, distance, duration (for snapped paths), trace path (action text)
+- left mouse click / tap on feature => feature detail panel opens (in embedded disabled)
 - double left mouse click / double tap => fullscreen enter/exit
 - right mouse click / long tap on map/feature => context menu opens (in embedded disabled)
     - map: Center here, Navigate here, Add marker here, Create path here
@@ -107,6 +110,41 @@ UI DESIGN & INTERACTIONS
 - mouse wheel click & drag (croosshair cursor icon) => map rotation and tilt camera panning
 - two fingers twisting => map rotation
 - two fingers tilt => map tilt
+
+FEATURE DETAIL PANEL
+- opening on left mouse click / tap on feature
+- on landscape - left sidebar
+- on portrait - peeking bottom sheet (minimized - max-height: 25dvh, half state - height: 50dvh, expanded - height: 75dvh)
+- action icons
+    - Center to marker/sight/path - ion-icon name="locate-outline"
+    - Fly to marker/sight/path - ion-icon name="rocket-outline"
+    - Navigate to marker/sight/path - ion-icon name="navigate-outline"
+    - Copy link to marker/sight/path - ion-icon name="link-outline"
+    - Copy embedded marker/sight/path - ion-icon name="code-slash-outline"
+    - Export marker/sight/path - ion-icon name="download-outline"
+    - Close - ion-icon name="close-outline"
+- name of feature
+- for marker/sight - coordinates, for path - snapping, distance, duration (for snapped paths), trace path (action text)
+
+FEATURES LIST PANEL
+- opening on menu option "Features list"
+- on landscape - left sidebar
+- on portrait - peeking bottom sheet (minimized - max-height: 25dvh, half state - height: 50dvh, expanded - height: 75dvh)
+- action icons
+    - Sort by name (asc/desc) - ion-icon "text-outline" - not showing additional data
+    - Sort by distance (asc/desc) - ion-icon name="radio-outline" - show distance from map center
+    - Sort by length (asc/desc) - ion-icon name="resize-outline" - show path length
+    - Show/Hide Markers (toggle on/off for filtering) - ion-icon name="location-outline"
+    - Show/Hide Sights (toggle on/off for filtering) - ion-icon name="pin-outline"
+    - Show/Hide Paths (toggle on/off for filtering) - ion-icon name="analytics-outline"
+    - Close - ion-icon name="close-outline"
+- list of features with name and below name show for marker/sight - coordinates, for path - snapping, distance, duration (for snapped paths)
+- when feature is clicked center to map and glow, do not open features detail panel
+
+OFFLINE MAPS PANEL
+- opening on menu option "Offline maps"
+- on landscape - left sidebar
+- on portrait - peeking bottom sheet (minimized - max-height: 25dvh, half state - height: 50dvh, expanded - height: 75dvh)
 
 COLORS
 - https://htmlcolorcodes.com/
@@ -150,19 +188,6 @@ COLORS
     - start point (circle) - #0000ff
     - end point (rectangle) - #0000ff
     - segments - #0000ff
-
-FEATURES LIST
-- menu option "Show features list"
-- show features list (markers, paths, sights) in detail panel (expanded in portrait) with icon actions:
-    - sort by name (asc/desc) - ion-icon "text-outline" - not showing additional data
-    - sort by distance from map center (asc/desc) - ion-icon name="radio-outline" - show distance from map center
-    - sort by length (asc/desc) - ion-icon name="resize-outline" - show path length
-    - markers (toggle on/off for filtering) - ion-icon name="location-outline"
-    - sights (toggle on/off for filtering) - ion-icon name="pin-outline"
-    - paths (toggle on/off for filtering) - ion-icon name="analytics-outline"
-    - close icon - ion-icon name="close-outline"
-- after feature name show for marker/sight - coordinates, for path - snapping, distance, duration (for snapped paths)
-- when feature is clicked center to map and glow, do not open features details
 
 IMPORT/EXPORT FEATURES
 - import map features (support: RontoJSON, GeoJSON, GPX, KML, FIT)
