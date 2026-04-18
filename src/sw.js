@@ -75,9 +75,6 @@ function normalizeCacheKey(url) {
     u.searchParams.delete("fresh");
     u.searchParams.delete("secure");
     u.searchParams.delete("events");
-    // Strip sdk=js-X.Y.Z — Mapbox GL JS adds it to every request but the
-    // download URLs don't include it. Same style JSON / tile under either.
-    u.searchParams.delete("sdk");
     // Collapse retina variants (@2x, @3x) onto the non-retina path so a
     // runtime @2x request hits the cached @1x tile and vice versa.
     u.pathname = u.pathname.replace(/@[23]x(?=\.|$)/, "");
