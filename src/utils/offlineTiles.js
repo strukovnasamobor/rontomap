@@ -356,9 +356,20 @@ function positionCountForRange(bounds, minZoom, maxZoom) {
   return count;
 }
 
-function getCalibration() {
+// Calibration is keyed by zoom range. Different OFFLINE_MAX_ZOOM configs
+// have different urls-per-position ratios and different bytes-per-tile (e.g.
+// z=0-18 includes many small high-zoom tiles, z=0-16 drops them and raises
+// the average), so a single global ratio would overshoot or undershoot when
+// the config changes. Keying by "<minZ>-<maxZ>" isolates each config.
+function zoomKey(styleConfigs) {
+  const minZoom = Math.min(...styleConfigs.map((c) => c.minZoom));
+  const maxZoom = Math.max(...styleConfigs.map((c) => c.maxZoom));
+  return `${minZoom}-${maxZoom}`;
+}
+
+function getCalibration(zk) {
   try {
-    const raw = localStorage.getItem(CALIBRATION_KEY);
+    const raw = localStorage.getItem(`${CALIBRATION_KEY}:${zk}`);
     const v = raw ? parseFloat(raw) : NaN;
     return Number.isFinite(v) && v > 0 ? v : DEFAULT_MULTIPLIER;
   } catch {
@@ -366,16 +377,16 @@ function getCalibration() {
   }
 }
 
-function setCalibration(multiplier) {
+function setCalibration(zk, multiplier) {
   if (!Number.isFinite(multiplier) || multiplier <= 0) return;
   try {
-    localStorage.setItem(CALIBRATION_KEY, String(multiplier));
+    localStorage.setItem(`${CALIBRATION_KEY}:${zk}`, String(multiplier));
   } catch {}
 }
 
-function getBytesPerTile() {
+function getBytesPerTile(zk) {
   try {
-    const raw = localStorage.getItem(BYTES_CALIBRATION_KEY);
+    const raw = localStorage.getItem(`${BYTES_CALIBRATION_KEY}:${zk}`);
     const v = raw ? parseFloat(raw) : NaN;
     return Number.isFinite(v) && v > 0 ? v : DEFAULT_BYTES_PER_TILE;
   } catch {
@@ -383,14 +394,16 @@ function getBytesPerTile() {
   }
 }
 
-export function recordActualDownload(tileCount, sizeBytes) {
+export function recordActualDownload(tileCount, sizeBytes, styleConfigs) {
   if (!Number.isFinite(tileCount) || tileCount <= 0) return;
   if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) return;
+  if (!Array.isArray(styleConfigs) || !styleConfigs.length) return;
   const bytesPerTile = sizeBytes / tileCount;
+  const zk = zoomKey(styleConfigs);
   try {
-    localStorage.setItem(BYTES_CALIBRATION_KEY, String(bytesPerTile));
+    localStorage.setItem(`${BYTES_CALIBRATION_KEY}:${zk}`, String(bytesPerTile));
     console.info(
-      `offlineTiles: size calibration updated \u2192 bytes/tile = ${bytesPerTile.toFixed(0)} (tiles=${tileCount}, bytes=${sizeBytes})`,
+      `offlineTiles: size calibration updated [${zk}] \u2192 bytes/tile = ${bytesPerTile.toFixed(0)} (tiles=${tileCount}, bytes=${sizeBytes})`,
     );
   } catch {}
 }
@@ -426,15 +439,17 @@ export async function calculateTileUrls(bounds, styleConfigs, accessToken, padTi
     const maxZoom = Math.max(...styleConfigs.map((c) => c.maxZoom));
     const positions = positionCountForRange(bounds, minZoom, maxZoom);
     if (positions > 0) {
+      const zk = zoomKey(styleConfigs);
       const ratio = counters.tileCount / positions;
-      setCalibration(ratio);
+      setCalibration(zk, ratio);
       console.info(
-        `offlineTiles: calibration updated \u2192 urls/position = ${ratio.toFixed(2)} (tiles=${counters.tileCount}, positions=${positions})`,
+        `offlineTiles: calibration updated [${zk}] \u2192 urls/position = ${ratio.toFixed(2)} (tiles=${counters.tileCount}, positions=${positions})`,
       );
     }
   }
 
-  const estimatedSize = counters.tileCount * getBytesPerTile();
+  const zk = styleConfigs.length ? zoomKey(styleConfigs) : "";
+  const estimatedSize = counters.tileCount * getBytesPerTile(zk);
   return {
     urls: Array.from(urls),
     tileCount: counters.tileCount,
@@ -447,9 +462,10 @@ export function estimateOfflineDownload(bounds, styleConfigs) {
   const minZoom = Math.min(...styleConfigs.map((c) => c.minZoom));
   const maxZoom = Math.max(...styleConfigs.map((c) => c.maxZoom));
   const positions = positionCountForRange(bounds, minZoom, maxZoom);
-  const tileCount = Math.round(positions * getCalibration());
+  const zk = zoomKey(styleConfigs);
+  const tileCount = Math.round(positions * getCalibration(zk));
   return {
     tileCount,
-    estimatedBytes: tileCount * getBytesPerTile(),
+    estimatedBytes: tileCount * getBytesPerTile(zk),
   };
 }

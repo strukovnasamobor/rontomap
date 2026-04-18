@@ -73,7 +73,7 @@ const MAP_STYLE_IDS = {
   rontomap_satellite: "cmefvgizo00ul01sc2rek321h",
 };
 
-const OFFLINE_MAX_ZOOM = 18;
+const OFFLINE_MAX_ZOOM = 16;
 const BASE_MAP_MAX_ZOOM = 2;
 const REGION_MIN_ZOOM = 3;
 const WORLD_BOUNDS = { north: 85.05, south: -85.05, east: 179.9999, west: -179.9999 };
@@ -396,6 +396,7 @@ export default function Map() {
   const [isDownloading, setIsDownloading] = useState(false);
   const [currentDownloadRegionId, setCurrentDownloadRegionId] = useState(null);
   const [downloadingRegion, setDownloadingRegion] = useState(null);
+  const downloadingRegionRef = useRef(null);
   const [offlineDeleteAlert, setOfflineDeleteAlert] = useState(null);
   const [offlineBaseMap, setOfflineBaseMap] = useState(null);
   const [offlineBaseDeleteAlert, setOfflineBaseDeleteAlert] = useState(false);
@@ -6451,7 +6452,9 @@ export default function Map() {
         setDownloadProgress(data);
         if (data.regionId != null && !data.isBase) setCurrentDownloadRegionId(data.regionId);
         if (data.complete && !data.isBase) {
-          recordActualDownload(data.done, data.sizeBytes);
+          const r = downloadingRegionRef.current;
+          recordActualDownload(data.done, data.sizeBytes, r?.styleConfigs);
+          downloadingRegionRef.current = null;
           setIsDownloading(false);
           setDownloadProgress(null);
           setCurrentDownloadRegionId(null);
@@ -6462,6 +6465,7 @@ export default function Map() {
         }
       } else if (data.type === "DOWNLOAD_CANCELLED") {
         console.info(`[offline] download cancelled id=${data.regionId}`);
+        downloadingRegionRef.current = null;
         setIsDownloading(false);
         setDownloadProgress(null);
         setCurrentDownloadRegionId(null);
@@ -6471,6 +6475,7 @@ export default function Map() {
         console.warn(
           `[offline ${data.isBase ? "base" : "region"}] error: ${data.message || "(no message)"} regionId=${data.regionId}`,
         );
+        downloadingRegionRef.current = null;
         setIsDownloading(false);
         setDownloadProgress(null);
         setCurrentDownloadRegionId(null);
@@ -6920,6 +6925,7 @@ export default function Map() {
     };
 
     setDownloadingRegion(region);
+    downloadingRegionRef.current = region;
     setShowOfflineMapsPanel(true);
 
     const ok = await startRegionDownload(region, urls);
