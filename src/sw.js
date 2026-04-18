@@ -75,14 +75,22 @@ function normalizeCacheKey(url) {
     u.searchParams.delete("fresh");
     u.searchParams.delete("secure");
     u.searchParams.delete("events");
+    // Strip sdk=js-X.Y.Z — Mapbox GL JS adds it to every request but the
+    // download URLs don't include it. Same style JSON / tile under either.
+    u.searchParams.delete("sdk");
     // Collapse retina variants (@2x, @3x) onto the non-retina path so a
     // runtime @2x request hits the cached @1x tile and vice versa.
     u.pathname = u.pathname.replace(/@[23]x(?=\.|$)/, "");
-    // Canonicalize Mapbox tile CDN subdomains ({a,b,c,d}.tiles.mapbox.com)
-    // onto a single host so runtime requests hit the cache regardless of
-    // which shard Mapbox GL JS chose vs what TileJSON returned at download.
-    if (/^([a-d]\.)?tiles\.mapbox\.com$/.test(u.hostname)) {
-      u.hostname = "tiles.mapbox.com";
+    // Canonicalize Mapbox tile hosts onto api.mapbox.com. Downloads store
+    // tiles under the sharded CDN host returned by TileJSON
+    // ({a-d}.tiles.mapbox.com), but Mapbox GL JS v3 requests the same tile
+    // from api.mapbox.com at runtime — without folding both onto one key,
+    // the offline cache lookup misses and we serve a 504.
+    if (
+      /^([a-d]\.)?tiles\.mapbox\.com$/.test(u.hostname) ||
+      u.hostname === "api.mapbox.com"
+    ) {
+      u.hostname = "api.mapbox.com";
     }
     // Collapse interchangeable raster formats onto .png so a runtime request
     // for any raster variant (.webp, .jpg, .jpg70, .jpg90, .png32, .png64,

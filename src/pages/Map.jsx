@@ -2,7 +2,7 @@ import "./Map.css";
 import PageFixedLayout from "../components/PageFixedLayout";
 import Fullscreen from "../plugins/Fullscreen";
 import OfflineRouting from "../plugins/OfflineRouting";
-import { calculateTileUrls, estimateOfflineDownload } from "../utils/offlineTiles";
+import { calculateTileUrls, estimateOfflineDownload, recordActualDownload } from "../utils/offlineTiles";
 import { useIonViewWillEnter, IonAlert, IonIcon } from "@ionic/react";
 import {
   locateOutline,
@@ -74,11 +74,10 @@ const MAP_STYLE_IDS = {
 };
 
 const OFFLINE_MAX_ZOOM = 18;
-const OFFLINE_SATELLITE_MAX_ZOOM = 16;
 const BASE_MAP_MAX_ZOOM = 2;
 const REGION_MIN_ZOOM = 3;
 const WORLD_BOUNDS = { north: 85.05, south: -85.05, east: 179.9999, west: -179.9999 };
-const BASE_MAP_VERSION = 5;
+const BASE_MAP_VERSION = 11;
 
 const buildBaseMapStyleConfigs = () => [
   { styleId: MAP_STYLE_IDS.rontomap_streets_light, minZoom: 0, maxZoom: BASE_MAP_MAX_ZOOM },
@@ -89,16 +88,9 @@ const buildBaseMapStyleConfigs = () => [
 const buildOfflineStyleConfigs = () => [
   { styleId: MAP_STYLE_IDS.rontomap_streets_light, minZoom: REGION_MIN_ZOOM, maxZoom: OFFLINE_MAX_ZOOM },
   { styleId: MAP_STYLE_IDS.rontomap_streets_dark,  minZoom: REGION_MIN_ZOOM, maxZoom: OFFLINE_MAX_ZOOM },
-  { styleId: MAP_STYLE_IDS.rontomap_satellite,     minZoom: REGION_MIN_ZOOM, maxZoom: OFFLINE_SATELLITE_MAX_ZOOM },
 ];
 
-const expectedOfflineMaxZoom = (styleId) =>
-  styleId === MAP_STYLE_IDS.rontomap_satellite
-    ? OFFLINE_SATELLITE_MAX_ZOOM
-    : OFFLINE_MAX_ZOOM;
-
-const isOfflineRasterStyle = (styleId) =>
-  styleId === MAP_STYLE_IDS.rontomap_satellite;
+const expectedOfflineMaxZoom = () => OFFLINE_MAX_ZOOM;
 
 const formatBytes = (bytes) => {
   if (!bytes || bytes < 1024) return `${bytes || 0} B`;
@@ -4144,7 +4136,7 @@ export default function Map() {
   const [toastBottom, setToastBottom] = useState(null);
   useEffect(() => {
     const panelOpen = selectedFeature || showFeaturesList || showOfflineMapsPanel;
-    if (!panelOpen || !featurePanelRef.current) {
+    if (!panelOpen) {
       setToastBottom(null);
       return;
     }
@@ -4158,11 +4150,23 @@ export default function Map() {
         setToastBottom(null);
       }
     };
-    // Measure after CSS transition (0.3s)
-    const tid = setTimeout(measure, 320);
-    // Also measure immediately for drag-end snaps
+    // Measure immediately for drag-end snaps
     measure();
-    return () => clearTimeout(tid);
+    // Measure after React commit so ref is assigned on first open
+    const raf = requestAnimationFrame(measure);
+    // Measure after CSS transition (0.3s) so final position is accurate
+    const tid = setTimeout(measure, 320);
+    // Re-measure whenever the panel resizes (content added/removed, drag resize)
+    let ro = null;
+    if (typeof ResizeObserver !== "undefined" && featurePanelRef.current) {
+      ro = new ResizeObserver(measure);
+      ro.observe(featurePanelRef.current);
+    }
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(tid);
+      ro?.disconnect();
+    };
   }, [selectedFeature, showFeaturesList, showOfflineMapsPanel, sheetLevel]);
 
   // Android: paint the system nav-bar background to match the feature panel in
@@ -6402,8 +6406,8 @@ export default function Map() {
             }
             const outdated =
               !r.styleConfigs ||
-              Object.values(MAP_STYLE_IDS).some(
-                (id) => (maxByStyle[id] ?? 0) < expectedOfflineMaxZoom(id),
+              buildOfflineStyleConfigs().some(
+                (c) => (maxByStyle[c.styleId] ?? 0) < c.maxZoom,
               );
             if (outdated) {
               console.warn(
@@ -6447,6 +6451,7 @@ export default function Map() {
         setDownloadProgress(data);
         if (data.regionId != null && !data.isBase) setCurrentDownloadRegionId(data.regionId);
         if (data.complete && !data.isBase) {
+          recordActualDownload(data.done, data.sizeBytes);
           setIsDownloading(false);
           setDownloadProgress(null);
           setCurrentDownloadRegionId(null);
@@ -6553,20 +6558,17 @@ export default function Map() {
     const b = getOfflineRectBounds();
     if (!b) return;
     const cfgs = buildOfflineStyleConfigs();
-    const { tileCount, estimatedBytes } = estimateOfflineDownload(
-      b,
-      cfgs,
-      isOfflineRasterStyle,
-    );
+    const { tileCount, estimatedBytes } = estimateOfflineDownload(b, cfgs);
     setOfflineTileEstimate({ tileCount, estimatedBytes });
   }, []);
 
-  // Lock the map to north + flat + disable rotate/tilt gestures for the
-  // entire offline-maps flow (panel open, download mode, or downloading).
+  // Lock the map to north + flat + disable rotate/tilt gestures only while
+  // the panel is open or the user is drawing an offline region. Background
+  // downloads do not lock the map — the user is free to pan/rotate/tilt.
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    const offlineFlowActive = showOfflineMapsPanel || isOfflineDownloadMode || isDownloading;
+    const offlineFlowActive = showOfflineMapsPanel || isOfflineDownloadMode;
     offlineFlowActiveRef.current = offlineFlowActive;
     if (!offlineFlowActive) return;
 
@@ -6586,7 +6588,7 @@ export default function Map() {
       try { map.keyboard?.enableRotation?.(); } catch {}
       map.easeTo({ bearing: prevBearing, pitch: prevPitch, duration: 200 });
     };
-  }, [showOfflineMapsPanel, isOfflineDownloadMode, isDownloading]);
+  }, [showOfflineMapsPanel, isOfflineDownloadMode]);
 
   useEffect(() => {
     offlineDownloadModeRef.current = isOfflineDownloadMode;
@@ -7674,6 +7676,30 @@ export default function Map() {
           const t = r?.updatedAt || r?.createdAt;
           return t ? new Date(t).toLocaleDateString() : null;
         };
+        const baseMapBlock = offlineBaseMap && (
+          <div key="base" className="panel-list-item panel-list-item-base">
+            <IonIcon icon={globeOutline} className="panel-list-icon" />
+            <div className="panel-list-text">
+              <span className="panel-list-name">Base map</span>
+              <span className="panel-list-info">
+                {`${(offlineBaseMap.tileCount ?? 0).toLocaleString()} tiles \u00b7 ${formatBytes(offlineBaseMap.sizeBytes)}`}
+                {offSortField === "date" && formatRegionDate(offlineBaseMap) && <> {"\u00b7 "}{formatRegionDate(offlineBaseMap)}</>}
+              </span>
+            </div>
+            <ActionIconButton
+              label="Update"
+              onClick={(e) => { e.stopPropagation(); ensureBaseMap({ force: true }); }}
+            >
+              <IonIcon icon={refreshOutline} />
+            </ActionIconButton>
+            <ActionIconButton
+              label="Delete"
+              onClick={(e) => { e.stopPropagation(); setOfflineBaseDeleteAlert(true); }}
+            >
+              <IonIcon icon={trashOutline} />
+            </ActionIconButton>
+          </div>
+        );
         return (
           <div
             ref={(el) => { featurePanelRef.current = el; }}
@@ -7709,30 +7735,7 @@ export default function Map() {
               </ActionIconButton>
             </div>
             <div className="panel-list-items">
-              {offlineBaseMap && (
-                <div key="base" className="panel-list-item panel-list-item-base">
-                  <IonIcon icon={globeOutline} className="panel-list-icon" />
-                  <div className="panel-list-text">
-                    <span className="panel-list-name">Base map</span>
-                    <span className="panel-list-info">
-                      {`${(offlineBaseMap.tileCount ?? 0).toLocaleString()} tiles \u00b7 ${formatBytes(offlineBaseMap.sizeBytes)}`}
-                      {offSortField === "date" && formatRegionDate(offlineBaseMap) && <> {"\u00b7 "}{formatRegionDate(offlineBaseMap)}</>}
-                    </span>
-                  </div>
-                  <ActionIconButton
-                    label="Update"
-                    onClick={(e) => { e.stopPropagation(); ensureBaseMap({ force: true }); }}
-                  >
-                    <IonIcon icon={refreshOutline} />
-                  </ActionIconButton>
-                  <ActionIconButton
-                    label="Delete"
-                    onClick={(e) => { e.stopPropagation(); setOfflineBaseDeleteAlert(true); }}
-                  >
-                    <IonIcon icon={trashOutline} />
-                  </ActionIconButton>
-                </div>
-              )}
+              {offSortField !== "dist" && baseMapBlock}
               {downloadingRegion && (
                 <div
                   className={`panel-list-item panel-list-item-downloading${shownRegionId === "__downloading__" ? " panel-list-item-active" : ""}`}
@@ -7808,6 +7811,7 @@ export default function Map() {
                   </div>
                 ))
               )}
+              {offSortField === "dist" && baseMapBlock}
             </div>
           </div>
         );

@@ -6,11 +6,22 @@ const MAPBOX_USERNAME = "aurelius-zd";
 // - mapbox-terrain-dem-v1: requires a raster:read token scope our public
 //   token doesn't have. Every URL 401s. Hillshading/terrain stays absent
 //   offline — same as online behavior with this token.
+// - mapbox-landmark-pois-v1: our public token can't fetch this tileset at
+//   download time (verified: enumeration fails). Mapbox GL JS still tries
+//   it at runtime, so offline we return 504 for those specific POIs; the
+//   main street/POI labels come from mapbox-streets-v8 and render fine.
+// - mapbox-landmark-icons-v1: raster-array (.mrt) tileset, same token-scope
+//   issue as terrain-dem-v1. Every URL 404s.
+// - mapbox-3d-events: 3D Tiles (.glb) for temporary events / construction;
+//   RontoMap doesn't render 3D models offline. Skip to avoid download failures.
 const SKIP_SOURCE_URL_PATTERNS = [
   /mapbox\.indoor-v3/,
   /mapbox\.mapbox-terrain-dem-v1/,
   /mapbox\.mapbox-landmark-pois-v1/,
+  /mapbox\.mapbox-landmark-icons-v1/,
+  /mapbox\.mapbox-3d-events/,
   /mapbox\.procedural-buildings-v1/,
+  /mapbox\.satellite(?![\w-])/,
 ];
 
 function shouldSkipSource(source) {
@@ -116,19 +127,81 @@ function enumerateTileUrls(tileTemplate, bounds, minZoom, maxZoom, padTiles = 0)
   return urls;
 }
 
-function collectFontStacks(style) {
+// Mapbox GL Style Spec expression operators. An array whose first element is
+// in this set is an expression, not a font stack. Font names ("DIN Pro
+// Regular", etc.) use spaces and mixed case, so they never collide.
+const EXPRESSION_OPS = new Set([
+  "literal", "array", "boolean", "collator", "format", "image", "number",
+  "number-format", "object", "string", "to-boolean", "to-color", "to-number",
+  "to-string", "typeof",
+  "feature-state", "geometry-type", "id", "line-progress", "properties",
+  "accumulated", "has", "get", "in", "index-of", "length", "slice", "at",
+  "config", "global-state", "worldview", "measure-light",
+  "raster-value", "raster-particle-speed",
+  "!", "!=", "<", "<=", "==", ">", ">=", "all", "any", "case", "coalesce",
+  "match", "within",
+  "interpolate", "interpolate-hcl", "interpolate-lab", "step",
+  "let", "var",
+  "concat", "downcase", "is-supported-script", "resolved-locale", "upcase",
+  "hsl", "hsla", "rgb", "rgba", "to-rgba",
+  "-", "*", "/", "%", "^", "+", "abs", "acos", "asin", "atan", "ceil",
+  "cos", "distance", "e", "floor", "ln", "ln2", "log10", "log2", "max",
+  "min", "pi", "random", "round", "sin", "sqrt", "tan",
+  "zoom", "heatmap-density", "sky-radial-progress", "pitch",
+  "distance-from-center",
+]);
+
+function resolveConfigMap(style, configOverrides = {}) {
+  const resolved = {};
+  if (style.schema && typeof style.schema === "object") {
+    for (const [k, spec] of Object.entries(style.schema)) {
+      if (spec && typeof spec === "object" && "default" in spec) {
+        resolved[k] = spec.default;
+      }
+    }
+  }
+  if (style.config && typeof style.config === "object") {
+    Object.assign(resolved, style.config);
+  }
+  Object.assign(resolved, configOverrides);
+  return resolved;
+}
+
+function collectFontStacks(style, configOverrides = {}) {
   const stacks = new Set();
   if (!style.layers) return stacks;
+  const config = resolveConfigMap(style, configOverrides);
+
+  const extract = (node) => {
+    if (!Array.isArray(node) || node.length === 0) return;
+    if (node[0] === "literal" && Array.isArray(node[1]) && node[1].every((v) => typeof v === "string")) {
+      stacks.add(node[1].join(","));
+      return;
+    }
+    if (node[0] === "config" && typeof node[1] === "string") {
+      const val = config[node[1]];
+      if (Array.isArray(val) && val.every((v) => typeof v === "string")) {
+        stacks.add(val.join(","));
+      }
+      return;
+    }
+    for (const child of node) extract(child);
+  };
+
   for (const layer of style.layers) {
     const fonts = layer.layout?.["text-font"];
     if (!Array.isArray(fonts)) continue;
-    const literal = fonts.filter((f) => typeof f === "string");
-    if (literal.length) stacks.add(literal.join(","));
+    const allStrings = fonts.every((v) => typeof v === "string");
+    if (allStrings && !EXPRESSION_OPS.has(fonts[0])) {
+      stacks.add(fonts.join(","));
+    } else {
+      extract(fonts);
+    }
   }
   return stacks;
 }
 
-async function processStyle(style, styleLabel, bounds, minZoom, maxZoom, accessToken, ctx, depth = 0, padTiles = 0) {
+async function processStyle(style, styleLabel, bounds, minZoom, maxZoom, accessToken, ctx, depth = 0, padTiles = 0, configOverrides = {}) {
   if (depth > 4) {
     console.warn(`offlineTiles: import depth limit hit at ${styleLabel}`);
     return;
@@ -147,12 +220,17 @@ async function processStyle(style, styleLabel, bounds, minZoom, maxZoom, accessT
   }
 
   if (style.glyphs) {
-    const stacks = collectFontStacks(style);
+    const stacks = collectFontStacks(style, configOverrides);
     for (const stack of stacks) {
+      // Encode individual font names but keep literal "," between them.
+      // Mapbox GL JS substitutes {fontstack} without encoding at runtime, so
+      // the browser sends commas unencoded — matching that preserves cache
+      // hits. URL-encoding the whole stack would produce "%2C" and miss.
+      const fontstackPart = stack.split(",").map(encodeURIComponent).join(",");
       for (let r = 0; r < 2560; r += 256) {
         const rangeStr = `${r}-${r + 255}`;
         const fontUrl = style.glyphs
-          .replace("{fontstack}", encodeURIComponent(stack))
+          .replace("{fontstack}", fontstackPart)
           .replace("{range}", rangeStr);
         urls.add(resolveMapboxUrl(fontUrl, accessToken));
       }
@@ -208,12 +286,12 @@ async function processStyle(style, styleLabel, bounds, minZoom, maxZoom, accessT
           const tiles = enumerateTileUrls(template, bounds, clampedMin, clampedMax, padTiles);
           if (!sampleTile && tiles.length) sampleTile = tiles[0];
           sourceTileCount += tiles.length;
-          if (sourceType === "raster" || sourceType === "raster-dem") {
-            counters.rasterTileCount += tiles.length;
-          } else {
-            counters.tileCount += tiles.length;
+          for (const t of tiles) {
+            if (!urls.has(t)) {
+              urls.add(t);
+              counters.tileCount++;
+            }
           }
-          tiles.forEach((t) => urls.add(t));
         }
 
         console.info(
@@ -247,6 +325,7 @@ async function processStyle(style, styleLabel, bounds, minZoom, maxZoom, accessT
             ctx,
             depth + 1,
             padTiles,
+            imp.config || {},
           );
         } catch (err) {
           console.warn(
@@ -259,9 +338,66 @@ async function processStyle(style, styleLabel, bounds, minZoom, maxZoom, accessT
   }
 }
 
+// Self-calibrating multiplier for estimateOfflineDownload. The fast estimator
+// counts tile positions once across the union zoom range, but a real download
+// fetches one URL per (style, source) — typically 4-5× more URLs than
+// positions. We learn the true ratio from the last calculateTileUrls result
+// and persist it so future estimates converge on the observed value.
+const CALIBRATION_KEY = "rontomap:offlineEstimateMultiplier";
+const BYTES_CALIBRATION_KEY = "rontomap:offlineBytesPerTile";
+const DEFAULT_MULTIPLIER = 5;
+const DEFAULT_BYTES_PER_TILE = 20 * 1024;
+
+function positionCountForRange(bounds, minZoom, maxZoom) {
+  let count = 0;
+  for (let z = minZoom; z <= maxZoom; z++) {
+    count += tileCountForBounds(bounds, z);
+  }
+  return count;
+}
+
+function getCalibration() {
+  try {
+    const raw = localStorage.getItem(CALIBRATION_KEY);
+    const v = raw ? parseFloat(raw) : NaN;
+    return Number.isFinite(v) && v > 0 ? v : DEFAULT_MULTIPLIER;
+  } catch {
+    return DEFAULT_MULTIPLIER;
+  }
+}
+
+function setCalibration(multiplier) {
+  if (!Number.isFinite(multiplier) || multiplier <= 0) return;
+  try {
+    localStorage.setItem(CALIBRATION_KEY, String(multiplier));
+  } catch {}
+}
+
+function getBytesPerTile() {
+  try {
+    const raw = localStorage.getItem(BYTES_CALIBRATION_KEY);
+    const v = raw ? parseFloat(raw) : NaN;
+    return Number.isFinite(v) && v > 0 ? v : DEFAULT_BYTES_PER_TILE;
+  } catch {
+    return DEFAULT_BYTES_PER_TILE;
+  }
+}
+
+export function recordActualDownload(tileCount, sizeBytes) {
+  if (!Number.isFinite(tileCount) || tileCount <= 0) return;
+  if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) return;
+  const bytesPerTile = sizeBytes / tileCount;
+  try {
+    localStorage.setItem(BYTES_CALIBRATION_KEY, String(bytesPerTile));
+    console.info(
+      `offlineTiles: size calibration updated \u2192 bytes/tile = ${bytesPerTile.toFixed(0)} (tiles=${tileCount}, bytes=${sizeBytes})`,
+    );
+  } catch {}
+}
+
 export async function calculateTileUrls(bounds, styleConfigs, accessToken, padTiles = 0) {
   const urls = new Set();
-  const counters = { tileCount: 0, rasterTileCount: 0 };
+  const counters = { tileCount: 0 };
   const ctx = { urls, counters };
 
   await Promise.all(
@@ -280,36 +416,40 @@ export async function calculateTileUrls(bounds, styleConfigs, accessToken, padTi
       await processStyle(style, styleId, bounds, minZoom, maxZoom, accessToken, ctx, 0, padTiles);
 
       console.info(
-        `offlineTiles: style ${styleId} \u2192 urls so far: ${urls.size} (tile: ${counters.tileCount}, raster: ${counters.rasterTileCount})`,
+        `offlineTiles: style ${styleId} \u2192 urls so far: ${urls.size} (unique tiles: ${counters.tileCount})`,
       );
     }),
   );
 
-  const estimatedSize = counters.tileCount * 30 * 1024 + counters.rasterTileCount * 80 * 1024;
+  if (styleConfigs.length && counters.tileCount > 0) {
+    const minZoom = Math.min(...styleConfigs.map((c) => c.minZoom));
+    const maxZoom = Math.max(...styleConfigs.map((c) => c.maxZoom));
+    const positions = positionCountForRange(bounds, minZoom, maxZoom);
+    if (positions > 0) {
+      const ratio = counters.tileCount / positions;
+      setCalibration(ratio);
+      console.info(
+        `offlineTiles: calibration updated \u2192 urls/position = ${ratio.toFixed(2)} (tiles=${counters.tileCount}, positions=${positions})`,
+      );
+    }
+  }
+
+  const estimatedSize = counters.tileCount * getBytesPerTile();
   return {
     urls: Array.from(urls),
-    tileCount: counters.tileCount + counters.rasterTileCount,
+    tileCount: counters.tileCount,
     estimatedSize,
   };
 }
 
-export function estimateOfflineDownload(bounds, styleConfigs, isRasterStyle) {
-  let vectorTiles = 0;
-  let rasterTiles = 0;
-  for (const { styleId, minZoom, maxZoom } of styleConfigs) {
-    let sum = 0;
-    for (let z = minZoom; z <= maxZoom; z++) {
-      sum += tileCountForBounds(bounds, z);
-    }
-    if (isRasterStyle && isRasterStyle(styleId)) {
-      rasterTiles += sum;
-    } else {
-      vectorTiles += sum;
-    }
-  }
-  const estimatedBytes = vectorTiles * 60 * 1024 + rasterTiles * 80 * 1024;
+export function estimateOfflineDownload(bounds, styleConfigs) {
+  if (!styleConfigs.length) return { tileCount: 0, estimatedBytes: 0 };
+  const minZoom = Math.min(...styleConfigs.map((c) => c.minZoom));
+  const maxZoom = Math.max(...styleConfigs.map((c) => c.maxZoom));
+  const positions = positionCountForRange(bounds, minZoom, maxZoom);
+  const tileCount = Math.round(positions * getCalibration());
   return {
-    tileCount: vectorTiles + rasterTiles,
-    estimatedBytes,
+    tileCount,
+    estimatedBytes: tileCount * getBytesPerTile(),
   };
 }

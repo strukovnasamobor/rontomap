@@ -26,23 +26,19 @@ id | action                      | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10| 11| 1
  A | previous action is stopped with with alert
 ==========================================================================================================
 - in recording path start tracking user bearing same as clicking start/resume, on start show toast msg "Click stop tracking to pause recording". 
-  elapsed time in format hh:mm (do not count time in pause), on geolocate remove tost msg "recording paused",
+  elapsed time in format hh:mm (do not count time in pause ?), on geolocate remove tost msg "recording paused",
   tracking info at bottom
 
-- tiles limits when downloading region
-- satelite tiles for base map doesn't appear
-
-- no offline navigation
-- test different offline maps regions
-? offline first data
-? chrome and PWA offline maps (3D and contour line) and routing
+- test to max zoom of 16, size and rendering all components
+- no offline routing, path creation
+- test chrome and PWA offline maps (3D and contour line) and routing
 
 - vite.config.js - Set to true in production for logs
 - deploy version 1.3. (4), generate functionalities description
 
 ==============================================================================================================================================================
 GOALS
-- free (no ads) and simple 3D map for orientation and navigation (online and offline)
+- free (no ads) and simple 3D map for orientation (online and offline) and navigation (online and offline only on Android)
 - creating and sharing map features (markers/sights and paths/tracks) by link or embeded code
 - finding and collaboration editing public paths
 
@@ -151,6 +147,7 @@ OFFLINE MAPS PANEL
     - Rename - ion-icon name="pencil-outline"
     - Update - ion-icon name="refresh-outline" - when clicked show downloading circle
     - Delete - ion-icon name="trash-outline"
+- restrict offline regions with estimating number of the tiles must be between 500 and 100 000
 - when region is clicked center map and adjust zoom to show rectangle of that region, do not close panel 
 - when download is clicked on creating new offline region show offline maps panel with downloading circle
 - when close is clicked on creating new offline region show offline maps panel
