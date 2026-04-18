@@ -4117,6 +4117,19 @@ export default function Map() {
     }
   }, [selectedFeature]);
 
+  // When every panel that shifts the map camera closes, reset the map's
+  // persistent padding so later flyTo/easeTo calls without an explicit
+  // padding (e.g. geolocate) land on the true viewport center.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (selectedFeature || showFeaturesList || showOfflineMapsPanel) return;
+    map.easeTo({
+      padding: { top: 0, bottom: 0, left: 0, right: 0 },
+      duration: 0,
+    });
+  }, [selectedFeature, showFeaturesList, showOfflineMapsPanel]);
+
   // Close the feature detail panel whenever a context menu or the side menu opens
   useEffect(() => {
     if (markerMenu || mapClickMenu || isSideMenuOpen) {
