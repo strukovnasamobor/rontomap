@@ -2,7 +2,7 @@ import "./Map.css";
 import PageFixedLayout from "../components/PageFixedLayout";
 import Fullscreen from "../plugins/Fullscreen";
 import OfflineRouting from "../plugins/OfflineRouting";
-import { calculateTileUrls, tileCountForBounds } from "../utils/offlineTiles";
+import { calculateTileUrls, estimateOfflineDownload } from "../utils/offlineTiles";
 import { useIonViewWillEnter, IonAlert, IonIcon } from "@ionic/react";
 import {
   locateOutline,
@@ -30,6 +30,10 @@ import {
   mapOutline,
   refreshOutline,
   trashOutline,
+  globeOutline,
+  timeOutline,
+  createOutline,
+  pencilOutline,
 } from "ionicons/icons";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useDoubleTap } from "use-double-tap";
@@ -68,6 +72,33 @@ const MAP_STYLE_IDS = {
   rontomap_streets_dark: "cmjmqcp3b000101r2g5vb6bse",
   rontomap_satellite: "cmefvgizo00ul01sc2rek321h",
 };
+
+const OFFLINE_MAX_ZOOM = 18;
+const OFFLINE_SATELLITE_MAX_ZOOM = 16;
+const BASE_MAP_MAX_ZOOM = 2;
+const REGION_MIN_ZOOM = 3;
+const WORLD_BOUNDS = { north: 85.05, south: -85.05, east: 179.9999, west: -179.9999 };
+const BASE_MAP_VERSION = 5;
+
+const buildBaseMapStyleConfigs = () => [
+  { styleId: MAP_STYLE_IDS.rontomap_streets_light, minZoom: 0, maxZoom: BASE_MAP_MAX_ZOOM },
+  { styleId: MAP_STYLE_IDS.rontomap_streets_dark, minZoom: 0, maxZoom: BASE_MAP_MAX_ZOOM },
+  { styleId: MAP_STYLE_IDS.rontomap_satellite, minZoom: 0, maxZoom: BASE_MAP_MAX_ZOOM },
+];
+
+const buildOfflineStyleConfigs = () => [
+  { styleId: MAP_STYLE_IDS.rontomap_streets_light, minZoom: REGION_MIN_ZOOM, maxZoom: OFFLINE_MAX_ZOOM },
+  { styleId: MAP_STYLE_IDS.rontomap_streets_dark,  minZoom: REGION_MIN_ZOOM, maxZoom: OFFLINE_MAX_ZOOM },
+  { styleId: MAP_STYLE_IDS.rontomap_satellite,     minZoom: REGION_MIN_ZOOM, maxZoom: OFFLINE_SATELLITE_MAX_ZOOM },
+];
+
+const expectedOfflineMaxZoom = (styleId) =>
+  styleId === MAP_STYLE_IDS.rontomap_satellite
+    ? OFFLINE_SATELLITE_MAX_ZOOM
+    : OFFLINE_MAX_ZOOM;
+
+const isOfflineRasterStyle = (styleId) =>
+  styleId === MAP_STYLE_IDS.rontomap_satellite;
 
 const formatBytes = (bytes) => {
   if (!bytes || bytes < 1024) return `${bytes || 0} B`;
@@ -278,8 +309,9 @@ export default function Map() {
   const [selectedFeature, setSelectedFeature] = useState(null);
   const [sheetLevel, setSheetLevel] = useState(0);
   const [showFeaturesList, setOpenFeaturesList] = useState(false);
-  const [featListSort, setFeatListSort] = useState("name-asc");
+  const [featListSort, setFeatListSort] = useState("dist-asc");
   const [featListFilter, setFeatListFilter] = useState({ markers: true, sights: true, paths: true });
+  const [mapCenterTick, setMapCenterTick] = useState(0);
   const featListGlowCleanupRef = useRef(null);
   const sheetDragRef = useRef({ startY: 0, dragging: false });
   const featurePanelRef = useRef(null);
@@ -371,7 +403,13 @@ export default function Map() {
   const [downloadProgress, setDownloadProgress] = useState(null);
   const [isDownloading, setIsDownloading] = useState(false);
   const [currentDownloadRegionId, setCurrentDownloadRegionId] = useState(null);
+  const [downloadingRegion, setDownloadingRegion] = useState(null);
   const [offlineDeleteAlert, setOfflineDeleteAlert] = useState(null);
+  const [offlineBaseMap, setOfflineBaseMap] = useState(null);
+  const [offlineBaseDeleteAlert, setOfflineBaseDeleteAlert] = useState(false);
+  const [offlineSort, setOfflineSort] = useState("dist-asc");
+  const [shownRegionId, setShownRegionId] = useState(null);
+  const [renameRegionTarget, setRenameRegionTarget] = useState(null);
   const offlineRegionHighlightCleanupRef = useRef(null);
   const offlineDownloadModeRef = useRef(false);
   const offlineFlowActiveRef = useRef(false);
@@ -2915,9 +2953,10 @@ export default function Map() {
             setSheetLevel(0);
             return;
           }
-          // Click on empty map: close feature panel / features list
+          // Click on empty map: close feature panel / features list / offline panel
           setSelectedFeature(null);
           setOpenFeaturesList(false);
+          setShowOfflineMapsPanel(false);
         }
 
         // Path mode: add vertex or start new path
@@ -3402,51 +3441,42 @@ export default function Map() {
       };
 
       if (isTouchDevice) {
-        // Touch: enable zoom, rotate, pitch — drag gated by focus
+        // Touch: enable zoom, rotate, pitch — drag gated by tap-to-activate
         map.touchZoomRotate.enable();
         if (map.touchZoomRotate._tapDragZoom) map.touchZoomRotate._tapDragZoom.disable();
         map.touchPitch.enable();
         map.dragRotate.enable();
         map.dragPan.disable();
 
-        // Track focus to enable/disable drag
-        const enableDrag = () => {
-          embeddedFocusedRef.current = true;
-          map.dragPan.enable();
-        };
-        window.addEventListener("focus", enableDrag);
-        container.addEventListener("touchstart", enableDrag, { passive: true });
-        window.addEventListener("blur", () => {
-          embeddedFocusedRef.current = false;
-          map.dragPan.disable();
-        });
-
-        // Show toast when user tries to drag while unfocused
-        let touchDragDetected = false;
-        canvas.addEventListener(
+        // Activating touch: show toast, mark focused, but do NOT enable drag yet
+        // so the current gesture can't pan. Drag becomes enabled on touchend.
+        container.addEventListener(
           "touchstart",
-          (e) => {
-            touchDragDetected = e.touches.length === 1;
-          },
-          { passive: true },
-        );
-        canvas.addEventListener(
-          "touchmove",
           () => {
-            if (touchDragDetected && !embeddedFocusedRef.current) {
-              touchDragDetected = false;
+            if (!embeddedFocusedRef.current) {
+              embeddedFocusedRef.current = true;
               showEmbeddedToast("Tap first then drag.");
             }
           },
           { passive: true },
         );
-        canvas.addEventListener(
+        container.addEventListener(
           "touchend",
           () => {
-            touchDragDetected = false;
+            if (embeddedFocusedRef.current) map.dragPan.enable();
           },
           { passive: true },
         );
+
+        // Browser focus fallback (e.g. user focuses iframe via chrome)
+        window.addEventListener("focus", () => {
+          embeddedFocusedRef.current = true;
+          map.dragPan.enable();
+        });
+        window.addEventListener("blur", () => {
+          embeddedFocusedRef.current = false;
+          map.dragPan.disable();
+        });
       } else {
         // Desktop: enable drag, rotate, pitch — scroll zoom gated by focus
         map.dragPan.enable();
@@ -4029,7 +4059,7 @@ export default function Map() {
   }, [mapClickMenu, selectedFeature]);
 
   // Glow marker when marker menu is open. Depends on selectedFeature too so the
-  // glow is re-applied after the feature-panel cleanup runs in the same commit
+  // glow is re-applied after the panel cleanup runs in the same commit
   // that opened this menu (right-click on the currently-selected marker).
   useEffect(() => {
     if (!markerMenu) return;
@@ -4113,7 +4143,8 @@ export default function Map() {
   // Dynamic toast position: 10px above feature panel in portrait
   const [toastBottom, setToastBottom] = useState(null);
   useEffect(() => {
-    if (!selectedFeature || !featurePanelRef.current) {
+    const panelOpen = selectedFeature || showFeaturesList || showOfflineMapsPanel;
+    if (!panelOpen || !featurePanelRef.current) {
       setToastBottom(null);
       return;
     }
@@ -4132,7 +4163,7 @@ export default function Map() {
     // Also measure immediately for drag-end snaps
     measure();
     return () => clearTimeout(tid);
-  }, [selectedFeature, sheetLevel]);
+  }, [selectedFeature, showFeaturesList, showOfflineMapsPanel, sheetLevel]);
 
   // Android: paint the system nav-bar background to match the feature panel in
   // portrait mode so the panel appears to extend through the nav buttons area.
@@ -4162,6 +4193,19 @@ export default function Map() {
       mapRef.current?.off("moveend", reposition);
     };
   }, [markerMenu]);
+
+  // Re-render dist-sorted list panels when the map center changes
+  useEffect(() => {
+    const distSortActive =
+      (showFeaturesList && featListSort.startsWith("dist")) ||
+      (showOfflineMapsPanel && offlineSort.startsWith("dist"));
+    if (!distSortActive) return;
+    const map = mapRef.current;
+    if (!map) return;
+    const bump = () => setMapCenterTick((t) => t + 1);
+    map.on("moveend", bump);
+    return () => map.off("moveend", bump);
+  }, [showFeaturesList, showOfflineMapsPanel, featListSort, offlineSort]);
 
   const handleCenterToMarker = () => {
     mapRef.current.easeTo({ center: markerMenu.marker.getLngLat(), duration: 500 });
@@ -4806,7 +4850,8 @@ export default function Map() {
 
   // Bottom sheet drag handlers (portrait + desktop mouse)
   const dismissPanel = () => {
-    if (showFeaturesList) setOpenFeaturesList(false);
+    if (showOfflineMapsPanel) setShowOfflineMapsPanel(false);
+    else if (showFeaturesList) setOpenFeaturesList(false);
     else setSelectedFeature(null);
   };
   const getSheetPeekHeight = () => Math.round(window.innerHeight * 0.25);
@@ -4824,7 +4869,7 @@ export default function Map() {
     if (!sheetDragRef.current.dragging || !featurePanelRef.current) return;
     const deltaY = clientY - sheetDragRef.current.startY;
     const panel = featurePanelRef.current;
-    const isList = panel.classList.contains("feature-list-panel");
+    const isList = panel.classList.contains("panel-list");
 
     if (isList) {
       const vh = window.innerHeight;
@@ -4861,7 +4906,7 @@ export default function Map() {
     sheetDragRef.current.dragging = false;
     const panel = featurePanelRef.current;
     panel.style.transition = "";
-    const isList = panel.classList.contains("feature-list-panel");
+    const isList = panel.classList.contains("panel-list");
 
     const cleanupPanel = () => {
       if (featurePanelRef.current) {
@@ -6346,8 +6391,29 @@ export default function Map() {
         ch.port1.onmessage = (e) => {
           clearTimeout(t);
           const list = e.data?.regions || [];
-          setOfflineRegions(list);
-          resolve(list);
+          const base = list.find((r) => r.type === "base") || null;
+          const userRegions = list.filter((r) => r.type !== "base");
+          userRegions.forEach((r) => {
+            const maxByStyle = {};
+            if (Array.isArray(r.styleConfigs)) {
+              for (const c of r.styleConfigs) {
+                maxByStyle[c.styleId] = Math.max(maxByStyle[c.styleId] ?? 0, c.maxZoom);
+              }
+            }
+            const outdated =
+              !r.styleConfigs ||
+              Object.values(MAP_STYLE_IDS).some(
+                (id) => (maxByStyle[id] ?? 0) < expectedOfflineMaxZoom(id),
+              );
+            if (outdated) {
+              console.warn(
+                `[offline] region '${r.name}' is outdated \u2014 delete and re-download for full coverage`,
+              );
+            }
+          });
+          setOfflineBaseMap(base);
+          setOfflineRegions(userRegions);
+          resolve(userRegions);
         };
         reg.active.postMessage({ type: "GET_REGIONS" }, [ch.port2]);
       });
@@ -6361,34 +6427,63 @@ export default function Map() {
   }, [refreshOfflineRegions]);
 
   useEffect(() => {
+    if (!showOfflineMapsPanel && shownRegionId != null) {
+      clearOfflineRegionHighlight();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showOfflineMapsPanel]);
+
+  useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
     const handler = (event) => {
       const data = event.data;
       if (!data || !data.type) return;
       if (data.type === "DOWNLOAD_PROGRESS") {
+        if (data.complete || data.done === 0 || (data.done % 100 === 0)) {
+          console.info(
+            `[offline ${data.isBase ? "base" : "region"}] progress ${data.done}/${data.total} (${data.percent?.toFixed(1)}%) failed=${data.failed} complete=${!!data.complete}`,
+          );
+        }
         setDownloadProgress(data);
-        if (data.regionId != null) setCurrentDownloadRegionId(data.regionId);
-        if (data.complete) {
+        if (data.regionId != null && !data.isBase) setCurrentDownloadRegionId(data.regionId);
+        if (data.complete && !data.isBase) {
           setIsDownloading(false);
           setDownloadProgress(null);
           setCurrentDownloadRegionId(null);
+          setDownloadingRegion(null);
           setToastMsg("Offline map ready.");
           setTimeout(() => setToastMsg(null), 3000);
           refreshOfflineRegions().then(() => setShowOfflineMapsPanel(true));
         }
       } else if (data.type === "DOWNLOAD_CANCELLED") {
+        console.info(`[offline] download cancelled id=${data.regionId}`);
         setIsDownloading(false);
         setDownloadProgress(null);
         setCurrentDownloadRegionId(null);
+        setDownloadingRegion(null);
         refreshOfflineRegions();
       } else if (data.type === "DOWNLOAD_ERROR") {
+        console.warn(
+          `[offline ${data.isBase ? "base" : "region"}] error: ${data.message || "(no message)"} regionId=${data.regionId}`,
+        );
         setIsDownloading(false);
         setDownloadProgress(null);
         setCurrentDownloadRegionId(null);
+        setDownloadingRegion(null);
         setToastMsg("Download failed.");
         setTimeout(() => setToastMsg(null), 3000);
       } else if (data.type === "REGION_DELETED") {
+        console.info(`[offline] region deleted id=${data.regionId}`);
         refreshOfflineRegions();
+      } else if (data.type === "BASE_DELETED") {
+        console.info(`[offline] base deleted (cascade)`);
+      } else if (data.type === "REGION_RENAMED") {
+        console.info(`[offline] region renamed id=${data.regionId} name=${data.name}`);
+        refreshOfflineRegions();
+      } else if (data.type === "RENAME_ERROR") {
+        console.warn(`[offline] rename failed id=${data.regionId}: ${data.message}`);
+        setToastMsg("Rename failed.");
+        setTimeout(() => setToastMsg(null), 3000);
       }
     };
     navigator.serviceWorker.addEventListener("message", handler);
@@ -6422,11 +6517,21 @@ export default function Map() {
     const canvas = map.getCanvas();
     const w = canvas.clientWidth;
     const h = canvas.clientHeight;
-    const inset = 102;
-    const x1 = Math.min(inset, w / 2 - 1);
-    const y1 = Math.min(inset, h / 2 - 1);
-    const x2 = Math.max(w - inset, w / 2 + 1);
-    const y2 = Math.max(h - inset, h / 2 + 1);
+    const probe = document.createElement("div");
+    probe.style.cssText =
+      "position:fixed;top:0;left:0;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);pointer-events:none;visibility:hidden";
+    document.body.appendChild(probe);
+    const cs = getComputedStyle(probe);
+    const safeTop = parseFloat(cs.paddingTop) || 0;
+    const safeBottom = parseFloat(cs.paddingBottom) || 0;
+    probe.remove();
+    const insetTop = 102 + safeTop;
+    const insetBottom = 102 + safeBottom;
+    const insetX = 56;
+    const x1 = Math.min(insetX, w / 2 - 1);
+    const y1 = Math.min(insetTop, h / 2 - 1);
+    const x2 = Math.max(w - insetX, w / 2 + 1);
+    const y2 = Math.max(h - insetBottom, h / 2 + 1);
     const nw = map.unproject([x1, y1]);
     const se = map.unproject([x2, y2]);
     return {
@@ -6447,15 +6552,13 @@ export default function Map() {
   const computeOfflineEstimate = useCallback(() => {
     const b = getOfflineRectBounds();
     if (!b) return;
-    let areaTiles = 0;
-    for (let z = 0; z <= 16; z++) areaTiles += tileCountForBounds(b, z);
-    // Per (x,y,z) position across all 3 styles:
-    // light vector ~60KB + dark vector ~60KB + satellite (raster 80KB + vector labels 30KB) = ~230KB
-    const BYTES_PER_POSITION = 230 * 1024;
-    setOfflineTileEstimate({
-      tileCount: areaTiles * 3,
-      estimatedBytes: areaTiles * BYTES_PER_POSITION,
-    });
+    const cfgs = buildOfflineStyleConfigs();
+    const { tileCount, estimatedBytes } = estimateOfflineDownload(
+      b,
+      cfgs,
+      isOfflineRasterStyle,
+    );
+    setOfflineTileEstimate({ tileCount, estimatedBytes });
   }, []);
 
   // Lock the map to north + flat + disable rotate/tilt gestures for the
@@ -6654,9 +6757,10 @@ export default function Map() {
 
   const handleCancelOfflineDownload = () => {
     setIsOfflineDownloadMode(false);
+    setShowOfflineMapsPanel(true);
   };
 
-  const startRegionDownload = async (region, tileUrls) => {
+  const startRegionDownload = async (region, tileUrls, opts = {}) => {
     const reg = await navigator.serviceWorker?.ready;
     const sw = reg?.active;
     if (!sw) {
@@ -6666,15 +6770,99 @@ export default function Map() {
       setTimeout(() => setToastMsg(null), 2500);
       return false;
     }
-    sw.postMessage({ type: "DOWNLOAD_REGION", region, tileUrls });
+    sw.postMessage({
+      type: "DOWNLOAD_REGION",
+      region,
+      tileUrls,
+      isUpdate: !!opts.isUpdate,
+    });
     return true;
   };
+
+  const ensureBaseMap = useCallback(async ({ force = false } = {}) => {
+    if (!force && offlineBaseMap && offlineBaseMap.version === BASE_MAP_VERSION) {
+      console.info(`[offline base] already present v${offlineBaseMap.version}, skipping`);
+      return true;
+    }
+    if (force) {
+      console.info(`[offline base] forced update requested, re-downloading v${BASE_MAP_VERSION}`);
+    } else if (offlineBaseMap) {
+      console.info(
+        `[offline base] stale (stored v${offlineBaseMap.version ?? "?"}, need v${BASE_MAP_VERSION}), re-downloading`,
+      );
+    } else {
+      console.info(`[offline base] not present, downloading v${BASE_MAP_VERSION}`);
+    }
+    const reg = await navigator.serviceWorker?.ready;
+    const sw = reg?.active;
+    if (!sw) {
+      console.warn("[offline base] no active service worker");
+      return false;
+    }
+    let urls;
+    try {
+      const t0 = performance.now();
+      const res = await calculateTileUrls(
+        WORLD_BOUNDS,
+        buildBaseMapStyleConfigs(),
+        mapboxgl.accessToken,
+      );
+      urls = res.urls;
+      console.info(
+        `[offline base] enumerated ${urls.length} urls in ${((performance.now() - t0) / 1000).toFixed(1)}s`,
+      );
+    } catch (err) {
+      console.warn("[offline base] calculateTileUrls failed", err);
+      return false;
+    }
+    const baseRegion = {
+      name: "Base map",
+      type: "base",
+      version: BASE_MAP_VERSION,
+      north: WORLD_BOUNDS.north,
+      south: WORLD_BOUNDS.south,
+      east: WORLD_BOUNDS.east,
+      west: WORLD_BOUNDS.west,
+      minZoom: 0,
+      maxZoom: BASE_MAP_MAX_ZOOM,
+      styleConfigs: buildBaseMapStyleConfigs(),
+      styleIds: ["rontomap_streets_light", "rontomap_streets_dark", "rontomap_satellite"],
+      tileCount: urls.length,
+      sizeBytes: 0,
+    };
+    setDownloadingRegion(baseRegion);
+    setShowOfflineMapsPanel(true);
+    return new Promise((resolve) => {
+      const handler = (event) => {
+        const d = event.data;
+        if (!d || !d.isBase) return;
+        if (d.type === "DOWNLOAD_PROGRESS" && d.complete) {
+          navigator.serviceWorker.removeEventListener("message", handler);
+          setDownloadingRegion(null);
+          setDownloadProgress(null);
+          refreshOfflineRegions();
+          resolve(true);
+        } else if (d.type === "DOWNLOAD_ERROR") {
+          navigator.serviceWorker.removeEventListener("message", handler);
+          setDownloadingRegion(null);
+          setDownloadProgress(null);
+          resolve(false);
+        }
+      };
+      navigator.serviceWorker.addEventListener("message", handler);
+      sw.postMessage({
+        type: "DOWNLOAD_BASE_MAP",
+        region: baseRegion,
+        tileUrls: urls,
+      });
+    });
+  }, [offlineBaseMap, refreshOfflineRegions]);
 
   const handleConfirmOfflineDownload = async () => {
     const b = getOfflineRectBounds();
     if (!b) return;
     const selectedKeys = Object.keys(MAP_STYLE_IDS);
-    const styleIds = Object.values(MAP_STYLE_IDS);
+    const styleConfigs = buildOfflineStyleConfigs();
 
     try { await navigator.storage?.persist?.(); } catch {}
 
@@ -6682,14 +6870,30 @@ export default function Map() {
     setDownloadProgress({ done: 0, total: 1, percent: 0 });
     setIsOfflineDownloadMode(false);
 
+    const baseOk = await ensureBaseMap();
+    if (!baseOk) {
+      setIsDownloading(false);
+      setDownloadProgress(null);
+      setToastMsg("Base map download failed.");
+      setTimeout(() => setToastMsg(null), 2500);
+      return;
+    }
+
     let urls = [];
     let estimatedSize = 0;
     try {
-      const res = await calculateTileUrls(b, 0, 16, styleIds, mapboxgl.accessToken);
+      console.info(
+        `[offline region] enumerating tiles bounds=N${b.north.toFixed(3)} S${b.south.toFixed(3)} E${b.east.toFixed(3)} W${b.west.toFixed(3)}`,
+      );
+      const t0 = performance.now();
+      const res = await calculateTileUrls(b, styleConfigs, mapboxgl.accessToken, 2);
       urls = res.urls;
       estimatedSize = res.estimatedSize;
+      console.info(
+        `[offline region] enumerated ${urls.length} urls in ${((performance.now() - t0) / 1000).toFixed(1)}s (est size ${(estimatedSize / 1024 / 1024).toFixed(1)} MB)`,
+      );
     } catch (err) {
-      console.warn("calculateTileUrls failed", err);
+      console.warn("[offline region] calculateTileUrls failed", err);
       setIsDownloading(false);
       setDownloadProgress(null);
       setToastMsg("Failed to prepare download.");
@@ -6706,14 +6910,21 @@ export default function Map() {
       east: b.east,
       west: b.west,
       minZoom: 0,
-      maxZoom: 16,
+      maxZoom: OFFLINE_MAX_ZOOM,
+      styleConfigs,
       styleIds: selectedKeys,
       tileCount: urls.length,
       sizeBytes: estimatedSize,
     };
 
+    setDownloadingRegion(region);
+    setShowOfflineMapsPanel(true);
+
     const ok = await startRegionDownload(region, urls);
-    if (!ok) return;
+    if (!ok) {
+      setDownloadingRegion(null);
+      return;
+    }
 
     if (isNativeAndroid()) {
       try {
@@ -6727,16 +6938,39 @@ export default function Map() {
     }
   };
 
+  const clearOfflineRegionHighlight = () => {
+    const map = mapRef.current;
+    if (offlineRegionHighlightCleanupRef.current) {
+      offlineRegionHighlightCleanupRef.current();
+      offlineRegionHighlightCleanupRef.current = null;
+    } else if (map) {
+      if (map.getLayer("offline-region-highlight-line")) map.removeLayer("offline-region-highlight-line");
+      if (map.getSource("offline-region-highlight")) map.removeSource("offline-region-highlight");
+    }
+    setShownRegionId(null);
+  };
+
   const handleOfflineRegionClick = (region) => {
     const map = mapRef.current;
     if (!map) return;
-    setShowOfflineMapsPanel(false);
+    if (shownRegionId === region.id) {
+      clearOfflineRegionHighlight();
+      return;
+    }
+    const isPortrait = window.matchMedia("(orientation: portrait)").matches;
+    const panelEl = featurePanelRef.current;
+    const panelSize = panelEl
+      ? (isPortrait ? panelEl.offsetHeight : panelEl.offsetWidth)
+      : 0;
+    const padding = isPortrait
+      ? { top: 60, right: 60, bottom: 60 + panelSize, left: 60 }
+      : { top: 60, right: 60, bottom: 60, left: 60 + panelSize };
     map.fitBounds(
       [
         [region.west, region.south],
         [region.east, region.north],
       ],
-      { padding: 60, duration: 600 },
+      { padding, duration: 600 },
     );
     const data = boundsToPolygon({
       north: region.north,
@@ -6744,10 +6978,6 @@ export default function Map() {
       east: region.east,
       west: region.west,
     });
-    if (offlineRegionHighlightCleanupRef.current) {
-      offlineRegionHighlightCleanupRef.current();
-      offlineRegionHighlightCleanupRef.current = null;
-    }
     const afterLoad = () => {
       if (!map.getSource("offline-region-highlight")) {
         map.addSource("offline-region-highlight", { type: "geojson", data });
@@ -6760,19 +6990,14 @@ export default function Map() {
       } else {
         map.getSource("offline-region-highlight").setData(data);
       }
-      const timer = setTimeout(() => {
-        if (map.getLayer("offline-region-highlight-line")) map.removeLayer("offline-region-highlight-line");
-        if (map.getSource("offline-region-highlight")) map.removeSource("offline-region-highlight");
-        offlineRegionHighlightCleanupRef.current = null;
-      }, 2500);
       offlineRegionHighlightCleanupRef.current = () => {
-        clearTimeout(timer);
         if (map.getLayer("offline-region-highlight-line")) map.removeLayer("offline-region-highlight-line");
         if (map.getSource("offline-region-highlight")) map.removeSource("offline-region-highlight");
       };
     };
     if (map.isStyleLoaded()) afterLoad();
     else map.once("idle", afterLoad);
+    setShownRegionId(region.id);
   };
 
   const handleUpdateOfflineRegion = async (region) => {
@@ -6782,19 +7007,30 @@ export default function Map() {
       east: region.east,
       west: region.west,
     };
-    const styleIds = (region.styleIds || []).map((k) => MAP_STYLE_IDS[k] || k);
-    if (styleIds.length === 0) {
+    if (!region.styleIds || region.styleIds.length === 0) {
       setToastMsg("Region has no styles to update.");
       setTimeout(() => setToastMsg(null), 2500);
       return;
     }
+    const styleConfigs = buildOfflineStyleConfigs();
     setIsDownloading(true);
     setCurrentDownloadRegionId(region.id);
     setDownloadProgress({ done: 0, total: 1, percent: 0 });
+    const baseOk = await ensureBaseMap();
+    if (!baseOk) {
+      setIsDownloading(false);
+      setDownloadProgress(null);
+      setCurrentDownloadRegionId(null);
+      setToastMsg("Base map download failed.");
+      setTimeout(() => setToastMsg(null), 2500);
+      return;
+    }
     let urls = [];
+    let estimatedSize = 0;
     try {
-      const res = await calculateTileUrls(b, region.minZoom, region.maxZoom, styleIds, mapboxgl.accessToken);
+      const res = await calculateTileUrls(b, styleConfigs, mapboxgl.accessToken, 2);
       urls = res.urls;
+      estimatedSize = res.estimatedSize;
     } catch (err) {
       console.warn("calculateTileUrls failed", err);
       setIsDownloading(false);
@@ -6803,8 +7039,17 @@ export default function Map() {
       setTimeout(() => setToastMsg(null), 2500);
       return;
     }
-    const updated = { ...region, tileCount: urls.length };
-    await startRegionDownload(updated, urls);
+    const updated = {
+      ...region,
+      minZoom: 0,
+      maxZoom: OFFLINE_MAX_ZOOM,
+      styleConfigs,
+      tileCount: urls.length,
+      sizeBytes: estimatedSize,
+    };
+    setDownloadingRegion(updated);
+    setShowOfflineMapsPanel(true);
+    await startRegionDownload(updated, urls, { isUpdate: true });
     if (isNativeAndroid()) {
       try {
         await OfflineRouting.downloadRoutingData({
@@ -6830,6 +7075,7 @@ export default function Map() {
     if (isNativeAndroid()) {
       try { await OfflineRouting.deleteRoutingData({ regionId: region.id }); } catch {}
     }
+    if (shownRegionId === region.id) clearOfflineRegionHighlight();
     setOfflineDeleteAlert(null);
     setTimeout(() => refreshOfflineRegions(), 300);
   };
@@ -6837,12 +7083,18 @@ export default function Map() {
   const handleCancelDownload = async () => {
     const reg = await navigator.serviceWorker?.ready;
     const sw = reg?.active;
-    if (sw && currentDownloadRegionId != null) {
-      sw.postMessage({ type: "CANCEL_DOWNLOAD", regionId: currentDownloadRegionId });
+    const regionId = currentDownloadRegionId;
+    if (sw && regionId != null) {
+      sw.postMessage({ type: "CANCEL_DOWNLOAD", regionId });
+    }
+    if (isNativeAndroid() && regionId != null) {
+      try { await OfflineRouting.deleteRoutingData({ regionId }); } catch {}
     }
     setIsDownloading(false);
     setDownloadProgress(null);
     setCurrentDownloadRegionId(null);
+    setDownloadingRegion(null);
+    if (shownRegionId === "__downloading__") clearOfflineRegionHighlight();
   };
 
   return (
@@ -7331,30 +7583,30 @@ export default function Map() {
       {showFeaturesList && !selectedFeature && (() => {
         const items = buildFeaturesList();
         const [sortField, sortDir] = featListSort.split("-");
-        const darkClass = idMapStyle === "rontomap_streets_dark" ? " feature-panel-dark" : "";
+        const darkClass = idMapStyle === "rontomap_streets_dark" ? " panel-dark" : "";
         return (
           <div
             {...featurePanelSwipe}
             ref={(el) => { featurePanelRef.current = el; featurePanelSwipe.ref(el); }}
-            className={`feature-panel feature-list-panel${darkClass}${sheetLevel > 0 ? ` sheet-level-${sheetLevel}` : ""}`}
+            className={`panel panel-list${darkClass}${sheetLevel > 0 ? ` sheet-level-${sheetLevel}` : ""}`}
           >
             <div
-              className="feature-panel-handle"
+              className="panel-handle"
               onTouchStart={handleSheetDragStart}
               onTouchMove={handleSheetDragMove}
               onTouchEnd={handleSheetDragEnd}
               onMouseDown={handleSheetMouseDown}
             >
-              <div className="feature-panel-handle-bar" />
+              <div className="panel-handle-bar" />
             </div>
-            <div className="feature-panel-actions">
-              <ActionIconButton label={`Sort by name${sortField === "name" ? (sortDir === "asc" ? " (A-Z)" : " (Z-A)") : ""}`} onClick={() => toggleFeatListSort("name")}>
-                <IonIcon icon={textOutline} />
-                {sortField === "name" && <IonIcon icon={sortDir === "asc" ? chevronUpOutline : chevronDownOutline} className="sort-dir-icon" />}
-              </ActionIconButton>
+            <div className="panel-actions">
               <ActionIconButton label={`Sort by distance${sortField === "dist" ? (sortDir === "asc" ? " (nearest)" : " (farthest)") : ""}`} onClick={() => toggleFeatListSort("dist")}>
                 <IonIcon icon={radioOutline} />
                 {sortField === "dist" && <IonIcon icon={sortDir === "asc" ? chevronUpOutline : chevronDownOutline} className="sort-dir-icon" />}
+              </ActionIconButton>
+              <ActionIconButton label={`Sort by name${sortField === "name" ? (sortDir === "asc" ? " (A-Z)" : " (Z-A)") : ""}`} onClick={() => toggleFeatListSort("name")}>
+                <IonIcon icon={textOutline} />
+                {sortField === "name" && <IonIcon icon={sortDir === "asc" ? chevronUpOutline : chevronDownOutline} className="sort-dir-icon" />}
               </ActionIconButton>
               <ActionIconButton label={`Sort by length${sortField === "length" ? (sortDir === "asc" ? " (shortest)" : " (longest)") : ""}`} onClick={() => toggleFeatListSort("length")}>
                 <IonIcon icon={resizeOutline} />
@@ -7373,13 +7625,13 @@ export default function Map() {
                 <IonIcon icon={closeOutline} />
               </ActionIconButton>
             </div>
-            <div className="feature-list-items">
+            <div className="panel-list-items">
               {items.map((item, i) => (
-                <div key={i} className="feature-list-item" onClick={() => handleFeatureListClick(item)}>
-                  <IonIcon icon={item.type === "path" ? analyticsOutline : item.type === "sight" ? pinOutline : locationOutline} className={`feature-list-icon feature-list-icon-${item.type}`} />
-                  <div className="feature-list-text">
-                    <span className="feature-list-name">{item.name}</span>
-                    <span className="feature-list-info">
+                <div key={i} className="panel-list-item" onClick={() => handleFeatureListClick(item)}>
+                  <IonIcon icon={item.type === "path" ? analyticsOutline : item.type === "sight" ? pinOutline : locationOutline} className={`panel-list-icon panel-list-icon-${item.type}`} />
+                  <div className="panel-list-text">
+                    <span className="panel-list-name">{item.name}</span>
+                    <span className="panel-list-info">
                       {item.type === "path"
                         ? [
                             item.snap === "foot" ? "Foot" : item.snap === "bike" ? "Bike" : item.snap === "car" ? "Car" : "Free",
@@ -7389,32 +7641,66 @@ export default function Map() {
                         : `${item.lngLat.lat.toFixed(6)}, ${item.lngLat.lng.toFixed(6)}`}
                     </span>
                   </div>
-                  {sortField === "dist" && <span className="feature-list-meta">{formatDistance(item.dist)}</span>}
-                  {sortField === "length" && item.type === "path" && item.length > 0 && <span className="feature-list-meta">{formatDistance(item.length)}</span>}
+                  {sortField === "dist" && <span className="panel-list-meta">{formatDistance(item.dist)}</span>}
+                  {sortField === "length" && item.type === "path" && item.length > 0 && <span className="panel-list-meta">{formatDistance(item.length)}</span>}
                 </div>
               ))}
-              {items.length === 0 && <div className="feature-list-empty">No features</div>}
+              {items.length === 0 && <div className="panel-list-empty">No features</div>}
             </div>
           </div>
         );
       })()}
       {showOfflineMapsPanel && !selectedFeature && (() => {
-        const darkClass = idMapStyle === "rontomap_streets_dark" ? " feature-panel-dark" : "";
+        const darkClass = idMapStyle === "rontomap_streets_dark" ? " panel-dark" : "";
+        const [offSortField, offSortDir] = offlineSort.split("-");
+        const toggleOfflineSort = (field) =>
+          setOfflineSort((p) => (p === `${field}-asc` ? `${field}-desc` : `${field}-asc`));
+        const mapCenter = mapRef.current?.getCenter?.();
+        const regionCenterLatLng = (r) => [(r.north + r.south) / 2, (r.east + r.west) / 2];
+        const distToCenter = (r) => {
+          if (!mapCenter) return 0;
+          const [lat, lng] = regionCenterLatLng(r);
+          return haversinePoint(mapCenter.lat, mapCenter.lng, lat, lng);
+        };
+        const dir = offSortDir === "asc" ? 1 : -1;
+        const sortedRegions = [...offlineRegions]
+          .filter((r) => r.id !== downloadingRegion?.id)
+          .sort((a, b) => {
+            if (offSortField === "name") return dir * (a.name || "").localeCompare(b.name || "");
+            if (offSortField === "dist") return dir * (distToCenter(a) - distToCenter(b));
+            return dir * ((a.updatedAt || a.createdAt || 0) - (b.updatedAt || b.createdAt || 0));
+          });
+        const formatRegionDate = (r) => {
+          const t = r?.updatedAt || r?.createdAt;
+          return t ? new Date(t).toLocaleDateString() : null;
+        };
         return (
           <div
-            className={`feature-panel feature-list-panel${darkClass}${sheetLevel > 0 ? ` sheet-level-${sheetLevel}` : ""}`}
+            ref={(el) => { featurePanelRef.current = el; }}
+            className={`panel panel-list${darkClass}${sheetLevel > 0 ? ` sheet-level-${sheetLevel}` : ""}`}
           >
             <div
-              className="feature-panel-handle"
+              className="panel-handle"
               onTouchStart={handleSheetDragStart}
               onTouchMove={handleSheetDragMove}
               onTouchEnd={handleSheetDragEnd}
               onMouseDown={handleSheetMouseDown}
             >
-              <div className="feature-panel-handle-bar" />
+              <div className="panel-handle-bar" />
             </div>
-            <div className="feature-panel-actions">
-              <span className="offline-panel-title">Offline maps</span>
+            <div className="panel-actions">
+              <ActionIconButton label={`Sort by distance${offSortField === "dist" ? (offSortDir === "asc" ? " (nearest)" : " (farthest)") : ""}`} onClick={() => toggleOfflineSort("dist")}>
+                <IonIcon icon={radioOutline} />
+                {offSortField === "dist" && <IonIcon icon={offSortDir === "asc" ? chevronUpOutline : chevronDownOutline} className="sort-dir-icon" />}
+              </ActionIconButton>
+              <ActionIconButton label={`Sort by name${offSortField === "name" ? (offSortDir === "asc" ? " (A-Z)" : " (Z-A)") : ""}`} onClick={() => toggleOfflineSort("name")}>
+                <IonIcon icon={textOutline} />
+                {offSortField === "name" && <IonIcon icon={offSortDir === "asc" ? chevronUpOutline : chevronDownOutline} className="sort-dir-icon" />}
+              </ActionIconButton>
+              <ActionIconButton label={`Sort by date${offSortField === "date" ? (offSortDir === "asc" ? " (oldest)" : " (newest)") : ""}`} onClick={() => toggleOfflineSort("date")}>
+                <IonIcon icon={timeOutline} />
+                {offSortField === "date" && <IonIcon icon={offSortDir === "asc" ? chevronUpOutline : chevronDownOutline} className="sort-dir-icon" />}
+              </ActionIconButton>
               <ActionIconButton label="Add region" onClick={handleStartOfflineDownload}>
                 <IonIcon icon={addOutline} />
               </ActionIconButton>
@@ -7422,23 +7708,91 @@ export default function Map() {
                 <IonIcon icon={closeOutline} />
               </ActionIconButton>
             </div>
-            <div className="feature-list-items">
-              {offlineRegions.length === 0 ? (
-                <div className="feature-list-empty">No offline maps yet.</div>
+            <div className="panel-list-items">
+              {offlineBaseMap && (
+                <div key="base" className="panel-list-item panel-list-item-base">
+                  <IonIcon icon={globeOutline} className="panel-list-icon" />
+                  <div className="panel-list-text">
+                    <span className="panel-list-name">Base map</span>
+                    <span className="panel-list-info">
+                      {`${(offlineBaseMap.tileCount ?? 0).toLocaleString()} tiles \u00b7 ${formatBytes(offlineBaseMap.sizeBytes)}`}
+                      {offSortField === "date" && formatRegionDate(offlineBaseMap) && <> {"\u00b7 "}{formatRegionDate(offlineBaseMap)}</>}
+                    </span>
+                  </div>
+                  <ActionIconButton
+                    label="Update"
+                    onClick={(e) => { e.stopPropagation(); ensureBaseMap({ force: true }); }}
+                  >
+                    <IonIcon icon={refreshOutline} />
+                  </ActionIconButton>
+                  <ActionIconButton
+                    label="Delete"
+                    onClick={(e) => { e.stopPropagation(); setOfflineBaseDeleteAlert(true); }}
+                  >
+                    <IonIcon icon={trashOutline} />
+                  </ActionIconButton>
+                </div>
+              )}
+              {downloadingRegion && (
+                <div
+                  className={`panel-list-item panel-list-item-downloading${shownRegionId === "__downloading__" ? " panel-list-item-active" : ""}`}
+                  onClick={() => handleOfflineRegionClick({ ...downloadingRegion, id: "__downloading__" })}
+                >
+                  <IonIcon icon={mapOutline} className="panel-list-icon" />
+                  <div className="panel-list-text">
+                    <span className="panel-list-name">{downloadingRegion.name}</span>
+                    <span className="panel-list-info">
+                      {`Downloading\u2026 ${Math.round(downloadProgress?.percent ?? 0)}%`}
+                    </span>
+                  </div>
+                  <div className="progress-circle">
+                    <svg viewBox="0 0 36 36">
+                      <circle cx="18" cy="18" r="14" className="progress-circle-track" />
+                      <circle
+                        cx="18"
+                        cy="18"
+                        r="14"
+                        className="progress-circle-fill"
+                        strokeDasharray="87.96"
+                        strokeDashoffset={87.96 * (1 - (downloadProgress?.percent ?? 0) / 100)}
+                      />
+                    </svg>
+                    <button
+                      className="progress-circle-cancel"
+                      onClick={(e) => { e.stopPropagation(); handleCancelDownload(); }}
+                      aria-label="Cancel download"
+                    >
+                      <IonIcon icon={closeOutline} />
+                    </button>
+                  </div>
+                </div>
+              )}
+              {offlineRegions.length === 0 && !offlineBaseMap && !downloadingRegion ? (
+                <div className="panel-list-empty">No offline maps yet.</div>
               ) : (
-                offlineRegions.map((r) => (
+                sortedRegions.map((r) => (
                   <div
                     key={r.id}
-                    className="feature-list-item"
+                    className={`panel-list-item${shownRegionId === r.id ? " panel-list-item-active" : ""}`}
                     onClick={() => handleOfflineRegionClick(r)}
                   >
-                    <IonIcon icon={mapOutline} className="feature-list-icon" />
-                    <div className="feature-list-text">
-                      <span className="feature-list-name">{r.name}</span>
-                      <span className="feature-list-info">
-                        {`z${r.minZoom ?? 0}-${r.maxZoom} \u00b7 ${(r.styleIds || []).length} style${(r.styleIds || []).length === 1 ? "" : "s"} \u00b7 ${formatBytes(r.sizeBytes)}`}
+                    <IonIcon icon={mapOutline} className="panel-list-icon" />
+                    <div className="panel-list-text">
+                      <span className="panel-list-name">{r.name}</span>
+                      <span className="panel-list-info">
+                        {`${(r.tileCount ?? 0).toLocaleString()} tiles \u00b7 ${formatBytes(r.sizeBytes)}`}
+                        {offSortField === "date" && formatRegionDate(r) && <> {"\u00b7 "}{formatRegionDate(r)}</>}
+                        {offSortField === "dist" && mapCenter && (
+                          <> {"\u00b7 "}{formatDistance(distToCenter(r))}</>
+                        )}
                       </span>
                     </div>
+                    <ActionIconButton
+                      label="Rename"
+                      onClick={(e) => { e.stopPropagation(); setRenameRegionTarget(r); }}
+                    >
+                      <IonIcon icon={pencilOutline} />
+                    </ActionIconButton>
                     <ActionIconButton
                       label="Update"
                       onClick={(e) => { e.stopPropagation(); handleUpdateOfflineRegion(r); }}
@@ -7458,64 +7812,52 @@ export default function Map() {
           </div>
         );
       })()}
-      {isOfflineDownloadMode && (
-        <div
-          className={`offline-actions${idMapStyle === "rontomap_streets_dark" ? " offline-actions-dark" : ""}`}
-        >
-          <div className="actions-group">
-            <button className="cancel-btn" onClick={handleCancelOfflineDownload}>
-              Cancel
-            </button>
-            <button
-              className={`save-btn${(currentMapZoom < 10 || currentMapZoom > 14) ? " disabled" : ""}`}
-              onClick={() => {
-                if (currentMapZoom < 10) {
-                  setToastMsg("Zoom in to level 10 or higher to download.");
-                  setTimeout(() => setToastMsg(null), 3000);
-                  return;
-                }
-                if (currentMapZoom > 14) {
-                  setToastMsg("Zoom out to level 14 or lower to download.");
-                  setTimeout(() => setToastMsg(null), 3000);
-                  return;
-                }
-                handleConfirmOfflineDownload();
-              }}
-            >
-              Download
-            </button>
+      {isOfflineDownloadMode && (() => {
+        const tileCount = offlineTileEstimate?.tileCount ?? 0;
+        const belowMin = tileCount > 0 && tileCount < 500;
+        const aboveMax = tileCount > 100000;
+        const disabled = !offlineTileEstimate || belowMin || aboveMax;
+        return (
+          <div
+            className={`offline-actions${idMapStyle === "rontomap_streets_dark" ? " offline-actions-dark" : ""}`}
+          >
+            <div className="actions-group">
+              <button className="cancel-btn" onClick={handleCancelOfflineDownload}>
+                Cancel
+              </button>
+              <button
+                className={`save-btn${disabled ? " disabled" : ""}`}
+                onClick={() => {
+                  if (belowMin) {
+                    setToastMsg(`Area too small \u2014 need \u2265 500 tiles, got ${tileCount}.`);
+                    setTimeout(() => setToastMsg(null), 3000);
+                    return;
+                  }
+                  if (aboveMax) {
+                    setToastMsg(`Area too large \u2014 max 100 000 tiles, got ${tileCount.toLocaleString()}.`);
+                    setTimeout(() => setToastMsg(null), 3000);
+                    return;
+                  }
+                  handleConfirmOfflineDownload();
+                }}
+              >
+                Download
+              </button>
+            </div>
+            <div className="route-info">
+              {offlineTileEstimate ? (
+                <>
+                  <span>{offlineTileEstimate.tileCount.toLocaleString()} tiles</span>
+                  <span className="route-info-separator">{"\u00b7"}</span>
+                  <span>~{formatBytes(offlineTileEstimate.estimatedBytes)}</span>
+                </>
+              ) : (
+                <span>Calculating{"\u2026"}</span>
+              )}
+            </div>
           </div>
-          <div className="route-info">
-            {offlineTileEstimate ? (
-              <>
-                <span>{offlineTileEstimate.tileCount.toLocaleString()} tiles</span>
-                <span className="route-info-separator">{"\u00b7"}</span>
-                <span>~{formatBytes(offlineTileEstimate.estimatedBytes)}</span>
-              </>
-            ) : (
-              <span>Calculating{"\u2026"}</span>
-            )}
-          </div>
-        </div>
-      )}
-      {isDownloading && (
-        <div
-          className={`download-progress${idMapStyle === "rontomap_streets_dark" ? " download-progress-dark" : ""}`}
-        >
-          <span className="download-progress-label">
-            {`Downloading\u2026 ${Math.round(downloadProgress?.percent ?? 0)}%`}
-          </span>
-          <div className="progress-bar">
-            <div
-              className="progress-fill"
-              style={{ width: `${Math.round(downloadProgress?.percent ?? 0)}%` }}
-            />
-          </div>
-          <button className="cancel-btn" onClick={handleCancelDownload}>
-            Cancel
-          </button>
-        </div>
-      )}
+        );
+      })()}
       <IonAlert
         isOpen={!!offlineDeleteAlert}
         cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
@@ -7531,6 +7873,60 @@ export default function Map() {
           },
         ]}
       />
+      <IonAlert
+        isOpen={offlineBaseDeleteAlert}
+        cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
+        onDidDismiss={() => setOfflineBaseDeleteAlert(false)}
+        header="Delete base map?"
+        message={`Deleting the base map will also delete all ${offlineRegions.length} offline region${offlineRegions.length === 1 ? "" : "s"}. This removes every cached tile. Continue?`}
+        buttons={[
+          { text: "Cancel", role: "cancel" },
+          {
+            text: "Delete all",
+            role: "destructive",
+            handler: async () => {
+              const reg = await navigator.serviceWorker?.ready;
+              const sw = reg?.active;
+              if (sw) sw.postMessage({ type: "DELETE_BASE_MAP" });
+              if (isNativeAndroid()) {
+                for (const r of offlineRegions) {
+                  try { await OfflineRouting.deleteRoutingData({ regionId: r.id }); } catch {}
+                }
+              }
+              setOfflineBaseDeleteAlert(false);
+              setTimeout(() => refreshOfflineRegions(), 500);
+            },
+          },
+        ]}
+      />
+      <IonAlert
+        isOpen={!!renameRegionTarget}
+        cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
+        onDidDismiss={() => setRenameRegionTarget(null)}
+        header="Rename offline map"
+        inputs={[
+          {
+            name: "name",
+            type: "text",
+            placeholder: "Region name",
+            value: renameRegionTarget?.name || "",
+          },
+        ]}
+        buttons={[
+          { text: "Cancel", role: "cancel" },
+          {
+            text: "Save",
+            handler: async (data) => {
+              const name = (data?.name || "").trim();
+              const target = renameRegionTarget;
+              if (!target || !name || name === target.name) return;
+              const reg = await navigator.serviceWorker?.ready;
+              const sw = reg?.active;
+              if (sw) sw.postMessage({ type: "RENAME_REGION", regionId: target.id, name });
+            },
+          },
+        ]}
+      />
       {selectedFeature && (
         <>
           <div
@@ -7539,16 +7935,16 @@ export default function Map() {
               featurePanelRef.current = el;
               featurePanelSwipe.ref(el);
             }}
-            className={`feature-panel${idMapStyle === "rontomap_streets_dark" ? " feature-panel-dark" : ""}${sheetLevel > 0 ? ` feature-panel-expanded sheet-level-${sheetLevel}` : ""}`}
+            className={`panel${idMapStyle === "rontomap_streets_dark" ? " panel-dark" : ""}${sheetLevel > 0 ? ` panel-expanded sheet-level-${sheetLevel}` : ""}`}
           >
             <div
-              className="feature-panel-handle"
+              className="panel-handle"
               onTouchStart={handleSheetDragStart}
               onTouchMove={handleSheetDragMove}
               onTouchEnd={handleSheetDragEnd}
               onMouseDown={handleSheetMouseDown}
             >
-              <div className="feature-panel-handle-bar" />
+              <div className="panel-handle-bar" />
             </div>
             {(() => {
               const featureNoun =
@@ -7556,7 +7952,7 @@ export default function Map() {
                   ? (selectedFeature.marker._sightPath ? "sight" : "marker")
                   : "path";
               return (
-                <div className="feature-panel-actions">
+                <div className="panel-actions">
                   <ActionIconButton label={`Center to ${featureNoun}`} onClick={handleFeatureCenterTo}>
                     <IonIcon icon={locateOutline} />
                   </ActionIconButton>
@@ -7584,14 +7980,14 @@ export default function Map() {
                 </div>
               );
             })()}
-            <div className="feature-panel-name">
+            <div className="panel-name">
               {selectedFeature.type === "marker"
                 ? selectedFeature.marker._markerName || (selectedFeature.marker._sightPath ? "Sight" : "Marker")
                 : selectedFeature.path.name || "Path"}
             </div>
-            <div className="feature-panel-details">
+            <div className="panel-details">
               {selectedFeature.type === "marker" && (
-                <div className="feature-panel-coords">
+                <div className="panel-coords">
                   {selectedFeature.marker.getLngLat().lat.toFixed(6)}, {selectedFeature.marker.getLngLat().lng.toFixed(6)}
                 </div>
               )}
@@ -7607,7 +8003,7 @@ export default function Map() {
                   dist = haversineDistance(path.vertices.map((v) => v.lngLat));
                 }
                 return (
-                  <div className="feature-panel-meta">
+                  <div className="panel-meta">
                     <span>{snapLabel}</span>
                     {dist != null && (
                       <>
@@ -7622,7 +8018,7 @@ export default function Map() {
                       </>
                     )}
                     <span className="route-info-separator">&middot;</span>
-                    <span className="feature-panel-trace-link" onClick={handleFeatureTrace}>Trace path</span>
+                    <span className="panel-trace-link" onClick={handleFeatureTrace}>Trace path</span>
                   </div>
                 );
               })()}
@@ -7636,7 +8032,7 @@ export default function Map() {
       <div
         ref={mapContainerRef}
         {...bind}
-        className={`map-container${idMapStyle === "rontomap_streets_dark" ? " map-style-dark" : ""}${idMapStyle === "rontomap_satellite" ? " map-style-satellite" : ""}${isPathMode ? " path-editing" : ""}${featuresLocked ? " features-locked" : ""}${isEmbeddedRef.current ? " embedded" : ""}${selectedFeature ? " feature-panel-open" : ""}`}
+        className={`map-container${idMapStyle === "rontomap_streets_dark" ? " map-style-dark" : ""}${idMapStyle === "rontomap_satellite" ? " map-style-satellite" : ""}${isPathMode ? " path-editing" : ""}${featuresLocked ? " features-locked" : ""}${isEmbeddedRef.current ? " embedded" : ""}${selectedFeature ? " panel-open" : ""}`}
       >
         <div className="bottom-safe-area" aria-hidden="true" />
       </div>

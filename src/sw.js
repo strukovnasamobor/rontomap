@@ -73,6 +73,23 @@ function normalizeCacheKey(url) {
     u.searchParams.delete("access_token");
     u.searchParams.delete("sku");
     u.searchParams.delete("fresh");
+    u.searchParams.delete("secure");
+    u.searchParams.delete("events");
+    // Collapse retina variants (@2x, @3x) onto the non-retina path so a
+    // runtime @2x request hits the cached @1x tile and vice versa.
+    u.pathname = u.pathname.replace(/@[23]x(?=\.|$)/, "");
+    // Canonicalize Mapbox tile CDN subdomains ({a,b,c,d}.tiles.mapbox.com)
+    // onto a single host so runtime requests hit the cache regardless of
+    // which shard Mapbox GL JS chose vs what TileJSON returned at download.
+    if (/^([a-d]\.)?tiles\.mapbox\.com$/.test(u.hostname)) {
+      u.hostname = "tiles.mapbox.com";
+    }
+    // Collapse interchangeable raster formats onto .png so a runtime request
+    // for any raster variant (.webp, .jpg, .jpg70, .jpg90, .png32, .png64,
+    // .png256, etc.) hits whatever raster variant we downloaded. Vector
+    // (.vector.pbf/.mvt) and model/array (.glb/.mrt) paths are untouched —
+    // their contents are non-fungible.
+    u.pathname = u.pathname.replace(/\.(webp|jpe?g|png)\d*$/i, ".png");
     return u.toString();
   } catch {
     return url;
@@ -139,6 +156,7 @@ async function handleMapboxRequest(request) {
     }
     return response;
   } catch {
+    console.warn(`[sw miss] offline 504: url=${request.url} key=${key}`);
     return new Response("", { status: 504, statusText: "Offline" });
   }
 }
@@ -176,69 +194,166 @@ self.addEventListener("message", (event) => {
 
   if (data.type === "DOWNLOAD_REGION") {
     event.waitUntil(
-      handleDownloadRegion(data.region, data.tileUrls, event.source),
+      handleDownloadRegion(data.region, data.tileUrls, event.source, {
+        isUpdate: !!data.isUpdate,
+      }),
+    );
+  } else if (data.type === "DOWNLOAD_BASE_MAP") {
+    event.waitUntil(
+      handleDownloadBase(data.region, data.tileUrls, event.source),
     );
   } else if (data.type === "DELETE_REGION") {
     event.waitUntil(
       handleDeleteRegion(data.regionId, data.tileUrls, event.source),
     );
+  } else if (data.type === "DELETE_BASE_MAP") {
+    event.waitUntil(handleDeleteBase(event.source));
   } else if (data.type === "GET_REGIONS") {
     event.waitUntil(handleGetRegions(event.ports[0]));
   } else if (data.type === "CANCEL_DOWNLOAD") {
     cancelledDownloads.add(data.regionId);
+  } else if (data.type === "RENAME_REGION") {
+    event.waitUntil(handleRenameRegion(data.regionId, data.name, event.source));
   }
 });
 
-async function handleDownloadRegion(region, tileUrls, source) {
-  let regionId = region.id;
+const FETCH_TIMEOUT_MS = 25000;
+const FETCH_RETRIES = 5;
+
+async function fetchWithTimeout(url, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const saved = await dbPut({
-      ...region,
-      tileUrls,
-      sizeBytes: region.sizeBytes || 0,
-      createdAt: region.createdAt || Date.now(),
-    });
-    regionId = typeof saved === "number" ? saved : region.id;
+    return await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchWithRetry(url, tag, maxAttempts = FETCH_RETRIES + 1) {
+  let lastErr = null;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      const res = await fetchWithTimeout(url, FETCH_TIMEOUT_MS);
+      if (res && res.ok) return res;
+      const status = res && res.status;
+      lastErr = new Error(`HTTP ${status}`);
+      // Fail fast on hard client errors. 401/403 from Mapbox are permanent
+      // token-scope failures (e.g. raster tilesets the token can't access),
+      // not transient — retrying just wastes time and blocks workers.
+      if (status && status >= 400 && status < 500 &&
+          status !== 408 && status !== 429) {
+        console.warn(`[sw ${tag}] fail http ${status} (no retry): ${url}`);
+        throw lastErr;
+      }
+      // Honor server-supplied Retry-After (seconds) when present.
+      const ra = Number(res?.headers?.get("retry-after"));
+      if (!Number.isNaN(ra) && ra > 0 && attempt < maxAttempts - 1) {
+        await new Promise((r) => setTimeout(r, Math.min(ra * 1000, 30000)));
+        continue;
+      }
+      console.warn(`[sw ${tag}] retry ${attempt + 1}/${maxAttempts} http ${status}: ${url}`);
+    } catch (err) {
+      if (err === lastErr) throw err;
+      lastErr = err;
+      console.warn(`[sw ${tag}] retry ${attempt + 1}/${maxAttempts} ${err?.name || "err"}: ${url}`);
+    }
+    if (attempt < maxAttempts - 1) {
+      // Exponential backoff with jitter: 500ms, 1s, 2s, 4s, 8s (+ 0..500ms).
+      const delay = 500 * Math.pow(2, attempt) + Math.random() * 500;
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw lastErr || new Error("fetch failed");
+}
+
+async function handleDownloadRegion(region, tileUrls, source, opts = {}) {
+  const baseTag = opts.isBase ? { isBase: true } : {};
+  const logTag = opts.isBase ? "base" : "region";
+  const isUpdate = !!opts.isUpdate && region.id != null;
+  let regionId = region.id;
+  let oldTileUrls = null;
+  try {
+    if (isUpdate) {
+      const existing = await dbGet(regionId);
+      oldTileUrls = existing?.tileUrls || [];
+    } else {
+      const now = Date.now();
+      const saved = await dbPut({
+        ...region,
+        tileUrls,
+        sizeBytes: region.sizeBytes || 0,
+        createdAt: region.createdAt || now,
+        updatedAt: now,
+      });
+      regionId = typeof saved === "number" ? saved : region.id;
+    }
 
     const cache = await caches.open(TILES_CACHE);
     const total = tileUrls.length;
     let done = 0;
     let failed = 0;
     let totalSize = 0;
-    const concurrency = 8;
+    const concurrency = 6;
     let idx = 0;
+    const startedAt = Date.now();
+    const existingKeys = new Set(
+      (await cache.keys()).map((req) => {
+        try { return normalizeCacheKey(req.url); } catch { return req.url; }
+      }),
+    );
+    console.info(
+      `[sw ${logTag}] download start id=${regionId} total=${total} concurrency=${concurrency} existing=${existingKeys.size}`,
+    );
+    postToClient(source, {
+      type: "DOWNLOAD_PROGRESS",
+      regionId,
+      done: 0,
+      total,
+      failed: 0,
+      percent: 0,
+      complete: false,
+      ...baseTag,
+    });
 
-    const worker = async () => {
+
+    const worker = async (workerIdx) => {
       while (idx < total) {
-        if (cancelledDownloads.has(regionId)) return;
+        if (cancelledDownloads.has(regionId)) {
+          console.info(`[sw ${logTag}] worker ${workerIdx} cancel (id=${regionId})`);
+          return;
+        }
         const myIdx = idx++;
         const url = tileUrls[myIdx];
         const key = normalizeCacheKey(url);
         try {
-          const existing = await cache.match(key);
-          if (existing) {
-            try {
-              const blob = await existing.clone().blob();
-              totalSize += blob.size;
-            } catch {}
-          } else {
-            const res = await fetch(url);
-            if (res && res.ok) {
-              const clone = res.clone();
-              await cache.put(key, res);
-              try {
-                const blob = await clone.blob();
-                totalSize += blob.size;
-              } catch {}
-            } else {
+          if (!existingKeys.has(key)) {
+            const res = await fetchWithRetry(url, logTag);
+            const bytes = Number(res.headers.get("content-length")) || 0;
+            totalSize += bytes;
+            existingKeys.add(key);
+            cache.put(key, res).catch((err) => {
               failed++;
-            }
+              console.warn(`[sw ${logTag}] cache.put failed #${myIdx} ${url} — ${err?.message || err}`);
+            });
+          } else {
+            // Resumed: add the cached response's size so totalSize reflects
+            // total on-disk bytes for this region, not just bytes fetched now.
+            try {
+              const cached = await cache.match(key);
+              const bytes = Number(cached?.headers.get("content-length")) || 0;
+              totalSize += bytes;
+            } catch {}
           }
-        } catch {
+        } catch (err) {
           failed++;
+          console.warn(`[sw ${logTag}] tile failed #${myIdx} ${url} — ${err?.message || err}`);
         }
         done++;
         if (done % 20 === 0 || done === total) {
+          const pct = ((done / total) * 100).toFixed(1);
+          const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
+          console.info(`[sw ${logTag}] progress ${done}/${total} (${pct}%) failed=${failed} elapsed=${elapsed}s`);
           postToClient(source, {
             type: "DOWNLOAD_PROGRESS",
             regionId,
@@ -247,16 +362,35 @@ async function handleDownloadRegion(region, tileUrls, source) {
             failed,
             percent: (done / total) * 100,
             complete: false,
+            ...baseTag,
           });
         }
       }
+      console.info(`[sw ${logTag}] worker ${workerIdx} done`);
     };
 
-    await Promise.all(Array.from({ length: concurrency }, worker));
+    await Promise.all(Array.from({ length: concurrency }, (_, i) => worker(i)));
+
+    const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
+    const endMsg = `[sw ${logTag}] download end id=${regionId} done=${done}/${total} failed=${failed} bytes=${totalSize} elapsed=${elapsed}s`;
+    if (failed > 0) {
+      console.warn(`${endMsg} \u26a0 ${failed} tile(s) failed — map will have holes. Re-download to retry.`);
+    } else {
+      console.info(endMsg);
+    }
 
     if (cancelledDownloads.has(regionId)) {
       cancelledDownloads.delete(regionId);
-      await handleDeleteRegion(regionId, tileUrls, source);
+      if (isUpdate) {
+        // Purge only tiles newly fetched by this update — keep everything the old record referenced.
+        const oldSet = new Set((oldTileUrls || []).map(normalizeCacheKey));
+        const cache = await caches.open(TILES_CACHE);
+        const toDelete = tileUrls.filter((u) => !oldSet.has(normalizeCacheKey(u)));
+        await Promise.all(toDelete.map((u) => cache.delete(normalizeCacheKey(u))));
+        // Old DB row was never overwritten — nothing to restore.
+      } else {
+        await handleDeleteRegion(regionId, tileUrls, source);
+      }
       postToClient(source, { type: "DOWNLOAD_CANCELLED", regionId });
       return;
     }
@@ -267,6 +401,7 @@ async function handleDownloadRegion(region, tileUrls, source) {
       tileUrls,
       sizeBytes: totalSize,
       createdAt: region.createdAt || Date.now(),
+      updatedAt: Date.now(),
     });
 
     postToClient(source, {
@@ -278,11 +413,53 @@ async function handleDownloadRegion(region, tileUrls, source) {
       percent: 100,
       complete: true,
       sizeBytes: totalSize,
+      ...baseTag,
     });
   } catch (err) {
     postToClient(source, {
       type: "DOWNLOAD_ERROR",
       regionId,
+      message: String(err?.message || err),
+      ...baseTag,
+    });
+  }
+}
+
+async function handleDownloadBase(region, tileUrls, source) {
+  try {
+    const all = await dbGetAll();
+    const existing = all.find((r) => r.type === "base");
+    if (existing) {
+      const cache = await caches.open(TILES_CACHE);
+      await Promise.all(
+        (existing.tileUrls || []).map((u) => cache.delete(normalizeCacheKey(u))),
+      );
+      await dbDelete(existing.id);
+    }
+  } catch {}
+  await handleDownloadRegion(
+    { ...region, type: "base" },
+    tileUrls,
+    source,
+    { isBase: true },
+  );
+}
+
+async function handleDeleteBase(source) {
+  try {
+    const all = await dbGetAll();
+    const cache = await caches.open(TILES_CACHE);
+    for (const r of all) {
+      await Promise.all(
+        (r.tileUrls || []).map((u) => cache.delete(normalizeCacheKey(u))),
+      );
+      await dbDelete(r.id);
+    }
+    postToClient(source, { type: "BASE_DELETED" });
+    postToClient(source, { type: "REGION_DELETED" });
+  } catch (err) {
+    postToClient(source, {
+      type: "DELETE_ERROR",
       message: String(err?.message || err),
     });
   }
@@ -302,6 +479,21 @@ async function handleDeleteRegion(regionId, tileUrls, source) {
   } catch (err) {
     postToClient(source, {
       type: "DELETE_ERROR",
+      regionId,
+      message: String(err?.message || err),
+    });
+  }
+}
+
+async function handleRenameRegion(regionId, name, source) {
+  try {
+    const r = await dbGet(regionId);
+    if (!r) return;
+    await dbPut({ ...r, name });
+    postToClient(source, { type: "REGION_RENAMED", regionId, name });
+  } catch (err) {
+    postToClient(source, {
+      type: "RENAME_ERROR",
       regionId,
       message: String(err?.message || err),
     });

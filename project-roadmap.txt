@@ -29,21 +29,15 @@ id | action                      | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10| 11| 1
   elapsed time in format hh:mm (do not count time in pause), on geolocate remove tost msg "recording paused",
   tracking info at bottom
 
+- tiles limits when downloading region
+- satelite tiles for base map doesn't appear
 
-- offline panel style it as features list, action icons add the middle, panel expands levels as features list
-- detail for offline maps are numbers of tiles and size (remove zoom and numbers of styles)
-- when closing new offline maps show offline maps panel
-- when downloading offline maps show offline maps panel with downloading circle
-- when the region in panel is clicked do not close panel, show rectangle area
-- side icons for offline region actions use ionics and make same backgound
-**** put descripton of offline map panel below
-
-- no sattelite and countour lines
 - no offline navigation
-
+- test different offline maps regions
 ? offline first data
 ? chrome and PWA offline maps (3D and contour line) and routing
 
+- vite.config.js - Set to true in production for logs
 - deploy version 1.3. (4), generate functionalities description
 
 ==============================================================================================================================================================
@@ -131,8 +125,8 @@ FEATURES LIST PANEL
 - on landscape - left sidebar
 - on portrait - peeking bottom sheet (minimized - max-height: 25dvh, half state - height: 50dvh, expanded - height: 75dvh)
 - action icons
-    - Sort by name (asc/desc) - ion-icon "text-outline" - not showing additional data
     - Sort by distance (asc/desc) - ion-icon name="radio-outline" - show distance from map center
+    - Sort by name (asc/desc) - ion-icon "text-outline" - not showing additional data
     - Sort by length (asc/desc) - ion-icon name="resize-outline" - show path length
     - Show/Hide Markers (toggle on/off for filtering) - ion-icon name="location-outline"
     - Show/Hide Sights (toggle on/off for filtering) - ion-icon name="pin-outline"
@@ -145,6 +139,21 @@ OFFLINE MAPS PANEL
 - opening on menu option "Offline maps"
 - on landscape - left sidebar
 - on portrait - peeking bottom sheet (minimized - max-height: 25dvh, half state - height: 50dvh, expanded - height: 75dvh)
+- action icons
+    - Sort by distance (asc/desc) - ion-icon name="radio-outline" - show distance from map center
+    - Sort by name (asc/desc) - ion-icon "text-outline" - not showing additional data
+    - Sort by date (asc/desc) - ion-icon name="time-outline" - show date when region was downloaded/updated
+    - Add region - ion-icon "add-outline"
+    - Close - ion-icon name="close-outline"
+- showing base map if is it downloaded with number of tiles and size with side action icons:
+    - Delete - ion-icon name="trash-outline"
+- list of offline regions with number of tiles and size with side icons actions
+    - Rename - ion-icon name="pencil-outline"
+    - Update - ion-icon name="refresh-outline" - when clicked show downloading circle
+    - Delete - ion-icon name="trash-outline"
+- when region is clicked center map and adjust zoom to show rectangle of that region, do not close panel 
+- when download is clicked on creating new offline region show offline maps panel with downloading circle
+- when close is clicked on creating new offline region show offline maps panel
 
 COLORS
 - https://htmlcolorcodes.com/
