@@ -77,7 +77,7 @@ const OFFLINE_MAX_ZOOM = 16;
 const BASE_MAP_MAX_ZOOM = 2;
 const REGION_MIN_ZOOM = 3;
 const WORLD_BOUNDS = { north: 85.05, south: -85.05, east: 179.9999, west: -179.9999 };
-const BASE_MAP_VERSION = 11;
+const BASE_MAP_VERSION = 12;
 
 const buildBaseMapStyleConfigs = () => [
   { styleId: MAP_STYLE_IDS.rontomap_streets_light, minZoom: 0, maxZoom: BASE_MAP_MAX_ZOOM },
@@ -4119,14 +4119,21 @@ export default function Map() {
 
   // When every panel that shifts the map camera closes, reset the map's
   // persistent padding so later flyTo/easeTo calls without an explicit
-  // padding (e.g. geolocate) land on the true viewport center.
+  // padding (e.g. geolocate) land on the true viewport center. Lock the
+  // stored center to whatever coordinate is currently at the pixel center
+  // so clearing padding doesn't visually shift the scene.
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
     if (selectedFeature || showFeaturesList || showOfflineMapsPanel) return;
-    map.easeTo({
+    const container = map.getContainer();
+    const visualCenter = map.unproject([
+      container.clientWidth / 2,
+      container.clientHeight / 2,
+    ]);
+    map.jumpTo({
+      center: visualCenter,
       padding: { top: 0, bottom: 0, left: 0, right: 0 },
-      duration: 0,
     });
   }, [selectedFeature, showFeaturesList, showOfflineMapsPanel]);
 

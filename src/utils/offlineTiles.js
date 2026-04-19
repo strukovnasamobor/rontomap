@@ -198,6 +198,10 @@ function collectFontStacks(style, configOverrides = {}) {
       extract(fonts);
     }
   }
+  // Mapbox GL JS uses this default stack for any runtime-added symbol layer
+  // that doesn't declare text-font (e.g. the path-arrow layer in Map.jsx).
+  // It never appears in the downloaded style, so include it defensively.
+  stacks.add("Open Sans Regular,Arial Unicode MS Regular");
   return stacks;
 }
 
@@ -367,11 +371,44 @@ function zoomKey(styleConfigs) {
   return `${minZoom}-${maxZoom}`;
 }
 
+// If we have no calibration for the exact zoom key, fall back to the
+// closest one we've ever recorded. Distance = |minZ-min| + |maxZ-max|.
+// Keeps first-time estimates realistic when OFFLINE_MAX_ZOOM changes
+// (e.g. 3-18 calibration answering a 3-16 query).
+function findNearestCalibration(prefix, targetZk) {
+  const target = targetZk.match(/^(\d+)-(\d+)$/);
+  if (!target) return null;
+  const targetMin = parseInt(target[1], 10);
+  const targetMax = parseInt(target[2], 10);
+  let best = null;
+  let bestDist = Infinity;
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith(`${prefix}:`)) continue;
+      const m = key.slice(prefix.length + 1).match(/^(\d+)-(\d+)$/);
+      if (!m) continue;
+      const raw = localStorage.getItem(key);
+      const v = raw ? parseFloat(raw) : NaN;
+      if (!Number.isFinite(v) || v <= 0) continue;
+      const dist = Math.abs(parseInt(m[1], 10) - targetMin) +
+        Math.abs(parseInt(m[2], 10) - targetMax);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = v;
+      }
+    }
+  } catch {}
+  return best;
+}
+
 function getCalibration(zk) {
   try {
     const raw = localStorage.getItem(`${CALIBRATION_KEY}:${zk}`);
     const v = raw ? parseFloat(raw) : NaN;
-    return Number.isFinite(v) && v > 0 ? v : DEFAULT_MULTIPLIER;
+    if (Number.isFinite(v) && v > 0) return v;
+    const nearest = findNearestCalibration(CALIBRATION_KEY, zk);
+    return nearest != null ? nearest : DEFAULT_MULTIPLIER;
   } catch {
     return DEFAULT_MULTIPLIER;
   }
@@ -388,7 +425,9 @@ function getBytesPerTile(zk) {
   try {
     const raw = localStorage.getItem(`${BYTES_CALIBRATION_KEY}:${zk}`);
     const v = raw ? parseFloat(raw) : NaN;
-    return Number.isFinite(v) && v > 0 ? v : DEFAULT_BYTES_PER_TILE;
+    if (Number.isFinite(v) && v > 0) return v;
+    const nearest = findNearestCalibration(BYTES_CALIBRATION_KEY, zk);
+    return nearest != null ? nearest : DEFAULT_BYTES_PER_TILE;
   } catch {
     return DEFAULT_BYTES_PER_TILE;
   }

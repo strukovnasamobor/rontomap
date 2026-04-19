@@ -46,7 +46,7 @@ id | action                      | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10| 11| 1
   elapsed time in format hh:mm (do not count time in pause ?), on geolocate remove tost msg "recording paused",
   tracking info at bottom
 
-- no offline routing, path creation
+- no offline routing
 - test chrome and PWA offline maps (3D and contour line) and routing
 
 - vite.config.js - Set to true in production for logs
