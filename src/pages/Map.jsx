@@ -207,7 +207,7 @@ function addMapControlTooltip(button, label, position = "left") {
 
 // Icon button used in the feature panel: shows a tooltip with the action name on
 // desktop hover and on touch long-press (long-press also suppresses the click).
-function ActionIconButton({ label, onClick, children }) {
+function ActionIconButton({ label, onClick, children, className = "action-icon-btn", ariaLabel }) {
   const [tooltipVisible, setTooltipVisible] = useState(false);
   const longPressTimerRef = useRef(null);
   const longPressFiredRef = useRef(false);
@@ -249,7 +249,8 @@ function ActionIconButton({ label, onClick, children }) {
   return (
     <button
       type="button"
-      className="action-icon-btn"
+      className={className}
+      aria-label={ariaLabel}
       onClick={handleClick}
       onMouseEnter={() => setTooltipVisible(true)}
       onMouseLeave={() => setTooltipVisible(false)}
@@ -4077,15 +4078,6 @@ export default function Map() {
       return () => {
         glowEls.forEach((el) => el.classList.remove("feature-glow"));
         if (!wasDraggable) m.setDraggable(false);
-        const container = map.getContainer();
-        const visualCenter = map.unproject([
-          container.clientWidth / 2,
-          container.clientHeight / 2,
-        ]);
-        map.jumpTo({
-          center: visualCenter,
-          padding: { top: 0, bottom: 0, left: 0, right: 0 },
-        });
       };
     }
     if (selectedFeature.type === "path") {
@@ -4120,38 +4112,9 @@ export default function Map() {
         }
         glowEls.forEach((el) => el.classList.remove("feature-glow"));
         restoreDrag.forEach((m) => m.setDraggable(false));
-        const container = map.getContainer();
-        const visualCenter = map.unproject([
-          container.clientWidth / 2,
-          container.clientHeight / 2,
-        ]);
-        map.jumpTo({
-          center: visualCenter,
-          padding: { top: 0, bottom: 0, left: 0, right: 0 },
-        });
       };
     }
   }, [selectedFeature]);
-
-  // When every panel that shifts the map camera closes, reset the map's
-  // persistent padding so later flyTo/easeTo calls without an explicit
-  // padding (e.g. geolocate) land on the true viewport center. Lock the
-  // stored center to whatever coordinate is currently at the pixel center
-  // so clearing padding doesn't visually shift the scene.
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-    if (selectedFeature || showFeaturesList || showOfflineMapsPanel) return;
-    const container = map.getContainer();
-    const visualCenter = map.unproject([
-      container.clientWidth / 2,
-      container.clientHeight / 2,
-    ]);
-    map.jumpTo({
-      center: visualCenter,
-      padding: { top: 0, bottom: 0, left: 0, right: 0 },
-    });
-  }, [selectedFeature, showFeaturesList, showOfflineMapsPanel]);
 
   // Close the feature detail panel whenever a context menu or the side menu opens
   useEffect(() => {
@@ -4290,13 +4253,14 @@ export default function Map() {
   // --- URL builders (centralized; used by all share/embed handlers) ---
 
   const buildBaseParams = () => {
-    const c = mapRef.current.getCenter();
+    const map = mapRef.current;
+    const c = map.getCenter();
     return {
       lat: c.lat.toFixed(6),
       long: c.lng.toFixed(6),
-      zoom: mapRef.current.getZoom().toFixed(2),
-      bearing: mapRef.current.getBearing().toFixed(1),
-      pitch: mapRef.current.getPitch().toFixed(1),
+      zoom: map.getZoom().toFixed(2),
+      bearing: map.getBearing().toFixed(1),
+      pitch: map.getPitch().toFixed(1),
     };
   };
 
@@ -6603,9 +6567,10 @@ export default function Map() {
     setOfflineTileEstimate({ tileCount, estimatedBytes });
   }, []);
 
-  // Lock the map to north + flat + disable rotate/tilt gestures only while
-  // the panel is open or the user is drawing an offline region. Background
-  // downloads do not lock the map — the user is free to pan/rotate/tilt.
+  // Disable rotate/tilt gestures while the panel is open or the user is
+  // drawing an offline region, so the region box math stays aligned. The
+  // camera itself is left as-is — no bearing/pitch adjustments. Background
+  // downloads do not lock the map.
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -6613,9 +6578,6 @@ export default function Map() {
     offlineFlowActiveRef.current = offlineFlowActive;
     if (!offlineFlowActive) return;
 
-    const prevBearing = map.getBearing();
-    const prevPitch = map.getPitch();
-    map.easeTo({ bearing: 0, pitch: 0, duration: 200 });
     try { map.dragRotate?.disable(); } catch {}
     try { map.touchZoomRotate?.disableRotation(); } catch {}
     try { map.touchPitch?.disable?.(); } catch {}
@@ -6627,7 +6589,6 @@ export default function Map() {
       try { map.touchZoomRotate?.enableRotation(); } catch {}
       try { map.touchPitch?.enable?.(); } catch {}
       try { map.keyboard?.enableRotation?.(); } catch {}
-      map.easeTo({ bearing: prevBearing, pitch: prevPitch, duration: 200 });
     };
   }, [showOfflineMapsPanel, isOfflineDownloadMode]);
 
@@ -7802,13 +7763,14 @@ export default function Map() {
                         strokeDashoffset={87.96 * (1 - (downloadProgress?.percent ?? 0) / 100)}
                       />
                     </svg>
-                    <button
+                    <ActionIconButton
                       className="progress-circle-cancel"
+                      ariaLabel="Cancel download"
+                      label="Stop downloading"
                       onClick={(e) => { e.stopPropagation(); handleCancelDownload(); }}
-                      aria-label="Cancel download"
                     >
                       <IonIcon icon={closeOutline} />
-                    </button>
+                    </ActionIconButton>
                   </div>
                 </div>
               )}
