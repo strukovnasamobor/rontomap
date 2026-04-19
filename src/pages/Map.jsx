@@ -4077,7 +4077,15 @@ export default function Map() {
       return () => {
         glowEls.forEach((el) => el.classList.remove("feature-glow"));
         if (!wasDraggable) m.setDraggable(false);
-        map.easeTo({ padding: { top: 0, bottom: 0, left: 0, right: 0 }, duration: 0 });
+        const container = map.getContainer();
+        const visualCenter = map.unproject([
+          container.clientWidth / 2,
+          container.clientHeight / 2,
+        ]);
+        map.jumpTo({
+          center: visualCenter,
+          padding: { top: 0, bottom: 0, left: 0, right: 0 },
+        });
       };
     }
     if (selectedFeature.type === "path") {
@@ -4112,7 +4120,15 @@ export default function Map() {
         }
         glowEls.forEach((el) => el.classList.remove("feature-glow"));
         restoreDrag.forEach((m) => m.setDraggable(false));
-        map.easeTo({ padding: { top: 0, bottom: 0, left: 0, right: 0 }, duration: 0 });
+        const container = map.getContainer();
+        const visualCenter = map.unproject([
+          container.clientWidth / 2,
+          container.clientHeight / 2,
+        ]);
+        map.jumpTo({
+          center: visualCenter,
+          padding: { top: 0, bottom: 0, left: 0, right: 0 },
+        });
       };
     }
   }, [selectedFeature]);
