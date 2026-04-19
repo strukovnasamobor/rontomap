@@ -73,11 +73,27 @@ public class DownloadPlugin extends Plugin {
 
             // Open share sheet
             if (savedUri != null) {
-                Intent shareIntent = new Intent(Intent.ACTION_SEND);
-                shareIntent.setType(mimeType);
-                shareIntent.putExtra(Intent.EXTRA_STREAM, savedUri);
-                shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                getActivity().startActivity(Intent.createChooser(shareIntent, null));
+                try {
+                    Intent shareIntent = new Intent(Intent.ACTION_SEND);
+                    shareIntent.setType(mimeType);
+                    shareIntent.putExtra(Intent.EXTRA_STREAM, savedUri);
+                    shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+
+                    Intent chooser = Intent.createChooser(shareIntent, null);
+                    chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+
+                    if (getActivity() != null) {
+                        getActivity().startActivity(chooser);
+                    } else {
+                        context.startActivity(chooser);
+                    }
+                } catch (Exception shareEx) {
+                    // File saved successfully — share sheet failed. Surface the
+                    // error to JS so the caller can toast the user instead of
+                    // silently claiming success.
+                    call.reject("Share failed: " + shareEx.getMessage());
+                    return;
+                }
             }
 
             call.resolve();

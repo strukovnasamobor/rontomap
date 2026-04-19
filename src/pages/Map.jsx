@@ -4338,14 +4338,6 @@ export default function Map() {
 
   // Always copy to clipboard; on native platforms also open the OS share sheet.
   const shareOrCopy = async ({ text, url, kind }) => {
-    try {
-      await navigator.clipboard.writeText(url || text || "");
-    } catch {
-      // Clipboard may be unavailable in some embedded contexts — fall through to share sheet anyway.
-    }
-    setToastMsg(`${kind} copied.`);
-    setTimeout(() => setToastMsg(null), 2000);
-
     if (Capacitor.isNativePlatform()) {
       try {
         await Share.share({
@@ -4354,10 +4346,19 @@ export default function Map() {
           url: url || undefined,
           dialogTitle: `Share ${kind.toLowerCase()}`,
         });
-      } catch {
-        // User canceled — clipboard copy still happened.
+        return;
+      } catch (e) {
+        console.warn("Share.share failed, falling back to clipboard:", e);
       }
     }
+
+    try {
+      await navigator.clipboard.writeText(url || text || "");
+    } catch {
+      // Clipboard may be unavailable in some embedded contexts.
+    }
+    setToastMsg(`${kind} copied.`);
+    setTimeout(() => setToastMsg(null), 2000);
   };
 
   const handleCopyLinkMarker = () => {
