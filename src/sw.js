@@ -105,9 +105,7 @@ self.addEventListener("install", (event) => {
   event.waitUntil(
     (async () => {
       const cache = await caches.open(APP_CACHE);
-      await Promise.allSettled(
-        PRECACHE_URLS.map((u) => cache.add(u).catch(() => null)),
-      );
+      await cache.addAll(PRECACHE_URLS);
       await self.skipWaiting();
     })(),
   );
@@ -167,17 +165,26 @@ async function handleMapboxRequest(request) {
 }
 
 async function handleAppRequest(request) {
+  const cache = await caches.open(APP_CACHE);
+
+  if (request.mode === "navigate") {
+    const shell =
+      (await cache.match("/index.html")) || (await cache.match("/"));
+    if (shell) {
+      fetch(request)
+        .then((res) => {
+          if (res && res.ok) cache.put("/index.html", res.clone()).catch(() => {});
+        })
+        .catch(() => {});
+      return shell;
+    }
+  }
+
   try {
     return await fetch(request);
   } catch {
-    const cache = await caches.open(APP_CACHE);
     const cached = await cache.match(request);
     if (cached) return cached;
-    if (request.mode === "navigate") {
-      const fallback =
-        (await cache.match("/")) || (await cache.match("/index.html"));
-      if (fallback) return fallback;
-    }
     return new Response("Offline", { status: 504 });
   }
 }

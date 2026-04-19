@@ -6567,10 +6567,10 @@ export default function Map() {
     setOfflineTileEstimate({ tileCount, estimatedBytes });
   }, []);
 
-  // Disable rotate/tilt gestures while the panel is open or the user is
-  // drawing an offline region, so the region box math stays aligned. The
-  // camera itself is left as-is — no bearing/pitch adjustments. Background
-  // downloads do not lock the map.
+  // Flatten the map (north + 0 pitch) and disable rotate/tilt gestures while
+  // the panel is open or the user is drawing an offline region, so the region
+  // box math stays aligned. On close, leave the camera where it is — no
+  // restore. Background downloads do not lock the map.
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -6578,6 +6578,7 @@ export default function Map() {
     offlineFlowActiveRef.current = offlineFlowActive;
     if (!offlineFlowActive) return;
 
+    map.easeTo({ bearing: 0, pitch: 0, duration: 200 });
     try { map.dragRotate?.disable(); } catch {}
     try { map.touchZoomRotate?.disableRotation(); } catch {}
     try { map.touchPitch?.disable?.(); } catch {}
