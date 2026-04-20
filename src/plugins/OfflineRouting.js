@@ -14,6 +14,9 @@ const OfflineRouting = registerPlugin("OfflineRouting", {
     async deleteRoutingData() {
       return { deleted: false };
     },
+    async cancelRoutingImport() {
+      return { cancelled: false };
+    },
     async httpGet({ url }) {
       const res = await fetch(url);
       return { ok: res.ok, status: res.status, data: await res.text() };

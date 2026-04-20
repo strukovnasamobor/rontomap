@@ -157,6 +157,21 @@ public class OfflineRoutingPlugin extends Plugin {
         }, "OfflineRouting-httpHead").start();
     }
 
+    /**
+     * Cancel an in-progress routing import. Stops {@link RoutingImportService},
+     * which sets `cancelled = true` in its onDestroy and lets the download loop
+     * bail out cleanly. A terminal `routingProgress` event with phase="cancelled"
+     * is emitted by the service before it exits.
+     */
+    @PluginMethod
+    public void cancelRoutingImport(PluginCall call) {
+        Intent i = new Intent(getContext(), RoutingImportService.class);
+        getContext().stopService(i);
+        JSObject res = new JSObject();
+        res.put("cancelled", true);
+        call.resolve(res);
+    }
+
     @PluginMethod
     public void deleteRoutingData(PluginCall call) {
         String regionId = call.getString("regionId");

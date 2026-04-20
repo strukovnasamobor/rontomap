@@ -46,12 +46,6 @@ id | action                      | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10| 11| 1
   elapsed time in format hh:mm (do not count time in pause ?), on geolocate remove tost msg "recording paused",
   tracking info at bottom
 
-OFFLINE ROUTING ON ANDROID
-- doesn't appear on web, just on Android
-- when trying to snap path to the road
-    - on web if fails because device is offline show toast msg
-    - on Android first try by offline routing, if fails try online, if that fails show toast msg
-
 - vite.config.js - Set to true in production for logs
 - deploy version 1.3. (4), generate functionalities description
 
@@ -158,6 +152,8 @@ OFFLINE MAPS PANEL
     - Sort by distance (asc/desc) - ion-icon name="radio-outline" - show distance from map center
     - Sort by name (asc/desc) - ion-icon "text-outline" - not showing additional data
     - Sort by date (asc/desc) - ion-icon name="time-outline" - show date when region was downloaded/updated
+    - Show/Hide Base Map (toggle on/off for filtering) - ion-icon name="globe-outline"
+    - Show/Hide Regions (toggle on/off for filtering) - ion-icon name="map-outline"
     - Add region - ion-icon "add-outline"
     - Close - ion-icon name="close-outline"
 - showing base map if is it downloaded with number of tiles and size with side action icons:
@@ -170,6 +166,11 @@ OFFLINE MAPS PANEL
 - when region is clicked center map and adjust zoom to show rectangle of that region, do not close panel 
 - when download is clicked on creating new offline region show offline maps panel with downloading circle
 - when close is clicked on creating new offline region show offline maps panel
+- only on Android: show Routings data with search icon that suggests data for current view
+and list of suggested regions (side action: install) and then installed routing data (side actions: update, delete)
+- when trying to snap the path to the road
+    - on web if it fails because of device is offline then show toast msg
+    - on Android first try using offline routing, if fails try online, if that fails then show toast msg
 
 COLORS
 - https://htmlcolorcodes.com/
@@ -213,6 +214,18 @@ COLORS
     - start point (circle) - #0000ff
     - end point (rectangle) - #0000ff
     - segments - #0000ff
+
+MAPBOX ROAD COLORS
+- motorway (motorway, motorway_link) - #14b840
+- motor vehicle
+	- trunk (trunk, trunk_link) - #60709f
+	- primary (primary, primary_link) - #60709f
+	- secondary-tertiary (secondary, secondary_link, tertiary, tertiary_link) - #9fa9c6
+	- street (street, street_limited) - #9fa9c6
+- track (track - agricultural and forest roads) - #D2D7E4
+- path-cycleway (cycleway, mountain_bike) - #00ccb8
+- path (not cycleway, mountain_bike) - #ffffff
+- road-pedestrian (pedestrian & line) - #ffffff
 
 IMPORT/EXPORT FEATURES
 - import map features (support: RontoJSON, GeoJSON, GPX, KML, FIT)

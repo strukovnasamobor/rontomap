@@ -128,6 +128,12 @@ public class GraphHopperManager {
                 info.put("id", child.getName());
                 info.put("sizeBytes", sizeOf(child));
                 info.put("profiles", new JSONArray(new String[]{"car", "bike", "foot"}));
+                // Prefer the `properties` file mtime — it's written at the end of
+                // a successful import, so reflects the graph's age rather than any
+                // later touch to the folder.
+                long ts = props.lastModified();
+                if (ts <= 0) ts = child.lastModified();
+                info.put("updatedAt", ts);
                 GraphHopper gh = loadIfExists(child.getName());
                 if (gh != null) {
                     BBox b = gh.getBaseGraph().getBounds();

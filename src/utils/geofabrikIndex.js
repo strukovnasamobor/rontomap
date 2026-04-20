@@ -170,6 +170,7 @@ export async function suggestRegions(bounds) {
           name: f.properties.name,
           parent: f.properties.parent,
           pbfUrl: f.properties.urls.pbf,
+          bbox: fb,
         });
         break;
       }
@@ -177,6 +178,18 @@ export async function suggestRegions(bounds) {
   }
 
   return Array.from(matched.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Look up the PBF URL for a region by its Geofabrik id. Used by the "update"
+ * action on an installed routing region to re-trigger the download without
+ * re-running region suggestion.
+ */
+export async function pbfUrlForRegion(regionId) {
+  if (!regionId) return null;
+  const index = await fetchGeofabrikIndex();
+  const feature = index.features.find((f) => f.properties?.id === regionId);
+  return feature?.properties?.urls?.pbf || null;
 }
 
 /**

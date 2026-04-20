@@ -112,10 +112,10 @@ public class RoutingImportService extends Service {
             pbfFile = new File(cacheDir, regionId + ".osm.pbf");
 
             downloadPbf(regionId, pbfUrl, pbfFile);
-            if (cancelled) { cleanup(pbfFile); return; }
+            if (cancelled) { emitCancelled(regionId); cleanup(pbfFile); return; }
 
             importGraph(regionId, pbfFile);
-            if (cancelled) { cleanup(pbfFile); return; }
+            if (cancelled) { emitCancelled(regionId); cleanup(pbfFile); return; }
 
             cleanup(pbfFile);
             ProgressBus.emit(regionId, "done", 0, 0, 100, "Routing data ready");
@@ -126,20 +126,33 @@ public class RoutingImportService extends Service {
                 "Out of memory — region too large for this device. Try a smaller PBF.");
             updateNotification("Routing import failed (OOM): " + regionId, 0, 0, false);
         } catch (Throwable t) {
-            // Catch Throwable (not just Exception) so Errors like NoClassDefFoundError /
-            // UnsatisfiedLinkError are surfaced to the UI instead of killing the process.
-            Log.e(TAG, "import failed for " + regionId, t);
-            String msg = t.getMessage();
-            if (msg == null || msg.isEmpty()) msg = t.getClass().getName();
-            // Include the first stack frame so the user can copy something actionable.
-            StackTraceElement[] st = t.getStackTrace();
-            if (st != null && st.length > 0) msg = msg + " @ " + st[0].toString();
-            ProgressBus.emit(regionId, "error", 0, 0, 0, msg);
-            updateNotification("Routing import failed: " + regionId, 0, 0, false);
+            // If we were cancelled, the download loop throws "Cancelled" — emit
+            // a distinct "cancelled" phase so the UI can say so rather than show
+            // a generic error.
+            if (cancelled) {
+                emitCancelled(regionId);
+                cleanup(pbfFile);
+            } else {
+                // Catch Throwable (not just Exception) so Errors like NoClassDefFoundError /
+                // UnsatisfiedLinkError are surfaced to the UI instead of killing the process.
+                Log.e(TAG, "import failed for " + regionId, t);
+                String msg = t.getMessage();
+                if (msg == null || msg.isEmpty()) msg = t.getClass().getName();
+                // Include the first stack frame so the user can copy something actionable.
+                StackTraceElement[] st = t.getStackTrace();
+                if (st != null && st.length > 0) msg = msg + " @ " + st[0].toString();
+                ProgressBus.emit(regionId, "error", 0, 0, 0, msg);
+                updateNotification("Routing import failed: " + regionId, 0, 0, false);
+            }
         } finally {
             try { stopForeground(STOP_FOREGROUND_DETACH); } catch (Throwable ignored) {}
             stopSelf();
         }
+    }
+
+    private void emitCancelled(String regionId) {
+        ProgressBus.emit(regionId, "cancelled", 0, 0, 0, "Download cancelled");
+        updateNotification("Routing download cancelled: " + regionId, 0, 0, false);
     }
 
     private void downloadPbf(String regionId, String url, File target) throws Exception {
@@ -183,16 +196,24 @@ public class RoutingImportService extends Service {
         ProgressBus.emit(regionId, "downloading", target.length(), target.length(), 100, "Download complete");
     }
 
-    private void importGraph(String regionId, File pbfFile) {
+    private void importGraph(String regionId, File pbfFile) throws Exception {
         ProgressBus.emit(regionId, "importing", 0, 0, -1, "Building routing graph… 0s elapsed");
         updateNotification("Importing " + regionId + "… (this can take a while)", 0, 0, true);
 
         GraphHopperManager manager = GraphHopperManager.get(getApplicationContext());
-        // Unload any in-memory instance so importOrLoad can recreate the folder.
-        manager.unload(regionId);
+        // Backup-then-import: if there's an existing graph, stage it aside as
+        // {regionId}.backup. On import failure we restore from the backup so an
+        // aborted update doesn't destroy the user's working graph.
         File graphDir = manager.graphDirFor(regionId);
-        if (graphDir.exists()) {
-            deleteRecursive(graphDir);
+        File backupDir = new File(graphDir.getParentFile(), graphDir.getName() + ".backup");
+        boolean hasOld = graphDir.exists();
+
+        manager.unload(regionId);
+        if (hasOld) {
+            if (backupDir.exists()) deleteRecursive(backupDir);
+            if (!graphDir.renameTo(backupDir)) {
+                throw new RuntimeException("Could not stage backup of existing graph at " + graphDir);
+            }
         }
         graphDir.mkdirs();
 
@@ -218,6 +239,20 @@ public class RoutingImportService extends Service {
             GraphHopper hopper = manager.newConfigured(graphDir, pbfFile.getAbsolutePath());
             hopper.importOrLoad();
             manager.registerLoaded(regionId, hopper);
+            // Success — drop the backup.
+            if (hasOld) deleteRecursive(backupDir);
+        } catch (Throwable t) {
+            // Restore the previous graph so an aborted update leaves the user
+            // with a working installation.
+            deleteRecursive(graphDir);
+            if (hasOld) {
+                if (!backupDir.renameTo(graphDir)) {
+                    Log.e(TAG, "Could not restore backup graph for " + regionId + " from " + backupDir);
+                }
+            }
+            if (t instanceof RuntimeException) throw (RuntimeException) t;
+            if (t instanceof Error) throw (Error) t;
+            throw new RuntimeException(t);
         } finally {
             heartbeat.interrupt();
         }

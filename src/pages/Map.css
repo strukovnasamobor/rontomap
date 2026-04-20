@@ -1044,6 +1044,19 @@ ion-icon.mapboxgl-ctrl-geocoder--icon-search {
 .panel-dark .progress-circle-track { stroke: rgba(255, 255, 255, 0.15); }
 .panel-dark .progress-circle-cancel { color: #eee; }
 
+.progress-circle svg.progress-circle-indeterminate {
+  animation: progress-circle-spin 1s linear infinite;
+}
+.progress-circle svg.progress-circle-indeterminate .progress-circle-fill {
+  transition: none;
+}
+@keyframes progress-circle-spin {
+  from { transform: rotate(-90deg); }
+  to { transform: rotate(270deg); }
+}
+
+.panel-actions .action-icon-btn.panel-filter-off { opacity: 0.35; }
+
 .panel-list-icon {
   font-size: 16px;
   flex-shrink: 0;

@@ -3,7 +3,7 @@ import PageFixedLayout from "../components/PageFixedLayout";
 import Fullscreen from "../plugins/Fullscreen";
 import OfflineRouting from "../plugins/OfflineRouting";
 import { calculateTileUrls, estimateOfflineDownload, recordActualDownload } from "../utils/offlineTiles";
-import { suggestRegions as suggestGeofabrikRegions, headPbfSize, formatBytes as formatBytesGeofabrik } from "../utils/geofabrikIndex";
+import { suggestRegions as suggestGeofabrikRegions, headPbfSize, formatBytes as formatBytesGeofabrik, pbfUrlForRegion } from "../utils/geofabrikIndex";
 import { useIonViewWillEnter, IonAlert, IonIcon } from "@ionic/react";
 import {
   locateOutline,
@@ -403,6 +403,10 @@ export default function Map() {
   const [offlineBaseMap, setOfflineBaseMap] = useState(null);
   const [offlineBaseDeleteAlert, setOfflineBaseDeleteAlert] = useState(false);
   const [offlineSort, setOfflineSort] = useState("dist-asc");
+  // Panel-level visibility toggles. Routing is always visible; only base map
+  // and regions can be hidden via the filter icons in the panel header.
+  const [offlineShowBase, setOfflineShowBase] = useState(true);
+  const [offlineShowRegions, setOfflineShowRegions] = useState(true);
   const [shownRegionId, setShownRegionId] = useState(null);
   const [renameRegionTarget, setRenameRegionTarget] = useState(null);
 
@@ -1103,7 +1107,10 @@ export default function Map() {
     const SNAP_PROFILES = { foot: "walking", bike: "cycling", car: "driving" };
     const AVG_SPEEDS = { foot: 1.4, bike: 4.2, car: 13.9 }; // m/s (~5, ~15, ~50 km/h)
 
-    // Fetch directions for a list of vertices, handling the 25-waypoint batch limit
+    // Fetch directions for a list of vertices, handling the 25-waypoint batch limit.
+    // Android tries offline GraphHopper first, then falls back to Mapbox. Web uses
+    // Mapbox only. On total failure, returns { coords: null, reason } so the caller
+    // can raise a platform-appropriate toast before rendering straight lines.
     const fetchDirections = async (verts, profile) => {
       const MAX = 25;
       const batches = [];
@@ -1114,32 +1121,37 @@ export default function Map() {
       const allCoords = [];
       let totalDistance = 0;
       let totalDuration = 0;
+      const isOffline = typeof navigator !== "undefined" && navigator.onLine === false;
       for (const batch of batches) {
-        const coords = batch.map((v) => v.lngLat.join(",")).join(";");
         let data = null;
-        const isOffline = typeof navigator !== "undefined" && navigator.onLine === false;
-        if (!isOffline) {
-          try {
-            const res = await fetch(
-              `https://api.mapbox.com/directions/v5/mapbox/${profile}/${coords}?geometries=geojson&overview=full&access_token=${mapboxgl.accessToken}`,
-            );
-            data = await res.json();
-          } catch {
-            data = null;
-          }
-        }
-        if (!data && isNativeAndroid()) {
+
+        if (isNativeAndroid()) {
           try {
             const waypoints = batch.map((v) => ({ lng: v.lngLat[0], lat: v.lngLat[1] }));
             const result = await OfflineRouting.route({
               profile,
               waypoints: JSON.stringify(waypoints),
             });
-            data = JSON.parse(result.data);
+            const parsed = JSON.parse(result.data);
+            if (parsed && parsed.routes && parsed.routes.length > 0) data = parsed;
           } catch {
             data = null;
           }
         }
+
+        if ((!data || !data.routes || data.routes.length === 0) && !isOffline) {
+          try {
+            const coords = batch.map((v) => v.lngLat.join(",")).join(";");
+            const res = await fetch(
+              `https://api.mapbox.com/directions/v5/mapbox/${profile}/${coords}?geometries=geojson&overview=full&access_token=${mapboxgl.accessToken}`,
+            );
+            const parsed = await res.json();
+            if (parsed && parsed.routes && parsed.routes.length > 0) data = parsed;
+          } catch {
+            data = null;
+          }
+        }
+
         if (data && data.routes && data.routes.length > 0) {
           const route = data.routes[0];
           const routeCoords = route.geometry.coordinates;
@@ -1147,7 +1159,10 @@ export default function Map() {
           totalDistance += route.distance || 0;
           totalDuration += route.duration || 0;
         } else {
-          return null;
+          const reason = isNativeAndroid()
+            ? (isOffline ? "no-offline-data" : "no-source")
+            : (isOffline ? "offline" : "network");
+          return { coords: null, reason };
         }
       }
       return { coords: allCoords, distance: totalDistance, duration: totalDuration };
@@ -1190,6 +1205,7 @@ export default function Map() {
         const segments = [];
         let pathDistance = 0;
         let pathDuration = 0;
+        let snapFailReason = null;
         const speed = AVG_SPEEDS[path.roadSnap] || AVG_SPEEDS.car;
         const addStraightLine = (coords) => {
           const d = haversineDistance(coords);
@@ -1204,7 +1220,7 @@ export default function Map() {
           } else {
             const runVerts = run.indices.map((i) => verts[i]);
             const result = await fetchDirections(runVerts, profile);
-            if (result) {
+            if (result && result.coords) {
               pathDistance += result.distance;
               pathDuration += result.duration;
               // Add direct red segment from first vertex to snapped start if they differ
@@ -1228,8 +1244,20 @@ export default function Map() {
               const fallbackCoords = runVerts.map((v) => v.lngLat);
               segments.push({ type: "fallback", coords: fallbackCoords });
               addStraightLine(fallbackCoords);
+              if (result && result.reason && !snapFailReason) snapFailReason = result.reason;
             }
           }
+        }
+        if (snapFailReason) {
+          const msg = snapFailReason === "offline"
+            ? "You're offline \u2014 path not snapped to road."
+            : snapFailReason === "no-offline-data"
+              ? "Couldn't snap path: no offline data and no network."
+              : snapFailReason === "no-source"
+                ? "Couldn't snap path: offline routing missed and network failed."
+                : "Couldn't snap path: network error.";
+          setToastMsg(msg);
+          setTimeout(() => setToastMsg(null), 4000);
         }
         path.snappedSegments = segments;
         path.routeDistance = pathDistance;
@@ -6543,6 +6571,11 @@ export default function Map() {
           setToastMsg(`Routing import failed: ${ev.message || "unknown error"}`);
           setTimeout(() => setToastMsg(null), 15000);
           setTimeout(() => setRoutingProgress(null), 1500);
+        } else if (ev?.phase === "cancelled") {
+          setToastMsg("Routing download cancelled.");
+          setTimeout(() => setToastMsg(null), 3000);
+          setRoutingProgress(null);
+          refreshRoutingRegions();
         }
       });
     })();
@@ -6609,6 +6642,34 @@ export default function Map() {
       console.warn("deleteRoutingData failed", err);
     }
   }, [refreshRoutingRegions]);
+
+  const handleCancelRoutingDownload = useCallback(async () => {
+    if (!isNativeAndroid()) return;
+    try {
+      await OfflineRouting.cancelRoutingImport();
+    } catch (err) {
+      console.warn("cancelRoutingImport failed", err);
+    }
+  }, []);
+
+  const handleUpdateRoutingRegion = useCallback(async (regionId) => {
+    if (!isNativeAndroid()) return;
+    try {
+      const pbfUrl = await pbfUrlForRegion(regionId);
+      if (!pbfUrl) {
+        setToastMsg("Could not look up region URL for update.");
+        setTimeout(() => setToastMsg(null), 3000);
+        return;
+      }
+      setRoutingProgress({ regionId, phase: "downloading", pct: 0 });
+      await OfflineRouting.downloadRoutingData({ regionId, pbfUrl });
+    } catch (err) {
+      console.warn("updateRoutingRegion failed", err);
+      setToastMsg(`Routing update failed: ${err.message || err}`);
+      setTimeout(() => setToastMsg(null), 3000);
+      setRoutingProgress(null);
+    }
+  }, []);
 
   const boundsToPolygon = (b) => ({
     type: "FeatureCollection",
@@ -7779,6 +7840,22 @@ export default function Map() {
           const t = r?.updatedAt || r?.createdAt;
           return t ? new Date(t).toLocaleDateString() : null;
         };
+        const distToBbox = (bbox) => {
+          if (!bbox || !mapCenter) return 0;
+          const lat = (bbox.north + bbox.south) / 2;
+          const lng = (bbox.east + bbox.west) / 2;
+          return haversinePoint(mapCenter.lat, mapCenter.lng, lat, lng);
+        };
+        const sortedRoutingRegions = [...routingRegions].sort((a, b) => {
+          if (offSortField === "name") return dir * ((a.name || a.id || "").localeCompare(b.name || b.id || ""));
+          if (offSortField === "dist") return dir * (distToBbox(a.bbox) - distToBbox(b.bbox));
+          return dir * ((a.updatedAt || 0) - (b.updatedAt || 0));
+        });
+        // Suggestions have no updatedAt; for date-sort we fall back to name-sort to keep stable UX.
+        const sortedRoutingSuggestions = [...routingSuggestions].sort((a, b) => {
+          if (offSortField === "dist") return dir * (distToBbox(a.bbox) - distToBbox(b.bbox));
+          return dir * ((a.name || a.id || "").localeCompare(b.name || b.id || ""));
+        });
         const baseMapBlock = offlineBaseMap && (
           <div key="base" className="panel-list-item panel-list-item-base">
             <IonIcon icon={globeOutline} className="panel-list-icon" />
@@ -7830,6 +7907,20 @@ export default function Map() {
                 <IonIcon icon={timeOutline} />
                 {offSortField === "date" && <IonIcon icon={offSortDir === "asc" ? chevronUpOutline : chevronDownOutline} className="sort-dir-icon" />}
               </ActionIconButton>
+              <ActionIconButton
+                label={offlineShowBase ? "Hide base map" : "Show base map"}
+                onClick={() => setOfflineShowBase((v) => !v)}
+                className={`action-icon-btn${offlineShowBase ? "" : " panel-filter-off"}`}
+              >
+                <IonIcon icon={globeOutline} />
+              </ActionIconButton>
+              <ActionIconButton
+                label={offlineShowRegions ? "Hide regions" : "Show regions"}
+                onClick={() => setOfflineShowRegions((v) => !v)}
+                className={`action-icon-btn${offlineShowRegions ? "" : " panel-filter-off"}`}
+              >
+                <IonIcon icon={mapOutline} />
+              </ActionIconButton>
               <ActionIconButton label="Add region" onClick={handleStartOfflineDownload}>
                 <IonIcon icon={addOutline} />
               </ActionIconButton>
@@ -7838,7 +7929,8 @@ export default function Map() {
               </ActionIconButton>
             </div>
             <div className="panel-list-items">
-              {offSortField !== "dist" && baseMapBlock}
+              {/* Base map row is structurally pinned first; routing section is pinned last. Sort state reorders the middle regions list only. */}
+              {offlineShowBase && baseMapBlock}
               {downloadingRegion && (
                 <div
                   className={`panel-list-item panel-list-item-downloading${shownRegionId === "__downloading__" ? " panel-list-item-active" : ""}`}
@@ -7874,48 +7966,49 @@ export default function Map() {
                   </div>
                 </div>
               )}
-              {offlineRegions.length === 0 && !offlineBaseMap && !downloadingRegion ? (
-                <div className="panel-list-empty">No offline maps yet.</div>
-              ) : (
-                sortedRegions.map((r) => (
-                  <div
-                    key={r.id}
-                    className={`panel-list-item${shownRegionId === r.id ? " panel-list-item-active" : ""}`}
-                    onClick={() => handleOfflineRegionClick(r)}
-                  >
-                    <IonIcon icon={mapOutline} className="panel-list-icon" />
-                    <div className="panel-list-text">
-                      <span className="panel-list-name">{r.name}</span>
-                      <span className="panel-list-info">
-                        {`${(r.tileCount ?? 0).toLocaleString()} tiles \u00b7 ${formatBytes(r.sizeBytes)}`}
-                        {offSortField === "date" && formatRegionDate(r) && <> {"\u00b7 "}{formatRegionDate(r)}</>}
-                        {offSortField === "dist" && mapCenter && (
-                          <> {"\u00b7 "}{formatDistance(distToCenter(r))}</>
-                        )}
-                      </span>
+              {offlineShowRegions && (
+                offlineRegions.length === 0 && !offlineBaseMap && !downloadingRegion ? (
+                  <div className="panel-list-empty">No offline maps yet.</div>
+                ) : (
+                  sortedRegions.map((r) => (
+                    <div
+                      key={r.id}
+                      className={`panel-list-item${shownRegionId === r.id ? " panel-list-item-active" : ""}`}
+                      onClick={() => handleOfflineRegionClick(r)}
+                    >
+                      <IonIcon icon={mapOutline} className="panel-list-icon" />
+                      <div className="panel-list-text">
+                        <span className="panel-list-name">{r.name}</span>
+                        <span className="panel-list-info">
+                          {`${(r.tileCount ?? 0).toLocaleString()} tiles \u00b7 ${formatBytes(r.sizeBytes)}`}
+                          {offSortField === "date" && formatRegionDate(r) && <> {"\u00b7 "}{formatRegionDate(r)}</>}
+                          {offSortField === "dist" && mapCenter && (
+                            <> {"\u00b7 "}{formatDistance(distToCenter(r))}</>
+                          )}
+                        </span>
+                      </div>
+                      <ActionIconButton
+                        label="Rename"
+                        onClick={(e) => { e.stopPropagation(); setRenameRegionTarget(r); }}
+                      >
+                        <IonIcon icon={pencilOutline} />
+                      </ActionIconButton>
+                      <ActionIconButton
+                        label="Update"
+                        onClick={(e) => { e.stopPropagation(); handleUpdateOfflineRegion(r); }}
+                      >
+                        <IonIcon icon={refreshOutline} />
+                      </ActionIconButton>
+                      <ActionIconButton
+                        label="Delete"
+                        onClick={(e) => { e.stopPropagation(); handleDeleteOfflineRegion(r); }}
+                      >
+                        <IonIcon icon={trashOutline} />
+                      </ActionIconButton>
                     </div>
-                    <ActionIconButton
-                      label="Rename"
-                      onClick={(e) => { e.stopPropagation(); setRenameRegionTarget(r); }}
-                    >
-                      <IonIcon icon={pencilOutline} />
-                    </ActionIconButton>
-                    <ActionIconButton
-                      label="Update"
-                      onClick={(e) => { e.stopPropagation(); handleUpdateOfflineRegion(r); }}
-                    >
-                      <IonIcon icon={refreshOutline} />
-                    </ActionIconButton>
-                    <ActionIconButton
-                      label="Delete"
-                      onClick={(e) => { e.stopPropagation(); handleDeleteOfflineRegion(r); }}
-                    >
-                      <IonIcon icon={trashOutline} />
-                    </ActionIconButton>
-                  </div>
-                ))
+                  ))
+                )
               )}
-              {offSortField === "dist" && baseMapBlock}
               {isNativeAndroid() && (
                 <div className="panel-list-item" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -7933,40 +8026,116 @@ export default function Map() {
                       <IonIcon icon={searchOutline} />
                     </ActionIconButton>
                   </div>
-                  {routingRegions.map((r) => (
-                    <div key={`installed-${r.id}`} style={{ display: "flex", alignItems: "center", gap: 8, paddingLeft: 28 }}>
-                      <div className="panel-list-text" style={{ flex: 1 }}>
-                        <span className="panel-list-name">{r.id}</span>
-                        <span className="panel-list-info">{formatBytesGeofabrik(r.sizeBytes)} · car, bike, foot</span>
-                      </div>
-                      <ActionIconButton
-                        label="Delete routing data"
-                        onClick={(e) => { e.stopPropagation(); handleDeleteRoutingRegion(r.id); }}
-                      >
-                        <IonIcon icon={trashOutline} />
-                      </ActionIconButton>
-                    </div>
-                  ))}
-                  {routingSuggestions.map((s) => {
-                    const installed = routingRegions.some((r) => r.id === s.id);
-                    const active = routingProgress?.regionId === s.id;
+                  {sortedRoutingSuggestions
+                    .filter((s) => !routingRegions.some((r) => r.id === s.id))
+                    .map((s) => {
+                      const active = routingProgress?.regionId === s.id;
+                      const pct = active ? routingProgress.pct : null;
+                      const indeterminate = active && pct != null && pct < 0;
+                      const ringOffset = active && pct >= 0 ? 87.96 * (1 - pct / 100) : 87.96;
+                      return (
+                        <div key={`suggest-${s.id}`} style={{ display: "flex", alignItems: "center", gap: 8, paddingLeft: 28 }}>
+                          <div className="panel-list-text" style={{ flex: 1 }}>
+                            <span className="panel-list-name">{s.name}</span>
+                            <span className="panel-list-info">
+                              {formatBytesGeofabrik(s.sizeBytes)} PBF
+                              {active && ` \u00b7 ${pct >= 0 ? `${routingProgress.phase} ${pct}%` : (routingProgress.message || routingProgress.phase)}`}
+                              {offSortField === "dist" && mapCenter && s.bbox && (
+                                <> {"\u00b7 "}{formatDistance(distToBbox(s.bbox))}</>
+                              )}
+                            </span>
+                          </div>
+                          {active ? (
+                            <div className="progress-circle">
+                              <svg viewBox="0 0 36 36" className={indeterminate ? "progress-circle-indeterminate" : undefined}>
+                                <circle cx="18" cy="18" r="14" className="progress-circle-track" />
+                                <circle
+                                  cx="18"
+                                  cy="18"
+                                  r="14"
+                                  className="progress-circle-fill"
+                                  strokeDasharray="87.96"
+                                  strokeDashoffset={indeterminate ? 65.97 : ringOffset}
+                                />
+                              </svg>
+                              <ActionIconButton
+                                className="progress-circle-cancel"
+                                ariaLabel="Cancel routing download"
+                                label="Stop downloading"
+                                onClick={(e) => { e.stopPropagation(); handleCancelRoutingDownload(); }}
+                              >
+                                <IonIcon icon={closeOutline} />
+                              </ActionIconButton>
+                            </div>
+                          ) : (
+                            <ActionIconButton
+                              label="Download routing data"
+                              onClick={(e) => { e.stopPropagation(); handleDownloadRoutingRegion(s); }}
+                            >
+                              <IonIcon icon={downloadOutline} />
+                            </ActionIconButton>
+                          )}
+                        </div>
+                      );
+                    })}
+                  {sortedRoutingRegions.map((r) => {
+                    const active = routingProgress?.regionId === r.id;
+                    const pct = active ? routingProgress.pct : null;
+                    const indeterminate = active && pct != null && pct < 0;
+                    const ringOffset = active && pct >= 0 ? 87.96 * (1 - pct / 100) : 87.96;
+                    const dateLabel = offSortField === "date" && r.updatedAt
+                      ? new Date(r.updatedAt).toLocaleDateString()
+                      : null;
                     return (
-                      <div key={`suggest-${s.id}`} style={{ display: "flex", alignItems: "center", gap: 8, paddingLeft: 28 }}>
+                      <div key={`installed-${r.id}`} style={{ display: "flex", alignItems: "center", gap: 8, paddingLeft: 28 }}>
                         <div className="panel-list-text" style={{ flex: 1 }}>
-                          <span className="panel-list-name">{s.name}</span>
+                          <span className="panel-list-name">{r.name || r.id}</span>
                           <span className="panel-list-info">
-                            {formatBytesGeofabrik(s.sizeBytes)} PBF
-                            {active && ` · ${routingProgress.pct >= 0 ? `${routingProgress.phase} ${routingProgress.pct}%` : (routingProgress.message || routingProgress.phase)}`}
-                            {installed && " · installed"}
+                            {formatBytesGeofabrik(r.sizeBytes)}{" \u00b7 car, bike, foot"}
+                            {dateLabel && <> {"\u00b7 "}{dateLabel}</>}
+                            {offSortField === "dist" && mapCenter && r.bbox && (
+                              <> {"\u00b7 "}{formatDistance(distToBbox(r.bbox))}</>
+                            )}
+                            {active && ` \u00b7 ${pct >= 0 ? `${routingProgress.phase} ${pct}%` : (routingProgress.message || routingProgress.phase)}`}
                           </span>
                         </div>
-                        {!installed && (
-                          <ActionIconButton
-                            label={active ? "In progress" : "Download routing data"}
-                            onClick={(e) => { e.stopPropagation(); if (!active) handleDownloadRoutingRegion(s); }}
-                          >
-                            <IonIcon icon={downloadOutline} />
-                          </ActionIconButton>
+                        {active ? (
+                          <div className="progress-circle">
+                            <svg viewBox="0 0 36 36" className={indeterminate ? "progress-circle-indeterminate" : undefined}>
+                              <circle cx="18" cy="18" r="14" className="progress-circle-track" />
+                              <circle
+                                cx="18"
+                                cy="18"
+                                r="14"
+                                className="progress-circle-fill"
+                                strokeDasharray="87.96"
+                                strokeDashoffset={indeterminate ? 65.97 : ringOffset}
+                              />
+                            </svg>
+                            <ActionIconButton
+                              className="progress-circle-cancel"
+                              ariaLabel="Cancel routing download"
+                              label="Stop downloading"
+                              onClick={(e) => { e.stopPropagation(); handleCancelRoutingDownload(); }}
+                            >
+                              <IonIcon icon={closeOutline} />
+                            </ActionIconButton>
+                          </div>
+                        ) : (
+                          <>
+                            <ActionIconButton
+                              label="Update routing data"
+                              onClick={(e) => { e.stopPropagation(); handleUpdateRoutingRegion(r.id); }}
+                            >
+                              <IonIcon icon={refreshOutline} />
+                            </ActionIconButton>
+                            <ActionIconButton
+                              label="Delete routing data"
+                              onClick={(e) => { e.stopPropagation(); handleDeleteRoutingRegion(r.id); }}
+                            >
+                              <IonIcon icon={trashOutline} />
+                            </ActionIconButton>
+                          </>
                         )}
                       </div>
                     );
