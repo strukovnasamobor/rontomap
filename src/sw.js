@@ -101,11 +101,33 @@ function normalizeCacheKey(url) {
   }
 }
 
+// App shell — the minimum set that must be cached before activation so the
+// first offline launch can boot. Everything else in PRECACHE_URLS is filled
+// in the background after activation to keep install fast (avoids a race
+// where the user refreshes while install is still fetching all assets).
+const SHELL_URLS = ["/index.html", "/"];
+
+// Fetch a URL and store it without the "redirected" flag. If the server
+// redirects (e.g. "/" → "/index.html" via Firebase Hosting's clean URLs),
+// the resulting Response has redirected=true, which Chrome refuses to serve
+// for navigation requests (redirect mode "manual"). Rebuilding the Response
+// from its body strips that flag.
+async function cachePutClean(cache, url) {
+  const response = await fetch(url, { redirect: "follow" });
+  if (!response.ok) throw new Error(`${url}: ${response.status}`);
+  const clean = new Response(await response.blob(), {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+  await cache.put(url, clean);
+}
+
 self.addEventListener("install", (event) => {
   event.waitUntil(
     (async () => {
       const cache = await caches.open(APP_CACHE);
-      await cache.addAll(PRECACHE_URLS);
+      await Promise.allSettled(SHELL_URLS.map((u) => cachePutClean(cache, u)));
       await self.skipWaiting();
     })(),
   );
@@ -121,6 +143,14 @@ self.addEventListener("activate", (event) => {
           .map((k) => caches.delete(k)),
       );
       await self.clients.claim();
+      // Fire-and-forget: fill the rest of the precache without blocking
+      // activation. Failures here only degrade offline-readiness.
+      const cache = await caches.open(APP_CACHE);
+      Promise.allSettled(
+        PRECACHE_URLS.filter((u) => !SHELL_URLS.includes(u)).map((u) =>
+          cachePutClean(cache, u),
+        ),
+      );
     })(),
   );
 });
@@ -171,11 +201,7 @@ async function handleAppRequest(request) {
     const shell =
       (await cache.match("/index.html")) || (await cache.match("/"));
     if (shell) {
-      fetch(request)
-        .then((res) => {
-          if (res && res.ok) cache.put("/index.html", res.clone()).catch(() => {});
-        })
-        .catch(() => {});
+      cachePutClean(cache, "/index.html").catch(() => {});
       return shell;
     }
   }

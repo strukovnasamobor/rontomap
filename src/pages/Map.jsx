@@ -3,6 +3,7 @@ import PageFixedLayout from "../components/PageFixedLayout";
 import Fullscreen from "../plugins/Fullscreen";
 import OfflineRouting from "../plugins/OfflineRouting";
 import { calculateTileUrls, estimateOfflineDownload, recordActualDownload } from "../utils/offlineTiles";
+import { suggestRegions as suggestGeofabrikRegions, headPbfSize, formatBytes as formatBytesGeofabrik } from "../utils/geofabrikIndex";
 import { useIonViewWillEnter, IonAlert, IonIcon } from "@ionic/react";
 import {
   locateOutline,
@@ -404,6 +405,13 @@ export default function Map() {
   const [offlineSort, setOfflineSort] = useState("dist-asc");
   const [shownRegionId, setShownRegionId] = useState(null);
   const [renameRegionTarget, setRenameRegionTarget] = useState(null);
+
+  // Offline routing (Android only) — installed graphs + Geofabrik suggestions
+  const [routingRegions, setRoutingRegions] = useState([]);
+  const [routingSuggestions, setRoutingSuggestions] = useState([]);
+  const [routingSuggestLoading, setRoutingSuggestLoading] = useState(false);
+  const [routingProgress, setRoutingProgress] = useState(null);
+
   const offlineRegionHighlightCleanupRef = useRef(null);
   const offlineDownloadModeRef = useRef(false);
   const offlineFlowActiveRef = useRef(false);
@@ -1109,23 +1117,27 @@ export default function Map() {
       for (const batch of batches) {
         const coords = batch.map((v) => v.lngLat.join(",")).join(";");
         let data = null;
-        try {
-          const res = await fetch(
-            `https://api.mapbox.com/directions/v5/mapbox/${profile}/${coords}?geometries=geojson&overview=full&access_token=${mapboxgl.accessToken}`,
-          );
-          data = await res.json();
-        } catch {
-          if (isNativeAndroid()) {
-            try {
-              const waypoints = batch.map((v) => ({ lng: v.lngLat[0], lat: v.lngLat[1] }));
-              const result = await OfflineRouting.route({
-                profile,
-                waypoints: JSON.stringify(waypoints),
-              });
-              data = JSON.parse(result.data);
-            } catch {
-              data = null;
-            }
+        const isOffline = typeof navigator !== "undefined" && navigator.onLine === false;
+        if (!isOffline) {
+          try {
+            const res = await fetch(
+              `https://api.mapbox.com/directions/v5/mapbox/${profile}/${coords}?geometries=geojson&overview=full&access_token=${mapboxgl.accessToken}`,
+            );
+            data = await res.json();
+          } catch {
+            data = null;
+          }
+        }
+        if (!data && isNativeAndroid()) {
+          try {
+            const waypoints = batch.map((v) => ({ lng: v.lngLat[0], lat: v.lngLat[1] }));
+            const result = await OfflineRouting.route({
+              profile,
+              waypoints: JSON.stringify(waypoints),
+            });
+            data = JSON.parse(result.data);
+          } catch {
+            data = null;
           }
         }
         if (data && data.routes && data.routes.length > 0) {
@@ -6501,6 +6513,103 @@ export default function Map() {
     return () => navigator.serviceWorker.removeEventListener("message", handler);
   }, [refreshOfflineRegions]);
 
+  // ---- Offline routing (Android-only) ----
+  const refreshRoutingRegions = useCallback(async () => {
+    if (!isNativeAndroid()) return;
+    try {
+      const res = await OfflineRouting.hasRoutingData();
+      setRoutingRegions(Array.isArray(res?.regions) ? res.regions : []);
+    } catch (err) {
+      console.warn("hasRoutingData failed", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshRoutingRegions();
+  }, [refreshRoutingRegions]);
+
+  useEffect(() => {
+    if (!isNativeAndroid()) return;
+    let listener = null;
+    (async () => {
+      listener = await OfflineRouting.addListener("routingProgress", (ev) => {
+        setRoutingProgress(ev);
+        if (ev?.phase === "done") {
+          setTimeout(() => {
+            refreshRoutingRegions();
+            setRoutingProgress(null);
+          }, 600);
+        } else if (ev?.phase === "error") {
+          setToastMsg(`Routing import failed: ${ev.message || "unknown error"}`);
+          setTimeout(() => setToastMsg(null), 15000);
+          setTimeout(() => setRoutingProgress(null), 1500);
+        }
+      });
+    })();
+    return () => { if (listener && listener.remove) listener.remove(); };
+  }, [refreshRoutingRegions]);
+
+  const handleSuggestRoutingRegions = useCallback(async () => {
+    const map = mapRef.current;
+    if (!map) return;
+    const mb = map.getBounds();
+    const bounds = {
+      west: mb.getWest(),
+      south: mb.getSouth(),
+      east: mb.getEast(),
+      north: mb.getNorth(),
+    };
+    setRoutingSuggestLoading(true);
+    try {
+      const suggestions = await suggestGeofabrikRegions(bounds);
+      const withSizes = await Promise.all(suggestions.map(async (s) => ({
+        ...s,
+        sizeBytes: await headPbfSize(s.pbfUrl),
+      })));
+      setRoutingSuggestions(withSizes);
+      if (withSizes.length === 0) {
+        setToastMsg("No Geofabrik region covers the current view.");
+        setTimeout(() => setToastMsg(null), 3000);
+      }
+    } catch (err) {
+      console.warn("suggestGeofabrikRegions failed", err);
+      setToastMsg(`Suggest failed: ${err.message || err}`);
+      setTimeout(() => setToastMsg(null), 3000);
+    } finally {
+      setRoutingSuggestLoading(false);
+    }
+  }, []);
+
+  const handleDownloadRoutingRegion = useCallback(async (region) => {
+    if (!isNativeAndroid()) {
+      setToastMsg("Offline routing is Android-only for now.");
+      setTimeout(() => setToastMsg(null), 3000);
+      return;
+    }
+    try {
+      setRoutingProgress({ regionId: region.id, phase: "downloading", pct: 0 });
+      await OfflineRouting.downloadRoutingData({
+        regionId: region.id,
+        pbfUrl: region.pbfUrl,
+      });
+    } catch (err) {
+      console.warn("downloadRoutingData failed", err);
+      setToastMsg(`Routing download failed: ${err.message || err}`);
+      setTimeout(() => setToastMsg(null), 3000);
+      setRoutingProgress(null);
+    }
+  }, []);
+
+  const handleDeleteRoutingRegion = useCallback(async (regionId) => {
+    if (!isNativeAndroid()) return;
+    try {
+      await OfflineRouting.deleteRoutingData({ regionId });
+      refreshRoutingRegions();
+    } catch (err) {
+      console.warn("deleteRoutingData failed", err);
+    }
+  }, [refreshRoutingRegions]);
+
   const boundsToPolygon = (b) => ({
     type: "FeatureCollection",
     features: [
@@ -6931,17 +7040,6 @@ export default function Map() {
     if (!ok) {
       setDownloadingRegion(null);
       return;
-    }
-
-    if (isNativeAndroid()) {
-      try {
-        await OfflineRouting.downloadRoutingData({
-          bounds: b,
-          regionName: region.name,
-        });
-      } catch (err) {
-        console.warn("OfflineRouting.downloadRoutingData failed", err);
-      }
     }
   };
 
@@ -7818,6 +7916,63 @@ export default function Map() {
                 ))
               )}
               {offSortField === "dist" && baseMapBlock}
+              {isNativeAndroid() && (
+                <div className="panel-list-item" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <IonIcon icon={navigateOutline} className="panel-list-icon" />
+                    <div className="panel-list-text">
+                      <span className="panel-list-name">Routing data</span>
+                      <span className="panel-list-info">
+                        {routingRegions.length === 0 ? "None installed" : `${routingRegions.length} installed`}
+                      </span>
+                    </div>
+                    <ActionIconButton
+                      label={routingSuggestLoading ? "Loading…" : "Suggest for current view"}
+                      onClick={(e) => { e.stopPropagation(); handleSuggestRoutingRegions(); }}
+                    >
+                      <IonIcon icon={searchOutline} />
+                    </ActionIconButton>
+                  </div>
+                  {routingRegions.map((r) => (
+                    <div key={`installed-${r.id}`} style={{ display: "flex", alignItems: "center", gap: 8, paddingLeft: 28 }}>
+                      <div className="panel-list-text" style={{ flex: 1 }}>
+                        <span className="panel-list-name">{r.id}</span>
+                        <span className="panel-list-info">{formatBytesGeofabrik(r.sizeBytes)} · car, bike, foot</span>
+                      </div>
+                      <ActionIconButton
+                        label="Delete routing data"
+                        onClick={(e) => { e.stopPropagation(); handleDeleteRoutingRegion(r.id); }}
+                      >
+                        <IonIcon icon={trashOutline} />
+                      </ActionIconButton>
+                    </div>
+                  ))}
+                  {routingSuggestions.map((s) => {
+                    const installed = routingRegions.some((r) => r.id === s.id);
+                    const active = routingProgress?.regionId === s.id;
+                    return (
+                      <div key={`suggest-${s.id}`} style={{ display: "flex", alignItems: "center", gap: 8, paddingLeft: 28 }}>
+                        <div className="panel-list-text" style={{ flex: 1 }}>
+                          <span className="panel-list-name">{s.name}</span>
+                          <span className="panel-list-info">
+                            {formatBytesGeofabrik(s.sizeBytes)} PBF
+                            {active && ` · ${routingProgress.pct >= 0 ? `${routingProgress.phase} ${routingProgress.pct}%` : (routingProgress.message || routingProgress.phase)}`}
+                            {installed && " · installed"}
+                          </span>
+                        </div>
+                        {!installed && (
+                          <ActionIconButton
+                            label={active ? "In progress" : "Download routing data"}
+                            onClick={(e) => { e.stopPropagation(); if (!active) handleDownloadRoutingRegion(s); }}
+                          >
+                            <IonIcon icon={downloadOutline} />
+                          </ActionIconButton>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
         );

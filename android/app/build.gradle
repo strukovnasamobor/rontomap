@@ -10,6 +10,7 @@ android {
         versionCode 4
         versionName "1.3"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        multiDexEnabled true
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
@@ -20,6 +21,37 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+        // GraphHopper uses java.nio.file.* and java.time.* — desugar so they
+        // work on API 24/25 (our minSdk).
+        coreLibraryDesugaringEnabled true
+    }
+    packagingOptions {
+        resources {
+            excludes += [
+                'META-INF/DEPENDENCIES',
+                'META-INF/LICENSE',
+                'META-INF/LICENSE.md',
+                'META-INF/LICENSE.txt',
+                'META-INF/license.txt',
+                'META-INF/NOTICE',
+                'META-INF/NOTICE.md',
+                'META-INF/NOTICE.txt',
+                'META-INF/notice.txt',
+                'META-INF/ASL2.0',
+                'META-INF/*.kotlin_module',
+                'META-INF/INDEX.LIST',
+                'META-INF/io.netty.versions.properties',
+                'META-INF/services/javax.annotation.processing.Processor'
+            ]
+            pickFirsts += [
+                'META-INF/services/org.apache.logging.log4j.util.PropertySource',
+                'META-INF/services/org.apache.logging.log4j.core.util.ContextDataProvider'
+            ]
         }
     }
 }
@@ -40,6 +72,29 @@ dependencies {
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')
+
+    // Offline routing (GraphHopper). Pinned to 7.0 — last release where the
+    // built-in `car`/`bike`/`foot` profiles can use `setWeighting("fastest")`
+    // without going through CustomWeighting, which compiles routing
+    // expressions to JVM .class bytecode via Janino at runtime. Android runs
+    // DEX, not JVM bytecode, so Janino's runtime class loading fails. GH 8.0
+    // dropped the public "fastest" weighting in favor of CustomModel — see
+    // https://github.com/graphhopper/graphhopper/blob/master/CHANGELOG.md
+    implementation('com.graphhopper:graphhopper-core:7.0') {
+        exclude group: 'org.slf4j', module: 'slf4j-log4j12'
+        exclude group: 'log4j', module: 'log4j'
+    }
+    // SLF4J binding for GraphHopper's logging (routes to android.util.Log).
+    implementation 'org.slf4j:slf4j-api:2.0.9'
+    implementation 'uk.uuid.slf4j:slf4j-android:2.0.9-0'
+
+    // OkHttp for PBF download streaming with progress.
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+
+    // Backport java.nio.file/java.time APIs GraphHopper uses.
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'
+
+    implementation 'androidx.core:core:1.17.0'
 }
 
 apply from: 'capacitor.build.gradle'
