@@ -808,7 +808,6 @@ ion-icon.mapboxgl-ctrl-geocoder--icon-search {
   display: flex;
   justify-content: center;
   gap: 10px;
-  padding-bottom: 10px;
 }
 
 .panel-actions button {
@@ -881,6 +880,27 @@ ion-icon.mapboxgl-ctrl-geocoder--icon-search {
   .action-icon-tooltip {
     top: auto;
     bottom: calc(100% + 6px);
+  }
+}
+
+/* Landscape: panel is a left-side sheet — panel-action tooltips go to the
+   right of their button. ActionIconButton applies position: fixed inline so
+   long labels can extend past the panel's overflow-x: hidden right edge.
+   The rules below are a fallback for stacking-context sanity; the inline
+   style wins at paint time. */
+@media (orientation: landscape) {
+  .panel .panel-actions .action-icon-tooltip {
+    top: 50%;
+    bottom: auto;
+    left: calc(100% + 6px);
+    right: auto;
+    transform: translateY(-50%);
+  }
+  .panel .panel-actions > .action-icon-btn:first-child .action-icon-tooltip,
+  .panel .panel-actions > .action-icon-btn:last-child .action-icon-tooltip {
+    left: calc(100% + 6px);
+    right: auto;
+    transform: translateY(-50%);
   }
 }
 
@@ -971,14 +991,11 @@ ion-icon.mapboxgl-ctrl-geocoder--icon-search {
 
   .panel .panel-actions {
     gap: 10px;
+    padding-bottom: 10px;
   }
 
   .panel-details {
     display: block;
-  }
-
-  .panel .panel-actions {
-    padding-bottom: 20px;
   }
 }
 
@@ -1043,7 +1060,6 @@ ion-icon.mapboxgl-ctrl-geocoder--icon-search {
 
   .panel .panel-actions {
     padding-top: 10px;
-    padding-bottom: 0;
   }
 }
 

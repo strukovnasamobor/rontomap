@@ -295,6 +295,8 @@ function addMapControlTooltip(button, label, position = "left") {
 // desktop hover and on touch long-press (long-press also suppresses the click).
 function ActionIconButton({ label, onClick, children, className = "action-icon-btn", ariaLabel }) {
   const [tooltipVisible, setTooltipVisible] = useState(false);
+  const [tooltipStyle, setTooltipStyle] = useState(null);
+  const buttonRef = useRef(null);
   const longPressTimerRef = useRef(null);
   const longPressFiredRef = useRef(false);
 
@@ -305,19 +307,47 @@ function ActionIconButton({ label, onClick, children, className = "action-icon-b
     }
   };
 
+  // In landscape, panel-actions tooltips need to escape the panel's
+  // overflow-x: hidden so long labels can extend past the panel's right edge.
+  // Use position: fixed with coords measured from the button's rect.
+  const computeFixedTooltipStyle = () => {
+    const btn = buttonRef.current;
+    if (!btn) return null;
+    if (!btn.closest(".panel-actions")) return null;
+    if (!window.matchMedia("(orientation: landscape)").matches) return null;
+    const r = btn.getBoundingClientRect();
+    return {
+      position: "fixed",
+      left: `${Math.round(r.right + 6)}px`,
+      top: `${Math.round(r.top + r.height / 2)}px`,
+      right: "auto",
+      bottom: "auto",
+      transform: "translateY(-50%)",
+    };
+  };
+
+  const showTooltip = () => {
+    setTooltipStyle(computeFixedTooltipStyle());
+    setTooltipVisible(true);
+  };
+
+  const hideTooltip = () => {
+    setTooltipVisible(false);
+  };
+
   const handleTouchStart = () => {
     longPressFiredRef.current = false;
     clearLongPress();
     longPressTimerRef.current = setTimeout(() => {
       longPressFiredRef.current = true;
-      setTooltipVisible(true);
+      showTooltip();
     }, 500);
   };
 
   const handleTouchEnd = () => {
     clearLongPress();
     if (longPressFiredRef.current) {
-      setTimeout(() => setTooltipVisible(false), 1200);
+      setTimeout(hideTooltip, 1200);
     }
   };
 
@@ -328,28 +358,32 @@ function ActionIconButton({ label, onClick, children, className = "action-icon-b
       e.stopPropagation();
       return;
     }
-    setTooltipVisible(false);
+    hideTooltip();
     onClick?.(e);
   };
 
   return (
     <button
+      ref={buttonRef}
       type="button"
       className={className}
       aria-label={ariaLabel}
       onClick={handleClick}
-      onMouseEnter={() => setTooltipVisible(true)}
-      onMouseLeave={() => setTooltipVisible(false)}
+      onMouseEnter={showTooltip}
+      onMouseLeave={hideTooltip}
       onTouchStart={handleTouchStart}
       onTouchMove={clearLongPress}
       onTouchEnd={handleTouchEnd}
       onTouchCancel={() => {
         clearLongPress();
-        setTooltipVisible(false);
+        hideTooltip();
       }}
     >
       {children}
-      <span className={`action-icon-tooltip${tooltipVisible ? " action-icon-tooltip-visible" : ""}`}>
+      <span
+        className={`action-icon-tooltip${tooltipVisible ? " action-icon-tooltip-visible" : ""}`}
+        style={tooltipStyle || undefined}
+      >
         {label}
       </span>
     </button>
@@ -567,7 +601,7 @@ export default function Map() {
       }
     },
     trackTouch: true,
-    trackMouse: false,
+    trackMouse: true,
     delta: 10,
   });
 
@@ -605,7 +639,7 @@ export default function Map() {
       }
     },
     trackTouch: true,
-    trackMouse: false,
+    trackMouse: true,
     delta: 10,
   });
 
