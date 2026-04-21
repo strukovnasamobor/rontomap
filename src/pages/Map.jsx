@@ -163,14 +163,10 @@ const deserializeSnappedSegments = (segments) =>
 // gives us guaranteed focus + text-selection + soft-keyboard behavior.
 function RenameModal({ isOpen, title, initialValue, onCancel, onClear, onSave, saveLabel, isDark }) {
   const inputRef = useRef(null);
-  const [value, setValue] = useState(initialValue || "");
-
-  // Reset the input to the latest initialValue whenever the modal (re)opens.
-  useEffect(() => {
-    if (isOpen) setValue(initialValue || "");
-  }, [isOpen, initialValue]);
 
   // Focus + select-all + raise soft keyboard once the input is mounted.
+  // Uncontrolled input: defaultValue is the DOM value from first paint, so
+  // setSelectionRange can select the pre-filled text on the very first open.
   useEffect(() => {
     if (!isOpen) return;
     const raf = requestAnimationFrame(() => {
@@ -188,10 +184,12 @@ function RenameModal({ isOpen, title, initialValue, onCancel, onClear, onSave, s
 
   if (!isOpen) return null;
 
+  const getValue = () => (inputRef.current?.value || "").trim();
+
   const handleKeyDown = (e) => {
     if (e.key === "Enter") {
       e.preventDefault();
-      onSave((value || "").trim());
+      onSave(getValue());
     } else if (e.key === "Escape") {
       e.preventDefault();
       onCancel();
@@ -215,9 +213,8 @@ function RenameModal({ isOpen, title, initialValue, onCancel, onClear, onSave, s
           ref={inputRef}
           className="rename-modal-input"
           type="text"
-          value={value}
+          defaultValue={initialValue || ""}
           placeholder="Enter name"
-          onChange={(e) => setValue(e.target.value)}
           onKeyDown={handleKeyDown}
         />
         <div className="rename-modal-buttons">
@@ -232,7 +229,7 @@ function RenameModal({ isOpen, title, initialValue, onCancel, onClear, onSave, s
           <button
             type="button"
             className="rename-modal-button rename-modal-save"
-            onClick={() => onSave((value || "").trim())}
+            onClick={() => onSave(getValue())}
           >
             {saveLabel || "OK"}
           </button>
