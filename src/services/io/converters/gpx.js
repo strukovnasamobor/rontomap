@@ -44,7 +44,6 @@ export function toRonto(content) {
         name,
         lng: lon,
         lat,
-        savedView: parseExtSavedView(wpt),
       });
       continue;
     }
@@ -54,8 +53,6 @@ export function toRonto(content) {
       name,
       pos: [lat, lon],
     };
-    const sv = parseExtSavedView(wpt);
-    if (sv) marker.savedView = sv;
     markers.push(marker);
   }
 
@@ -83,8 +80,6 @@ export function toRonto(content) {
       coords.pop();
     }
     if (nameEl?.textContent) pathData.name = nameEl.textContent;
-    const sv = parseExtSavedView(rte);
-    if (sv) pathData.savedView = sv;
     const snap = parseExtRoadSnap(rte);
     if (snap) pathData.roadSnap = snap;
     const rteDist = parseFloat(parseExtValue(rte, "routeDistance"));
@@ -132,7 +127,6 @@ export function toRonto(content) {
         ? { segmentIndex: sight.segmentIndex, t: sight.t }
         : projectPointOnPath(targetPath.coords, sight.lng, sight.lat);
       if (sight.name) am.name = sight.name;
-      if (sight.savedView) am.savedView = sight.savedView;
       targetPath.sights.push(am);
     } else {
       // No matching path — import as standalone marker
@@ -164,11 +158,6 @@ export function fromRonto(data, scope) {
   for (const m of scoped.markers || []) {
     lines.push(`  <wpt lat="${m.pos[0]}" lon="${m.pos[1]}">`);
     lines.push(`    <name>${escapeXml(m.name || "")}</name>`);
-    if (m.savedView) {
-      lines.push(`    <extensions>`);
-      lines.push(`      ${serializeSavedViewXml(m.savedView)}`);
-      lines.push(`    </extensions>`);
-    }
     lines.push(`  </wpt>`);
   }
 
@@ -184,9 +173,6 @@ export function fromRonto(data, scope) {
         lines.push(`    <type>sight</type>`);
         lines.push(`    <extensions>`);
         lines.push(`      <rontomap:sight pathId="${escapeXml(p.id)}" segmentIndex="${s.segmentIndex}" t="${s.t}"/>`);
-        if (s.savedView) {
-          lines.push(`      ${serializeSavedViewXml(s.savedView)}`);
-        }
         lines.push(`    </extensions>`);
         lines.push(`  </wpt>`);
       }
@@ -198,9 +184,6 @@ export function fromRonto(data, scope) {
     const rteExtensions = [];
     if (p.sights && p.sights.length > 0) {
       rteExtensions.push(`      <rontomap:id>${escapeXml(p.id)}</rontomap:id>`);
-    }
-    if (p.savedView) {
-      rteExtensions.push(`      ${serializeSavedViewXml(p.savedView)}`);
     }
     if (p.roadSnap) {
       rteExtensions.push(`      <rontomap:roadSnap>${escapeXml(typeof p.roadSnap === "string" ? p.roadSnap : "car")}</rontomap:roadSnap>`);
@@ -230,44 +213,6 @@ export function fromRonto(data, scope) {
 
 function escapeXml(str) {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
-}
-
-function parseExtSavedView(el) {
-  const svEl = el.querySelector("extensions > savedView") || el.querySelector("extensions > *[local-name='savedView']");
-  if (!svEl) {
-    // Try namespace-aware lookup
-    const exts = el.querySelector("extensions");
-    if (!exts) return null;
-    for (const child of exts.children) {
-      if (child.localName === "savedView") {
-        return parseSavedViewAttrs(child);
-      }
-    }
-    return null;
-  }
-  return parseSavedViewAttrs(svEl);
-}
-
-function parseSavedViewAttrs(el) {
-  const zoom = parseFloat(el.getAttribute("zoom"));
-  if (!isFinite(zoom)) return null;
-  const pitch = parseFloat(el.getAttribute("pitch"));
-  const bearing = parseFloat(el.getAttribute("bearing"));
-  const sv = { zoom, pitch: pitch || 0, bearing: bearing || 0 };
-  // Path savedView includes center
-  const lat = parseFloat(el.getAttribute("lat"));
-  const lng = parseFloat(el.getAttribute("lng"));
-  if (isFinite(lat) && isFinite(lng)) {
-    sv.center = [lng, lat];
-  }
-  return sv;
-}
-
-function serializeSavedViewXml(sv) {
-  let attrs = "";
-  if (sv.center) attrs += `lat="${sv.center[1]}" lng="${sv.center[0]}" `;
-  attrs += `zoom="${sv.zoom}" pitch="${sv.pitch}" bearing="${sv.bearing}"`;
-  return `<rontomap:savedView ${attrs}/>`;
 }
 
 function parseExtSight(el) {

@@ -29,13 +29,11 @@ id | action                      | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10| 11| 1
 25 | navigate here               | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
 26 | add marker here             | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
 27 | set name to                 | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
-28 | save view to                | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
-29 | delete feature              | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
-30 | edit path                   | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
-31 | reverse path                | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
-32 | add sight to path           | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
-33 | trace path                  | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
-34 | in offline mode             | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
+28 | delete feature              | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
+29 | edit path                   | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
+30 | add sight to path           | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
+31 | trace path                  | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
+32 | in offline mode             | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
 ==========================================================================================================================================================================
  - | action is not allowed
  + | action is allowed
@@ -98,13 +96,14 @@ UI DESIGN & INTERACTIONS
     - middle - toast msg
     - right - map change style & location icon (in embedded hidden)
 - right sidebar - menu 
+- left mouse click / tap on feature => features list panel opens (in embedded disabled) sorted by the distance from clicked point
 - left mouse click / tap on feature => feature detail panel opens (in embedded disabled)
 - double left mouse click / double tap => fullscreen enter/exit
 - right mouse click / long tap on map/feature => context menu opens (in embedded disabled)
     - map: Center here, Navigate here, Add marker here, Create path here
-    - marker: Center to marker, Fly to marker, Navigate to marker, Copy link to marker, Copy embedded marker, Export marker, Save view to marker, Set name to marker, Save marker, Delete marker
-    - sight: Center to sight, Fly to sight, Navigate to sight, Copy link to sight, Copy embedded sight, Export sight, Save view to sight, Detach sight, Set name to sight, Delete sight
-    - path: Center to path, Fly to path, Navigate to path start, Copy link to path, Copy embedded path, Export path, Save view to path, Edit path, Reverse path, Add sight to path, Trace path, Set name to path, Save sight, Delete path
+    - marker: Center to marker, Fly to marker, Navigate to marker, Copy link to marker, Copy embedded marker, Export marker, Set name to marker, Save marker, Delete marker
+    - sight: Center to sight, Fly to sight, Navigate to sight, Copy link to sight, Copy embedded sight, Export sight, Detach sight, Set name to sight, Delete sight
+    - path: Center to path, Fly to path, Navigate to path start, Copy link to path, Copy embedded path, Export path, Edit path, Add sight to path, Trace path, Set name to path, Save sight, Delete path
 - mouse wheel => zoom in/out
 - mouse over feature (alias cursor icon)
 - mouse over draggable feature (grab cursor icon)
@@ -148,7 +147,11 @@ FEATURES LIST PANEL
     - Save/Unsave - ion-icon name="bookmark-outline"/ion-icon name="bookmark"
     - Delete - ion-icon name="trash-outline"
 - sights show nested in there paths and implicitly save/unsave sync with the path, so no save/unsave side icon
-- when feature is clicked center to map and glow, do not open features detail panel
+- when feature list panel is opened and user first click on feature the action icons appears and feature gets centered and glowing
+(if user location is available the it zoom out so that user location is visible too), 
+if user clicks second time on that feature then feature details panel opens, 
+when feature detail panel closes then feature list panel reopens, 
+same if user click on feature while feature list is opened then closing feature detail panel it will reopen feature list
 
 OFFLINE MAPS PANEL
 - opening on menu option "Offline maps"

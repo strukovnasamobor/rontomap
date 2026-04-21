@@ -9,7 +9,6 @@
  * @property {string} id
  * @property {string} name
  * @property {[number, number]} pos - [lat, lng]
- * @property {RontoSavedView} [savedView]
  */
 
 /**
@@ -24,7 +23,6 @@
  * @property {"car"|"bike"|"foot"} [roadSnap]
  * @property {RontoSnappedSegment[]} [snappedSegments]
  * @property {RontoSight[]} [sights]
- * @property {RontoSavedView} [savedView]
  */
 
 /**
@@ -45,14 +43,6 @@
  * @property {number} segmentIndex
  * @property {number} t
  * @property {string} [name]
- * @property {RontoSavedView} [savedView]
- */
-
-/**
- * @typedef {Object} RontoSavedView
- * @property {number} zoom
- * @property {number} pitch
- * @property {number} bearing
  */
 
 /**

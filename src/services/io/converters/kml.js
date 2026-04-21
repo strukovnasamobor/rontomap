@@ -43,7 +43,6 @@ export function toRonto(content) {
             name,
             lng: ptCoords[0].long,
             lat: ptCoords[0].lat,
-            savedView: parseSavedViewStr(parseExtData(pm, "savedView")),
           });
         }
       }
@@ -92,8 +91,6 @@ export function toRonto(content) {
           name,
           pos: [coords[0].lat, coords[0].long],
         };
-        const sv = parseSavedViewStr(parseExtData(pm, "savedView"));
-        if (sv) marker.savedView = sv;
         markers.push(marker);
       }
     } else if (lineString) {
@@ -110,8 +107,6 @@ export function toRonto(content) {
           coords.pop();
         }
         if (name) pathData.name = name;
-        const sv = parseSavedViewStr(parseExtData(pm, "savedView"));
-        if (sv) pathData.savedView = sv;
         const snap = parseExtRoadSnap(pm);
         if (snap) pathData.roadSnap = snap;
         const kmlDist = parseFloat(parseExtData(pm, "routeDistance"));
@@ -150,7 +145,6 @@ export function toRonto(content) {
         ? { segmentIndex: sight.segmentIndex, t: sight.t }
         : projectPointOnPath(targetPath.coords, sight.lng, sight.lat);
       if (sight.name) am.name = sight.name;
-      if (sight.savedView) am.savedView = sight.savedView;
       targetPath.sights.push(am);
     } else {
       markers.push({
@@ -198,11 +192,6 @@ export function fromRonto(data, scope) {
     lines.push(`  <Placemark>`);
     lines.push(`    <name>${escapeXml(m.name || "")}</name>`);
     lines.push(`    <styleUrl>#marker-style</styleUrl>`);
-    if (m.savedView) {
-      lines.push(`    <ExtendedData>`);
-      lines.push(`      <Data name="savedView"><value>${serializeSavedView(m.savedView)}</value></Data>`);
-      lines.push(`    </ExtendedData>`);
-    }
     lines.push(`    <Point>`);
     lines.push(`      <coordinates>${m.pos[1]},${m.pos[0]},0</coordinates>`);
     lines.push(`    </Point>`);
@@ -226,9 +215,6 @@ export function fromRonto(data, scope) {
         lines.push(`      <Data name="pathId"><value>${escapeXml(p.id)}</value></Data>`);
         lines.push(`      <Data name="segmentIndex"><value>${s.segmentIndex}</value></Data>`);
         lines.push(`      <Data name="t"><value>${s.t}</value></Data>`);
-        if (s.savedView) {
-          lines.push(`      <Data name="savedView"><value>${serializeSavedView(s.savedView)}</value></Data>`);
-        }
         lines.push(`    </ExtendedData>`);
         lines.push(`    <Point>`);
         lines.push(`      <coordinates>${lng},${lat},0</coordinates>`);
@@ -243,7 +229,6 @@ export function fromRonto(data, scope) {
     lines.push(`    <styleUrl>#${styleId}</styleUrl>`);
     const extData = [];
     if (p.sights && p.sights.length > 0) extData.push(`      <Data name="pathId"><value>${escapeXml(p.id)}</value></Data>`);
-    if (p.savedView) extData.push(`      <Data name="savedView"><value>${serializeSavedView(p.savedView)}</value></Data>`);
     if (p.roadSnap) extData.push(`      <Data name="roadSnap"><value>${escapeXml(typeof p.roadSnap === "string" ? p.roadSnap : "car")}</value></Data>`);
     if (p.routeDistance != null) extData.push(`      <Data name="routeDistance"><value>${p.routeDistance}</value></Data>`);
     if (p.routeDuration != null) extData.push(`      <Data name="routeDuration"><value>${p.routeDuration}</value></Data>`);
@@ -271,32 +256,12 @@ function escapeXml(str) {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
 
-function serializeSavedView(sv) {
-  if (sv.center) return `${sv.center[1]},${sv.center[0]},${sv.zoom},${sv.pitch},${sv.bearing}`;
-  return `${sv.zoom},${sv.pitch},${sv.bearing}`;
-}
-
 function parseExtData(placemarkEl, name) {
   const dataEls = placemarkEl.querySelectorAll("ExtendedData > Data");
   for (const d of dataEls) {
     if (d.getAttribute("name") === name) {
       return d.querySelector("value")?.textContent?.trim() || null;
     }
-  }
-  return null;
-}
-
-function parseSavedViewStr(str) {
-  if (!str) return null;
-  const parts = str.split(",").map(Number);
-  if (!parts.every(isFinite)) return null;
-  if (parts.length === 5) {
-    // Old format or path: lat,lng,zoom,pitch,bearing
-    return { center: [parts[1], parts[0]], zoom: parts[2], pitch: parts[3] || 0, bearing: parts[4] || 0 };
-  }
-  if (parts.length >= 3) {
-    // Marker/sight: zoom,pitch,bearing
-    return { zoom: parts[0], pitch: parts[1] || 0, bearing: parts[2] || 0 };
   }
   return null;
 }

@@ -35,7 +35,6 @@ export function toRonto(content) {
           segmentIndex: props.segmentIndex ?? 0,
           t: props.t ?? 0.5,
           name: props.name || "",
-          savedView: props.savedView,
           lng,
           lat,
         });
@@ -46,7 +45,6 @@ export function toRonto(content) {
         name: props.name || props.title || "",
         pos: [lat, lng],
       };
-      if (props.savedView) marker.savedView = props.savedView;
       markers.push(marker);
     } else if (geomType === "LineString") {
       const coords = f.geometry.coordinates.map(([lng, lat]) => ({ long: lng, lat }));
@@ -68,7 +66,6 @@ export function toRonto(content) {
       if (props.roadSnap) pathData.roadSnap = props.roadSnap;
       if (props.routeDistance != null) pathData.routeDistance = props.routeDistance;
       if (props.routeDuration != null) pathData.routeDuration = props.routeDuration;
-      if (props.savedView) pathData.savedView = props.savedView;
       paths.push(pathData);
     }
     // Skip Polygon, MultiPoint, etc.
@@ -81,7 +78,6 @@ export function toRonto(content) {
       if (!targetPath.sights) targetPath.sights = [];
       const am = { segmentIndex: sight.segmentIndex, t: sight.t };
       if (sight.name) am.name = sight.name;
-      if (sight.savedView) am.savedView = sight.savedView;
       targetPath.sights.push(am);
     } else {
       // No matching path — import as a standalone marker
@@ -116,7 +112,6 @@ export function fromRonto(data, scope) {
       properties: {
         name: m.name || "",
         type: "marker",
-        ...(m.savedView ? { savedView: m.savedView } : {}),
       },
     });
   }
@@ -134,7 +129,6 @@ export function fromRonto(data, scope) {
     if (p.roadSnap) props.roadSnap = p.roadSnap;
     if (p.routeDistance != null) props.routeDistance = p.routeDistance;
     if (p.routeDuration != null) props.routeDuration = p.routeDuration;
-    if (p.savedView) props.savedView = p.savedView;
 
     features.push({
       type: "Feature",
@@ -161,7 +155,6 @@ export function fromRonto(data, scope) {
             pathId: p.id,
             segmentIndex: s.segmentIndex,
             t: s.t,
-            ...(s.savedView ? { savedView: s.savedView } : {}),
           },
         });
       }

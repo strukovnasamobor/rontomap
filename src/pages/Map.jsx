@@ -441,7 +441,7 @@ export default function Map() {
   const freezeFeatListOrderRef = useRef(null); // null | { refs, sort, filter, tick }
   const lastSortedRefsRef = useRef([]);
   const featListGlowCleanupRef = useRef(null);
-  const sheetDragRef = useRef({ startY: 0, dragging: false });
+  const sheetDragRef = useRef({ startY: 0, dragging: false, startLevel: 0 });
   const featurePanelRef = useRef(null);
 
   const namingTargetRef = useRef(null);
@@ -3675,28 +3675,6 @@ export default function Map() {
       }
     }
 
-    // Parse optional saved_view (used by both marker and path URL formats).
-    // Regex-based so each field can carry an optional leading "-" (e.g. negative bearing).
-    const savedViewParam = getQueryParams("saved_view");
-    let parsedSavedView = null;
-    if (savedViewParam) {
-      const m = savedViewParam.match(
-        /^(-?\d+(?:\.\d+)?)-(-?\d+(?:\.\d+)?)-(-?\d+(?:\.\d+)?)-(-?\d+(?:\.\d+)?)-(-?\d+(?:\.\d+)?)$/
-      );
-      if (m) {
-        const nums = [m[1], m[2], m[3], m[4], m[5]].map(parseFloat);
-        if (!nums.some(Number.isNaN)) {
-          parsedSavedView = {
-            lat: nums[0],
-            lng: nums[1],
-            zoom: nums[2],
-            bearing: nums[3],
-            pitch: nums[4],
-          };
-        }
-      }
-    }
-
     // Recreate single marker from URL params
     const markerParam = getQueryParams("marker");
     if (markerParam) {
@@ -3709,13 +3687,6 @@ export default function Map() {
         if (markerName) {
           m._markerName = markerName;
           updateMarkerLabel(m);
-        }
-        if (parsedSavedView) {
-          m._savedView = {
-            zoom: parsedSavedView.zoom,
-            bearing: parsedSavedView.bearing,
-            pitch: parsedSavedView.pitch,
-          };
         }
         featuresLockedRef.current = true;
         setFeaturesLocked(true);
@@ -3761,18 +3732,13 @@ export default function Map() {
 
         const sightParams = new URLSearchParams(window.location.search).getAll("sight");
         const sights = sightParams
-          .map((s, idx) => {
+          .map((s) => {
             const parts = s.split("-");
             const segIdx = parseInt(parts[0]);
             const t = parseFloat(parts[1]);
             if (Number.isNaN(segIdx) || Number.isNaN(t)) return null;
             const name = parts.length > 2 ? decodeURIComponent(parts.slice(2).join("-")) : undefined;
-            const am = { segmentIndex: segIdx, t, ...(name ? { name } : {}) };
-            const svArr = extras.sv?.[idx];
-            if (Array.isArray(svArr) && svArr.length === 3) {
-              am.savedView = { zoom: svArr[0], bearing: svArr[1], pitch: svArr[2] };
-            }
-            return am;
+            return { segmentIndex: segIdx, t, ...(name ? { name } : {}) };
           })
           .filter(Boolean);
 
@@ -3795,14 +3761,6 @@ export default function Map() {
           routeDistance: extras.rd ?? undefined,
           routeDuration: extras.rt ?? undefined,
           sights: sights.length ? sights : undefined,
-          savedView: parsedSavedView
-            ? {
-                center: [parsedSavedView.lng, parsedSavedView.lat],
-                zoom: parsedSavedView.zoom,
-                bearing: parsedSavedView.bearing,
-                pitch: parsedSavedView.pitch,
-              }
-            : undefined,
         };
 
         materializePathFromShape(entry, {
@@ -4417,38 +4375,12 @@ export default function Map() {
     setMarkerMenu(null);
   };
 
-  const handleSaveMarkerView = () => {
-    const marker = markerMenu.marker;
-    setMarkerMenu(null);
-    if (!marker) return;
-    const map = mapRef.current;
-    marker._savedView = {
-      zoom: map.getZoom(),
-      pitch: map.getPitch(),
-      bearing: map.getBearing(),
-    };
-    setToastMsg("Marker view recorded.");
-    setTimeout(() => {
-      setToastMsg(null);
-    }, 2000);
-  };
-
   const handleFlyToMarker = () => {
     const marker = markerMenu.marker;
     setMarkerMenu(null);
     if (!marker) return;
     const map = mapRef.current;
-    if (marker._savedView) {
-      map.flyTo({
-        center: marker.getLngLat(),
-        zoom: marker._savedView.zoom,
-        pitch: marker._savedView.pitch,
-        bearing: marker._savedView.bearing,
-        duration: 1500,
-      });
-    } else {
-      map.flyTo({ center: marker.getLngLat(), zoom: 18, duration: 1500 });
-    }
+    map.flyTo({ center: marker.getLngLat(), zoom: 18, duration: 1500 });
   };
 
   // --- URL builders (centralized; used by all share/embed handlers) ---
@@ -4470,13 +4402,6 @@ export default function Map() {
     const ll = marker.getLngLat();
     const namePart = marker._markerName ? `-${encodeURIComponent(marker._markerName)}` : "";
     params.set("marker", `${ll.lat.toFixed(6)}-${ll.lng.toFixed(6)}${namePart}`);
-    if (marker._savedView) {
-      const sv = marker._savedView;
-      params.set(
-        "saved_view",
-        `${ll.lat.toFixed(6)}-${ll.lng.toFixed(6)}-${sv.zoom.toFixed(2)}-${sv.bearing.toFixed(1)}-${sv.pitch.toFixed(1)}`
-      );
-    }
     return `https://rontomap.web.app/?${params}`;
   };
 
@@ -4492,15 +4417,6 @@ export default function Map() {
         params.append("sight", `${m._segmentIndex}-${m._t.toFixed(4)}${namePart}`);
       });
     }
-    if (path.savedView) {
-      const sv = path.savedView;
-      const center = sv.center || path.vertices[0].lngLat;
-      params.set(
-        "saved_view",
-        `${center[1].toFixed(6)}-${center[0].toFixed(6)}-${sv.zoom.toFixed(2)}-${sv.bearing.toFixed(1)}-${sv.pitch.toFixed(1)}`
-      );
-    }
-
     // Hash: vertex polyline + optional extras blob (separated by `!`)
     const vertexPoly = polyline.encode(path.vertices.map((v) => [v.lngLat[1], v.lngLat[0]]));
 
@@ -4516,13 +4432,6 @@ export default function Map() {
     }
     if (path.routeDistance != null) extras.rd = path.routeDistance;
     if (path.routeDuration != null) extras.rt = path.routeDuration;
-    if (path.sights?.length) {
-      const sv = {};
-      path.sights.forEach((m, idx) => {
-        if (m._savedView) sv[idx] = [m._savedView.zoom, m._savedView.bearing, m._savedView.pitch];
-      });
-      if (Object.keys(sv).length) extras.sv = sv;
-    }
 
     const hash = Object.keys(extras).length
       ? `${vertexPoly}!${b64uEncode(JSON.stringify(extras))}`
@@ -4841,7 +4750,6 @@ export default function Map() {
           name: m._markerName || "",
           pos: [ll.lat, ll.lng],
         };
-        if (m._savedView) entry.savedView = m._savedView;
         savedMarkers.push(entry);
       }
 
@@ -4858,7 +4766,6 @@ export default function Map() {
           })),
         };
         if (p.name) pathData.name = p.name;
-        if (p.savedView) pathData.savedView = p.savedView;
         if (p.roadSnap) pathData.roadSnap = p.roadSnap;
         if (p.snappedSegments && p.snappedSegments.length > 0) {
           pathData.snappedSegments = serializeSnappedSegments(p.snappedSegments);
@@ -4873,7 +4780,6 @@ export default function Map() {
           pathData.sights = p.sights.map((s) => {
             const am = { segmentIndex: s._segmentIndex, t: s._t };
             if (s._markerName) am.name = s._markerName;
-            if (s._savedView) am.savedView = s._savedView;
             return am;
           });
         }
@@ -4974,17 +4880,11 @@ export default function Map() {
     if (selectedFeature.type === "marker") {
       const marker = selectedFeature.marker;
       const pp = getPanelPadding();
-      if (marker._savedView) {
-        map.flyTo({ center: marker.getLngLat(), zoom: marker._savedView.zoom, pitch: marker._savedView.pitch, bearing: marker._savedView.bearing, padding: pp, duration: 1500 });
-      } else {
-        map.flyTo({ center: marker.getLngLat(), zoom: 18, padding: pp, duration: 1500 });
-      }
+      map.flyTo({ center: marker.getLngLat(), zoom: 18, padding: pp, duration: 1500 });
     } else if (selectedFeature.type === "path") {
       const path = selectedFeature.path;
       const pp = getPanelPadding();
-      if (path.savedView) {
-        map.flyTo({ center: path.savedView.center, zoom: path.savedView.zoom, pitch: path.savedView.pitch, bearing: path.savedView.bearing, padding: pp, duration: 1500 });
-      } else if (path.vertices.length > 0) {
+      if (path.vertices.length > 0) {
         const bounds = new mapboxgl.LngLatBounds();
         if (path.snappedSegments) {
           path.snappedSegments.forEach((seg) => seg.coords.forEach((c) => bounds.extend(c)));
@@ -5311,6 +5211,7 @@ export default function Map() {
   const sheetDragStart = (clientY) => {
     sheetDragRef.current.startY = clientY;
     sheetDragRef.current.dragging = true;
+    sheetDragRef.current.startLevel = sheetLevel;
     const panel = featurePanelRef.current;
     if (panel) {
       panel.style.transition = "none";
@@ -5353,12 +5254,11 @@ export default function Map() {
       }
     }
   };
-  const sheetDragEnd = (clientY) => {
+  const sheetDragEnd = () => {
     if (!sheetDragRef.current.dragging || !featurePanelRef.current) return;
     sheetDragRef.current.dragging = false;
     const panel = featurePanelRef.current;
     panel.style.transition = "";
-    const isList = panel.classList.contains("panel-list");
 
     const cleanupPanel = () => {
       if (featurePanelRef.current) {
@@ -5368,45 +5268,29 @@ export default function Map() {
       }
     };
 
-    if (isList) {
-      const vh = window.innerHeight;
-      const currentH = panel.offsetHeight;
-      const translateMatch = panel.style.transform.match(/translateY\((.+?)px\)/);
-      const isBelow = translateMatch && parseFloat(translateMatch[1]) > 0;
+    const vh = window.innerHeight;
+    const finalH = panel.offsetHeight;
+    const translateMatch = panel.style.transform.match(/translateY\((.+?)px\)/);
+    const belowMin = (translateMatch && parseFloat(translateMatch[1]) > 0) || finalH < vh * 0.15;
 
-      if (isBelow || currentH < vh * 0.15) {
-        panel.style.height = "";
-        panel.style.transform = "translateY(100%)";
-        setTimeout(() => { dismissPanel(); cleanupPanel(); }, 300);
-        return;
-      }
-      const deltaY = clientY - sheetDragRef.current.startY;
-      if (deltaY < -40) {
-        setSheetLevel(Math.min(2, sheetLevel + 1));
-      } else if (deltaY > 40) {
-        setSheetLevel(Math.max(0, sheetLevel - 1));
-      }
-      cleanupPanel();
-    } else {
-      const deltaY = clientY - sheetDragRef.current.startY;
-      if (sheetLevel === 0) {
-        if (deltaY > 80) {
-          panel.style.transform = "translateY(100%)";
-          setTimeout(() => { dismissPanel(); cleanupPanel(); }, 300);
-          return;
-        }
-        if (deltaY < -40) { setSheetLevel(1); cleanupPanel(); return; }
-      } else {
-        if (deltaY > 200) {
-          panel.style.transform = "translateY(100%)";
-          setTimeout(() => { dismissPanel(); cleanupPanel(); }, 300);
-          return;
-        }
-        if (deltaY > 40) { setSheetLevel(Math.max(0, sheetLevel - 1)); cleanupPanel(); return; }
-        if (deltaY < -40) { setSheetLevel(Math.min(2, sheetLevel + 1)); cleanupPanel(); return; }
-      }
-      cleanupPanel();
+    // Close only when dragged down past the min from level 0. From levels 1/2,
+    // a big down-flick just collapses to level 0.
+    if (belowMin && sheetDragRef.current.startLevel === 0) {
+      panel.style.height = "";
+      panel.style.transform = "translateY(100%)";
+      setTimeout(() => { dismissPanel(); cleanupPanel(); }, 300);
+      return;
     }
+
+    // Snap to the closest level based on final height, not drag delta, so a long
+    // flick can jump multiple levels.
+    let targetLevel;
+    if (finalH < vh * 0.375) targetLevel = 0;
+    else if (finalH < vh * 0.625) targetLevel = 1;
+    else targetLevel = 2;
+
+    setSheetLevel(targetLevel);
+    cleanupPanel();
   };
 
   // Touch handlers
@@ -6026,7 +5910,6 @@ export default function Map() {
       vertices: path.vertices.map((v) => ({ lngLat: [...v.lngLat], force: v.force || false })),
       roadSnap: path.roadSnap || null,
       snappedSegments: path.snappedSegments ? JSON.parse(JSON.stringify(path.snappedSegments)) : null,
-      savedView: path.savedView ? { ...path.savedView } : null,
       isCircuit: path.isCircuit || false,
     };
 
@@ -6067,22 +5950,6 @@ export default function Map() {
     setTimeout(() => {
       setToastMsg(null);
     }, 2000);
-  };
-
-  const handleReversePath = () => {
-    const path = mapClickMenu.path;
-    setMapClickMenu(null);
-
-    const numSegs = path.vertices.length - 1;
-    path.vertices.reverse();
-    if (path.sights) {
-      path.sights.forEach((m) => {
-        m._segmentIndex = numSegs - 1 - m._segmentIndex;
-        m._t = 1 - m._t;
-      });
-    }
-    pathHelpersRef.current.updatePathLine(path);
-    pathHelpersRef.current.updateVertexStyles(path);
   };
 
   const handleDeletePath = () => {
@@ -6681,7 +6548,6 @@ export default function Map() {
 
       path.roadSnap = snapshot.roadSnap;
       path.snappedSegments = snapshot.snappedSegments;
-      path.savedView = snapshot.savedView;
       path.isCircuit = snapshot.isCircuit || false;
       path.isFinished = true;
 
@@ -6715,23 +6581,6 @@ export default function Map() {
     setNavRouteDuration(null);
   };
 
-  const handleSavePathView = () => {
-    const path = mapClickMenu.path;
-    setMapClickMenu(null);
-    if (!path) return;
-    const map = mapRef.current;
-    path.savedView = {
-      center: map.getCenter().toArray(),
-      zoom: map.getZoom(),
-      pitch: map.getPitch(),
-      bearing: map.getBearing(),
-    };
-    setToastMsg("Path view recorded.");
-    setTimeout(() => {
-      setToastMsg(null);
-    }, 2000);
-  };
-
   const handleCenterToPath = () => {
     const path = mapClickMenu.path;
     setMapClickMenu(null);
@@ -6755,15 +6604,7 @@ export default function Map() {
     setMapClickMenu(null);
     if (!path) return;
     const map = mapRef.current;
-    if (path.savedView) {
-      map.flyTo({
-        center: path.savedView.center,
-        zoom: path.savedView.zoom,
-        pitch: path.savedView.pitch,
-        bearing: path.savedView.bearing,
-        duration: 1500,
-      });
-    } else if (path.vertices.length > 0) {
+    if (path.vertices.length > 0) {
       const bounds = new mapboxgl.LngLatBounds();
       if (path.snappedSegments) {
         path.snappedSegments.forEach((seg) => seg.coords.forEach((c) => bounds.extend(c)));
@@ -7895,7 +7736,6 @@ export default function Map() {
             <button onClick={handleCopyLinkMarker}>{markerMenu.marker._sightPath ? "Copy link to sight" : "Copy link to marker"}</button>
             <button onClick={handleCopyMarkerCode}>{markerMenu.marker._sightPath ? "Copy embedded sight" : "Copy embedded marker"}</button>
             <button onClick={handleExportMarker}>{markerMenu.marker._sightPath ? "Export sight" : "Export marker"}</button>
-            <button onClick={handleSaveMarkerView}>{markerMenu.marker._sightPath ? "Save view to sight" : "Save view to marker"}</button>
             {markerMenu.marker._sightPath && <button onClick={handleDetachSight}>Detach sight</button>}
             <button onClick={() => handleSetNameMarker()}>{markerMenu.marker._sightPath ? "Set name to sight" : "Set name to marker"}</button>
             {!markerMenu.marker._sightPath && (
@@ -7983,9 +7823,7 @@ export default function Map() {
                 <button onClick={handleCopyLinkPath}>Copy link to path</button>
                 <button onClick={handleCopyEmbeddedPath}>Copy embedded path</button>
                 <button onClick={handleExportPath}>Export path</button>
-                <button onClick={handleSavePathView}>Save view to path</button>
                 <button onClick={handleEditPath}>Edit path</button>
-                <button onClick={handleReversePath}>Reverse path</button>
                 <button onClick={handleAddSight}>Add sight to path</button>
                 <button onClick={handleTracePath}>Trace path</button>
                 <button onClick={handleSetPathName}>Set name to path</button>

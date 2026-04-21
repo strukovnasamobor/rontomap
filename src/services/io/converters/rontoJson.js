@@ -21,7 +21,6 @@ export function collectFeatures(markersRef, pathsRef, serializeSnappedSegments) 
       name: m._markerName || "",
       pos: [ll.lat, ll.lng],
     };
-    if (m._savedView) markerData.savedView = m._savedView;
     return markerData;
   });
 
@@ -31,7 +30,6 @@ export function collectFeatures(markersRef, pathsRef, serializeSnappedSegments) 
       coords: p.vertices.map((v) => ({ long: v.lngLat[0], lat: v.lngLat[1], ...(v.force ? { force: true } : {}) })),
     };
     if (p.name) pathData.name = p.name;
-    if (p.savedView) pathData.savedView = p.savedView;
     if (p.roadSnap) pathData.roadSnap = p.roadSnap;
     if (p.snappedSegments) pathData.snappedSegments = serializeSnappedSegments(p.snappedSegments);
     if (p.routeDistance != null) pathData.routeDistance = p.routeDistance;
@@ -44,7 +42,6 @@ export function collectFeatures(markersRef, pathsRef, serializeSnappedSegments) 
       pathData.sights = p.sights.map((m) => {
         const am = { segmentIndex: m._segmentIndex, t: m._t };
         if (m._markerName) am.name = m._markerName;
-        if (m._savedView) am.savedView = m._savedView;
         return am;
       });
     }
@@ -66,7 +63,6 @@ export function collectMarker(marker) {
     name: marker._markerName || "",
     pos: [ll.lat, ll.lng],
   };
-  if (marker._savedView) markerData.savedView = marker._savedView;
   return { markers: [markerData], paths: [] };
 }
 
@@ -82,7 +78,6 @@ export function collectPath(path, serializeSnappedSegments) {
     coords: path.vertices.map((v) => ({ long: v.lngLat[0], lat: v.lngLat[1], ...(v.force ? { force: true } : {}) })),
   };
   if (path.name) pathData.name = path.name;
-  if (path.savedView) pathData.savedView = path.savedView;
   if (path.roadSnap) pathData.roadSnap = path.roadSnap;
   if (path.snappedSegments) pathData.snappedSegments = serializeSnappedSegments(path.snappedSegments);
   if (path.routeDistance != null) pathData.routeDistance = path.routeDistance;
@@ -95,7 +90,6 @@ export function collectPath(path, serializeSnappedSegments) {
     pathData.sights = path.sights.map((m) => {
       const am = { segmentIndex: m._segmentIndex, t: m._t };
       if (m._markerName) am.name = m._markerName;
-      if (m._savedView) am.savedView = m._savedView;
       return am;
     });
   }
@@ -131,7 +125,6 @@ export function materializeFeatures(data, deps) {
       m._markerName = entry.name;
       updateMarkerLabel(m);
     }
-    if (entry.savedView) m._savedView = entry.savedView;
     markerCount++;
   });
 
@@ -186,7 +179,6 @@ export function materializePathFromShape(entry, deps) {
 
   const pathName = entry.name ?? entry.startName;
   if (pathName) path.name = pathName;
-  if (entry.savedView) path.savedView = entry.savedView;
   if (entry.roadSnap) {
     path.roadSnap = entry.roadSnap === true ? "car" : entry.roadSnap;
     if (entry.snappedSegments) {
@@ -218,7 +210,6 @@ export function materializePathFromShape(entry, deps) {
         m._markerName = am.name;
         updateMarkerLabel(m);
       }
-      if (am.savedView) m._savedView = am.savedView;
       m.on("drag", () => {
         if (!m._sightPath) return;
         const p = m.getLngLat(),
