@@ -35,8 +35,10 @@ import {
   timeOutline,
   createOutline,
   pencilOutline,
+  bookmark,
+  bookmarkOutline,
 } from "ionicons/icons";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDoubleTap } from "use-double-tap";
 import { useSwipeable } from "react-swipeable";
 import mapboxgl from "mapbox-gl";
@@ -49,6 +51,7 @@ import { Capacitor, registerPlugin } from "@capacitor/core";
 const BackgroundGeolocation = registerPlugin("BackgroundGeolocation");
 import { App as CapApp } from "@capacitor/app";
 import { Share } from "@capacitor/share";
+import { Keyboard } from "@capacitor/keyboard";
 import polyline from "@mapbox/polyline";
 import { db } from "../../firebase";
 import { collection, addDoc, doc, getDoc, serverTimestamp } from "firebase/firestore";
@@ -153,6 +156,91 @@ const deserializeSnappedSegments = (segments) =>
         : seg.type,
     coords: seg.coords.map((c) => [c.lng, c.lat]),
   }));
+
+// Rename modal — replaces IonAlert for both feature and region renames.
+// IonAlert's focus-trap was reliably stealing focus from the input on
+// Chrome and Android; a plain React-controlled modal with a ref'd <input>
+// gives us guaranteed focus + text-selection + soft-keyboard behavior.
+function RenameModal({ isOpen, title, initialValue, onCancel, onClear, onSave, saveLabel, isDark }) {
+  const inputRef = useRef(null);
+  const [value, setValue] = useState(initialValue || "");
+
+  // Reset the input to the latest initialValue whenever the modal (re)opens.
+  useEffect(() => {
+    if (isOpen) setValue(initialValue || "");
+  }, [isOpen, initialValue]);
+
+  // Focus + select-all + raise soft keyboard once the input is mounted.
+  useEffect(() => {
+    if (!isOpen) return;
+    const raf = requestAnimationFrame(() => {
+      const input = inputRef.current;
+      if (!input) return;
+      input.focus({ preventScroll: true });
+      try { input.setSelectionRange(0, (input.value || "").length); }
+      catch { input.select?.(); }
+      if (Capacitor.isNativePlatform()) {
+        Keyboard.show().catch(() => { /* plugin may refuse silently */ });
+      }
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      onSave((value || "").trim());
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      onCancel();
+    }
+  };
+
+  return (
+    <>
+      <div
+        className="rename-modal-backdrop"
+        onClick={onCancel}
+        onContextMenu={(e) => { e.preventDefault(); onCancel(); }}
+      />
+      <div
+        className={`rename-modal${isDark ? " rename-modal-dark" : ""}`}
+        role="dialog"
+        aria-modal="true"
+      >
+        <h2 className="rename-modal-header">{title}</h2>
+        <input
+          ref={inputRef}
+          className="rename-modal-input"
+          type="text"
+          value={value}
+          placeholder="Enter name"
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={handleKeyDown}
+        />
+        <div className="rename-modal-buttons">
+          <button type="button" className="rename-modal-button" onClick={onCancel}>
+            Cancel
+          </button>
+          {onClear && (
+            <button type="button" className="rename-modal-button" onClick={onClear}>
+              Clear
+            </button>
+          )}
+          <button
+            type="button"
+            className="rename-modal-button rename-modal-save"
+            onClick={() => onSave((value || "").trim())}
+          >
+            {saveLabel || "OK"}
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
 
 // Create an <ion-icon> DOM element for use in Mapbox map controls.
 function createIonIcon(iconData, size = "20px") {
@@ -306,6 +394,21 @@ export default function Map() {
   const [featListSort, setFeatListSort] = useState("dist-asc");
   const [featListFilter, setFeatListFilter] = useState({ markers: true, sights: true, paths: true });
   const [mapCenterTick, setMapCenterTick] = useState(0);
+  const [featuresVersion, setFeaturesVersion] = useState(0);
+  const bumpFeaturesVersion = useCallback(() => setFeaturesVersion((v) => v + 1), []);
+  // Whenever the features list opens, refresh the memoised item list so any
+  // background mutations (creates, deletes, renames) are reflected immediately.
+  const skipNextMoveBumpRef = useRef(false);
+  // Bridge to call saved-feature persistence/hydration from the setup effect,
+  // which is declared before the callbacks are defined.
+  const persistSavedFeaturesRef = useRef(null);
+  const hydrateSavedFeaturesRef = useRef(null);
+  // Side actions (save/rename/delete) trigger a memo bump but shouldn't
+  // shuffle the user's rows. freezeFeatListOrderRef pins the current row
+  // order until the user explicitly changes sort/filter or the map moves
+  // (those are the only events that legitimately resort the list).
+  const freezeFeatListOrderRef = useRef(null); // null | { refs, sort, filter, tick }
+  const lastSortedRefsRef = useRef([]);
   const featListGlowCleanupRef = useRef(null);
   const sheetDragRef = useRef({ startY: 0, dragging: false });
   const featurePanelRef = useRef(null);
@@ -408,6 +511,8 @@ export default function Map() {
   const [offlineShowBase, setOfflineShowBase] = useState(true);
   const [offlineShowRegions, setOfflineShowRegions] = useState(true);
   const [shownRegionId, setShownRegionId] = useState(null);
+  const [selectedRoutingSubId, setSelectedRoutingSubId] = useState(null);
+  const [selectedFeatureListRef, setSelectedFeatureListRef] = useState(null);
   const [renameRegionTarget, setRenameRegionTarget] = useState(null);
 
   // Offline routing (Android only) — installed graphs + Geofabrik suggestions
@@ -903,6 +1008,7 @@ export default function Map() {
       };
       marker._markerName = "";
       markersRef.current.push(marker);
+      bumpFeaturesVersion();
       return marker;
     };
     createMarkerRef.current = createMarker;
@@ -1249,15 +1355,9 @@ export default function Map() {
           }
         }
         if (snapFailReason) {
-          const msg = snapFailReason === "offline"
-            ? "You're offline \u2014 path not snapped to road."
-            : snapFailReason === "no-offline-data"
-              ? "Couldn't snap path: no offline data and no network."
-              : snapFailReason === "no-source"
-                ? "Couldn't snap path: offline routing missed and network failed."
-                : "Couldn't snap path: network error.";
+          const msg = "Couldn't snap path to road.";
           setToastMsg(msg);
-          setTimeout(() => setToastMsg(null), 4000);
+          setTimeout(() => setToastMsg(null), 3000);
         }
         path.snappedSegments = segments;
         path.routeDistance = pathDistance;
@@ -3712,6 +3812,16 @@ export default function Map() {
         });
       });
     }
+
+    // Rehydrate user-saved features from localStorage (after URL imports so
+    // shared-link payloads win any id collision). Wait for style load so
+    // path layers/sources can be added.
+    const runHydrate = () => hydrateSavedFeaturesRef.current?.();
+    if (mapRef.current.isStyleLoaded()) {
+      runHydrate();
+    } else {
+      mapRef.current.once("load", runHydrate);
+    }
   }, []);
 
   // Handle file open from Android intent (e.g. opening a .gpx from Files app)
@@ -4161,6 +4271,7 @@ export default function Map() {
     if (markerMenu || mapClickMenu || isSideMenuOpen) {
       setSelectedFeature(null);
       setOpenFeaturesList(false);
+      setShowOfflineMapsPanel(false);
     }
   }, [markerMenu, mapClickMenu, isSideMenuOpen]);
 
@@ -4170,7 +4281,14 @@ export default function Map() {
       featListGlowCleanupRef.current();
       featListGlowCleanupRef.current = null;
     }
-  }, [showFeaturesList]);
+    if (!showFeaturesList) setSelectedFeatureListRef(null);
+    if (showFeaturesList) bumpFeaturesVersion();
+  }, [showFeaturesList, bumpFeaturesVersion]);
+
+  // Clear routing sub-selection when the offline panel closes.
+  useEffect(() => {
+    if (!showOfflineMapsPanel) setSelectedRoutingSubId(null);
+  }, [showOfflineMapsPanel]);
 
   // Dynamic toast position: 10px above feature panel in portrait
   const [toastBottom, setToastBottom] = useState(null);
@@ -4238,7 +4356,9 @@ export default function Map() {
     };
   }, [markerMenu]);
 
-  // Re-render dist-sorted list panels when the map center changes
+  // Re-render dist-sorted list panels when the map center changes.
+  // Programmatic moves triggered by a feature-list click are ignored so that
+  // clicking an item doesn't reorder the list under the user's finger.
   useEffect(() => {
     const distSortActive =
       (showFeaturesList && featListSort.startsWith("dist")) ||
@@ -4246,13 +4366,23 @@ export default function Map() {
     if (!distSortActive) return;
     const map = mapRef.current;
     if (!map) return;
-    const bump = () => setMapCenterTick((t) => t + 1);
+    const bump = () => {
+      if (skipNextMoveBumpRef.current) {
+        skipNextMoveBumpRef.current = false;
+        return;
+      }
+      setMapCenterTick((t) => t + 1);
+    };
     map.on("moveend", bump);
     return () => map.off("moveend", bump);
   }, [showFeaturesList, showOfflineMapsPanel, featListSort, offlineSort]);
 
   const handleCenterToMarker = () => {
-    mapRef.current.easeTo({ center: markerMenu.marker.getLngLat(), duration: 500 });
+    mapRef.current.easeTo({
+      center: markerMenu.marker.getLngLat(),
+      padding: { top: 0, bottom: 0, left: 0, right: 0 },
+      duration: 500,
+    });
     setMarkerMenu(null);
   };
 
@@ -4542,10 +4672,37 @@ export default function Map() {
     }
   };
 
-  const handleDeleteMarker = () => {
-    markerMenu.marker.remove();
-    markersRef.current = markersRef.current.filter((m) => m !== markerMenu.marker);
+  const handleDeleteMarker = (target) => {
+    const marker = target || markerMenu?.marker;
+    if (!marker) return;
+    const wasSaved = marker._saved;
+    const sightParent = marker._sightPath;
+    const parentSaved = !!sightParent?._saved;
+    if (sightParent && sightParent.sights) {
+      sightParent.sights = sightParent.sights.filter((m) => m !== marker);
+    }
+    marker.remove();
+    markersRef.current = markersRef.current.filter((m) => m !== marker);
+    if (!target) setMarkerMenu(null);
+    if (wasSaved || parentSaved) persistSavedFeaturesRef.current?.();
+    // Deletes should not trigger a re-sort of the list — just remove the row.
+    freezeFeatListOrderFnRef.current();
+    bumpFeaturesVersion();
+  };
+
+  const handleToggleSaveMarkerMenu = () => {
+    const marker = markerMenu?.marker;
+    if (!marker) return;
+    const type = marker._sightPath ? "sight" : "marker";
+    toggleSaveFeature({ type, ref: marker });
     setMarkerMenu(null);
+  };
+
+  const handleToggleSavePathMenu = () => {
+    const path = mapClickMenu?.path;
+    if (!path) return;
+    toggleSaveFeature({ type: "path", ref: path });
+    setMapClickMenu(null);
   };
 
   const handleDetachSight = () => {
@@ -4607,11 +4764,166 @@ export default function Map() {
     path.sights.push(newMarker);
   };
 
-  const handleSetNameMarker = () => {
-    namingTargetRef.current = { type: "marker", target: markerMenu.marker };
-    setMarkerMenu(null);
+  const handleSetNameMarker = (target) => {
+    const marker = target || markerMenu?.marker;
+    if (!marker) return;
+    namingTargetRef.current = { type: "marker", target: marker };
+    if (!target) setMarkerMenu(null);
     setNameAlert(true);
   };
+
+  const openRenameFromListItem = (item) => {
+    if (!item?.ref) return;
+    if (item.type === "path") {
+      namingTargetRef.current = { type: "path", target: item.ref };
+    } else {
+      namingTargetRef.current = { type: "marker", target: item.ref };
+    }
+    setNameAlert(true);
+  };
+
+  const deleteFromListItem = (item) => {
+    if (!item?.ref) return;
+    if (item.type === "path") {
+      setDeletePathAlert(item.ref);
+    } else {
+      handleDeleteMarker(item.ref);
+    }
+  };
+
+  // === Saved-feature persistence (localStorage) ===
+  const SAVED_FEATURES_KEY = "rontomap_saved_features";
+
+  const generateFeatureId = () =>
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `f-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+  const persistSavedFeatures = useCallback(() => {
+    try {
+      const savedMarkers = [];
+      for (const m of markersRef.current) {
+        if (!m._saved || m._sightPath) continue;
+        const ll = m.getLngLat();
+        const entry = {
+          id: m._id || (m._id = generateFeatureId()),
+          name: m._markerName || "",
+          pos: [ll.lat, ll.lng],
+        };
+        if (m._savedView) entry.savedView = m._savedView;
+        savedMarkers.push(entry);
+      }
+
+      const savedPaths = [];
+      for (const p of pathsRef.current) {
+        if (!p._saved) continue;
+        if (!p._id) p._id = generateFeatureId();
+        const pathData = {
+          id: p._id,
+          coords: p.vertices.map((v) => ({
+            long: v.lngLat[0],
+            lat: v.lngLat[1],
+            ...(v.force ? { force: true } : {}),
+          })),
+        };
+        if (p.name) pathData.name = p.name;
+        if (p.savedView) pathData.savedView = p.savedView;
+        if (p.roadSnap) pathData.roadSnap = p.roadSnap;
+        if (p.snappedSegments && p.snappedSegments.length > 0) {
+          pathData.snappedSegments = serializeSnappedSegments(p.snappedSegments);
+        }
+        if (p.routeDistance != null) pathData.routeDistance = p.routeDistance;
+        if (p.routeDuration != null) pathData.routeDuration = p.routeDuration;
+        if (p.isCircuit) pathData.isCircuit = true;
+        if (p.closingForced) pathData.closingForced = true;
+        if (p.isRoute) pathData.isRoute = true;
+        if (p.isTrack) pathData.isTrack = true;
+        if (p.sights && p.sights.length > 0) {
+          pathData.sights = p.sights.map((s) => {
+            const am = { segmentIndex: s._segmentIndex, t: s._t };
+            if (s._markerName) am.name = s._markerName;
+            if (s._savedView) am.savedView = s._savedView;
+            return am;
+          });
+        }
+        savedPaths.push(pathData);
+      }
+
+      localStorage.setItem(
+        SAVED_FEATURES_KEY,
+        JSON.stringify({ markers: savedMarkers, paths: savedPaths }),
+      );
+    } catch (e) {
+      console.warn("Failed to persist saved features", e);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const toggleSaveFeature = useCallback(
+    (item) => {
+      if (!item?.ref) return;
+      const target = item.ref;
+      if (!target._saved) {
+        target._saved = true;
+        if (!target._id) target._id = generateFeatureId();
+      } else {
+        target._saved = false;
+      }
+      persistSavedFeatures();
+      freezeFeatListOrderFnRef.current();
+      bumpFeaturesVersion();
+    },
+    [persistSavedFeatures, bumpFeaturesVersion],
+  );
+
+  const hydrateSavedFeatures = useCallback(() => {
+    try {
+      const raw = localStorage.getItem(SAVED_FEATURES_KEY);
+      if (!raw) return;
+      const data = JSON.parse(raw);
+      if (!data || (!data.markers?.length && !data.paths?.length)) return;
+
+      const createMarker = createMarkerRef.current;
+      if (!createMarker || !pathHelpersRef.current) return;
+
+      const markersBefore = markersRef.current.length;
+      const pathsBefore = pathsRef.current.length;
+
+      materializeFeatures(data, {
+        createMarker,
+        pathHelpersRef,
+        updateMarkerLabel,
+        deserializeSnappedSegments,
+        pathsRef,
+      });
+
+      // Tag newly-created free markers as saved and assign persisted ids in order.
+      const savedMarkerData = data.markers || [];
+      let mIdx = 0;
+      for (let i = markersBefore; i < markersRef.current.length; i++) {
+        const m = markersRef.current[i];
+        if (m._sightPath) continue;
+        m._saved = true;
+        const entry = savedMarkerData[mIdx++];
+        if (entry?.id) m._id = entry.id;
+      }
+      const savedPathData = data.paths || [];
+      for (let i = pathsBefore; i < pathsRef.current.length; i++) {
+        const p = pathsRef.current[i];
+        p._saved = true;
+        const entry = savedPathData[i - pathsBefore];
+        if (entry?.id) p._id = entry.id;
+      }
+
+      bumpFeaturesVersion();
+    } catch (e) {
+      console.warn("Failed to hydrate saved features", e);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bumpFeaturesVersion]);
+
+  persistSavedFeaturesRef.current = persistSavedFeatures;
+  hydrateSavedFeaturesRef.current = hydrateSavedFeatures;
 
   // === Feature panel action handlers ===
   const getPanelPadding = () => {
@@ -4751,7 +5063,21 @@ export default function Map() {
     setFeatListSort((prev) => (prev === `${field}-asc` ? `${field}-desc` : `${field}-asc`));
   };
 
-  const buildFeaturesList = () => {
+  // Capture the current row order + dep values so the next memo runs keep
+  // the list pinned. Released automatically inside the memo when the user
+  // changes sort/filter or the map moves.
+  const freezeFeatListOrder = () => {
+    freezeFeatListOrderRef.current = {
+      refs: lastSortedRefsRef.current.slice(),
+      sort: featListSort,
+      filter: featListFilter,
+      tick: mapCenterTick,
+    };
+  };
+  const freezeFeatListOrderFnRef = useRef(freezeFeatListOrder);
+  freezeFeatListOrderFnRef.current = freezeFeatListOrder;
+
+  const featuresListItems = useMemo(() => {
     const map = mapRef.current;
     if (!map) return [];
     const center = map.getCenter();
@@ -4768,41 +5094,46 @@ export default function Map() {
           dist: haversinePoint(center.lat, center.lng, ll.lat, ll.lng),
           length: 0,
           ref: m,
+          _saved: !!m._saved,
         });
-      }
-    }
-
-    if (featListFilter.sights) {
-      for (const p of pathsRef.current) {
-        if (!p.sights) continue;
-        for (const s of p.sights) {
-          const ll = s.getLngLat();
-          items.push({
-            type: "sight",
-            name: s._markerName || "Sight",
-            lngLat: ll,
-            dist: haversinePoint(center.lat, center.lng, ll.lat, ll.lng),
-            length: 0,
-            ref: s,
-          });
-        }
       }
     }
 
     if (featListFilter.paths) {
       for (const p of pathsRef.current) {
         if (!p.isFinished) continue;
+        if (!p.vertices || p.vertices.length === 0) continue;
         const bounds = new mapboxgl.LngLatBounds();
-        if (p.snappedSegments) {
-          p.snappedSegments.forEach((seg) => seg.coords.forEach((c) => bounds.extend(c)));
-        } else {
-          p.vertices.forEach((v) => bounds.extend(v.lngLat));
+        let extended = false;
+        if (p.snappedSegments && p.snappedSegments.length > 0) {
+          p.snappedSegments.forEach((seg) => seg.coords.forEach((c) => { bounds.extend(c); extended = true; }));
         }
+        if (!extended) {
+          p.vertices.forEach((v) => { bounds.extend(v.lngLat); extended = true; });
+        }
+        if (!extended) continue;
         const c = bounds.getCenter();
         let dist = p.routeDistance;
         if (dist == null && p.vertices.length >= 2) {
           dist = haversineDistance(p.vertices.map((v) => v.lngLat));
         }
+        // Sights belong to their parent path. They inherit the save state of
+        // the path implicitly, so they have no independent _saved flag.
+        const sights =
+          featListFilter.sights && p.sights && p.sights.length > 0
+            ? p.sights.map((s) => {
+                const sll = s.getLngLat();
+                return {
+                  type: "sight",
+                  name: s._markerName || "Sight",
+                  lngLat: sll,
+                  dist: haversinePoint(center.lat, center.lng, sll.lat, sll.lng),
+                  length: 0,
+                  ref: s,
+                  parentPath: p,
+                };
+              })
+            : [];
         items.push({
           type: "path",
           name: p.name || "Path",
@@ -4812,23 +5143,61 @@ export default function Map() {
           snap: p.roadSnap,
           duration: p.routeDuration,
           ref: p,
+          _saved: !!p._saved,
+          sights,
         });
       }
     }
 
-    const [field, dir] = featListSort.split("-");
-    const mul = dir === "desc" ? -1 : 1;
-    items.sort((a, b) => {
-      if (field === "name") return mul * a.name.localeCompare(b.name);
-      if (field === "dist") return mul * (a.dist - b.dist);
-      if (field === "length") return mul * (a.length - b.length);
-      return 0;
-    });
+    const frozen = freezeFeatListOrderRef.current;
+    const frozenStillValid =
+      frozen &&
+      frozen.sort === featListSort &&
+      frozen.filter === featListFilter &&
+      frozen.tick === mapCenterTick;
+
+    if (frozenStillValid) {
+      // `Map` here refers to the enclosing component (`function Map()`),
+      // so we reach through globalThis for the built-in constructor.
+      const orderMap = new globalThis.Map(frozen.refs.map((r, i) => [r, i]));
+      items.sort((a, b) => {
+        const ai = orderMap.has(a.ref) ? orderMap.get(a.ref) : Number.POSITIVE_INFINITY;
+        const bi = orderMap.has(b.ref) ? orderMap.get(b.ref) : Number.POSITIVE_INFINITY;
+        return ai - bi;
+      });
+    } else {
+      if (frozen) freezeFeatListOrderRef.current = null;
+      const [field, dir] = featListSort.split("-");
+      const mul = dir === "desc" ? -1 : 1;
+      items.sort((a, b) => {
+        if (field === "name") return mul * a.name.localeCompare(b.name);
+        if (field === "dist") return mul * (a.dist - b.dist);
+        if (field === "length") {
+          const aIsPath = a.type === "path";
+          const bIsPath = b.type === "path";
+          if (aIsPath !== bIsPath) return aIsPath ? -1 : 1;
+          return mul * (a.length - b.length);
+        }
+        return 0;
+      });
+    }
+    lastSortedRefsRef.current = items.map((it) => it.ref);
 
     return items;
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [featListFilter, featListSort, mapCenterTick, featuresVersion]);
 
   const handleFeatureListClick = (item) => {
+    // Toggle selection: clicking the already-selected row collapses it.
+    if (selectedFeatureListRef === item.ref) {
+      setSelectedFeatureListRef(null);
+      if (featListGlowCleanupRef.current) {
+        featListGlowCleanupRef.current();
+        featListGlowCleanupRef.current = null;
+      }
+      return;
+    }
+    setSelectedFeatureListRef(item.ref);
     // Clear previous glow
     if (featListGlowCleanupRef.current) {
       featListGlowCleanupRef.current();
@@ -4859,12 +5228,17 @@ export default function Map() {
       }
       // Center
       const bounds = new mapboxgl.LngLatBounds();
-      if (path.snappedSegments) {
-        path.snappedSegments.forEach((seg) => seg.coords.forEach((c) => bounds.extend(c)));
-      } else {
-        path.vertices.forEach((v) => bounds.extend(v.lngLat));
+      let extended = false;
+      if (path.snappedSegments && path.snappedSegments.length > 0) {
+        path.snappedSegments.forEach((seg) => seg.coords.forEach((c) => { bounds.extend(c); extended = true; }));
       }
-      map.easeTo({ center: bounds.getCenter(), padding: pp, duration: 500 });
+      if (!extended) {
+        path.vertices.forEach((v) => { bounds.extend(v.lngLat); extended = true; });
+      }
+      if (extended) {
+        skipNextMoveBumpRef.current = true;
+        map.easeTo({ center: bounds.getCenter(), padding: pp, duration: 500 });
+      }
 
       featListGlowCleanupRef.current = () => {
         if (map.getLayer(path.layerId)) {
@@ -4877,6 +5251,7 @@ export default function Map() {
       const el = item.ref.getElement();
       el.classList.add("feature-glow");
       glowEls.push(el);
+      skipNextMoveBumpRef.current = true;
       map.easeTo({ center: item.ref.getLngLat(), padding: pp, offset: [0, 20], duration: 500 });
 
       featListGlowCleanupRef.current = () => {
@@ -5023,7 +5398,11 @@ export default function Map() {
   };
 
   const handleCenterHere = () => {
-    mapRef.current.easeTo({ center: mapClickMenu.lngLat, duration: 500 });
+    mapRef.current.easeTo({
+      center: mapClickMenu.lngLat,
+      padding: { top: 0, bottom: 0, left: 0, right: 0 },
+      duration: 500,
+    });
     setMapClickMenu(null);
   };
 
@@ -6164,6 +6543,7 @@ export default function Map() {
   const confirmDeletePath = () => {
     const path = deletePathAlert;
     if (!path) return;
+    const wasSaved = path._saved;
     const map = mapRef.current;
     const hitLayerId = `${path.layerId}-hit`;
     const arrowLayerId = `${path.layerId}-arrows`;
@@ -6189,6 +6569,9 @@ export default function Map() {
       setIsPathMode(false);
       setToastMsg(null);
     }
+    if (wasSaved) persistSavedFeaturesRef.current?.();
+    freezeFeatListOrderFnRef.current();
+    bumpFeaturesVersion();
   };
 
   const handleCancelPathRequest = () => {
@@ -6329,7 +6712,11 @@ export default function Map() {
     } else {
       path.vertices.forEach((v) => bounds.extend(v.lngLat));
     }
-    map.easeTo({ center: bounds.getCenter(), duration: 500 });
+    map.easeTo({
+      center: bounds.getCenter(),
+      padding: { top: 0, bottom: 0, left: 0, right: 0 },
+      duration: 500,
+    });
   };
 
   const handleFlyToPath = () => {
@@ -7131,6 +7518,7 @@ export default function Map() {
     const padding = isPortrait
       ? { top: 60, right: 60, bottom: 60 + panelSize, left: 60 }
       : { top: 60, right: 60, bottom: 60, left: 60 + panelSize };
+    skipNextMoveBumpRef.current = true;
     map.fitBounds(
       [
         [region.west, region.south],
@@ -7301,73 +7689,52 @@ export default function Map() {
           },
         ]}
       ></IonAlert>
-      <IonAlert
+      <RenameModal
         isOpen={nameAlert}
-        cssClass={`name-alert${idMapStyle === "rontomap_streets_dark" ? " name-alert-dark alert-dark" : ""}`}
-        onDidDismiss={() => setNameAlert(false)}
-        onDidPresent={() => {
-          setTimeout(() => {
-            const input = document.querySelector("ion-alert .alert-input");
-            if (input) {
-              input.focus();
-              input.addEventListener("keydown", (e) => {
-                if (e.key === "Enter") {
-                  const t = namingTargetRef.current;
-                  if (t) {
-                    if (t.type === "path") {
-                      t.target.name = input.value || "";
-                    } else {
-                      t.target._markerName = input.value || "";
-                      updateMarkerLabel(t.target);
-                    }
-                  }
-                  setNameAlert(false);
-                }
-              });
-            }
-          }, 100);
+        isDark={idMapStyle === "rontomap_streets_dark"}
+        title={namingTargetRef.current?.type === "path" ? "Path name" : "Marker name"}
+        initialValue={
+          namingTargetRef.current?.type === "path"
+            ? namingTargetRef.current?.target?.name ?? ""
+            : namingTargetRef.current?.target?._markerName ?? ""
+        }
+        onCancel={() => {
+          setNameAlert(false);
+          const t = namingTargetRef.current;
+          if (t?.target?._saved) persistSavedFeaturesRef.current?.();
+          freezeFeatListOrderFnRef.current();
+          bumpFeaturesVersion();
         }}
-        header={namingTargetRef.current?.type === "path" ? "Path name" : "Marker name"}
-        inputs={[
-          {
-            name: "name",
-            type: "text",
-            placeholder: "Enter name",
-            value:
-              namingTargetRef.current?.type === "path"
-                ? namingTargetRef.current?.target?.name ?? ""
-                : namingTargetRef.current?.target?._markerName ?? "",
-          },
-        ]}
-        buttons={[
-          { text: "Cancel", role: "cancel" },
-          {
-            text: "Clear",
-            handler: () => {
-              const t = namingTargetRef.current;
-              if (!t) return;
-              if (t.type === "path") {
-                t.target.name = "";
-              } else {
-                t.target._markerName = "";
-                updateMarkerLabel(t.target);
-              }
-            },
-          },
-          {
-            text: "OK",
-            handler: (data) => {
-              const t = namingTargetRef.current;
-              if (!t) return;
-              if (t.type === "path") {
-                t.target.name = data.name || "";
-              } else {
-                t.target._markerName = data.name || "";
-                updateMarkerLabel(t.target);
-              }
-            },
-          },
-        ]}
+        onClear={() => {
+          const t = namingTargetRef.current;
+          if (t) {
+            if (t.type === "path") {
+              t.target.name = "";
+            } else {
+              t.target._markerName = "";
+              updateMarkerLabel(t.target);
+            }
+          }
+          setNameAlert(false);
+          if (t?.target?._saved) persistSavedFeaturesRef.current?.();
+          freezeFeatListOrderFnRef.current();
+          bumpFeaturesVersion();
+        }}
+        onSave={(name) => {
+          const t = namingTargetRef.current;
+          if (t) {
+            if (t.type === "path") {
+              t.target.name = name;
+            } else {
+              t.target._markerName = name;
+              updateMarkerLabel(t.target);
+            }
+          }
+          setNameAlert(false);
+          if (t?.target?._saved) persistSavedFeaturesRef.current?.();
+          freezeFeatListOrderFnRef.current();
+          bumpFeaturesVersion();
+        }}
       />
       <IonAlert
         isOpen={stopRecordingAlert}
@@ -7497,10 +7864,15 @@ export default function Map() {
             <button onClick={handleCopyLinkMarker}>{markerMenu.marker._sightPath ? "Copy link to sight" : "Copy link to marker"}</button>
             <button onClick={handleCopyMarkerCode}>{markerMenu.marker._sightPath ? "Copy embedded sight" : "Copy embedded marker"}</button>
             <button onClick={handleExportMarker}>{markerMenu.marker._sightPath ? "Export sight" : "Export marker"}</button>
-            <button onClick={handleSetNameMarker}>{markerMenu.marker._sightPath ? "Set name to sight" : "Set name to marker"}</button>
             <button onClick={handleSaveMarkerView}>{markerMenu.marker._sightPath ? "Save view to sight" : "Save view to marker"}</button>
             {markerMenu.marker._sightPath && <button onClick={handleDetachSight}>Detach sight</button>}
-            <button onClick={handleDeleteMarker}>{markerMenu.marker._sightPath ? "Delete sight" : "Delete marker"}</button>
+            <button onClick={() => handleSetNameMarker()}>{markerMenu.marker._sightPath ? "Set name to sight" : "Set name to marker"}</button>
+            {!markerMenu.marker._sightPath && (
+              <button onClick={handleToggleSaveMarkerMenu}>
+                {markerMenu.marker._saved ? "Unsave marker" : "Save marker"}
+              </button>
+            )}
+            <button onClick={() => handleDeleteMarker()}>{markerMenu.marker._sightPath ? "Delete sight" : "Delete marker"}</button>
           </div>
         </>
       )}
@@ -7580,12 +7952,15 @@ export default function Map() {
                 <button onClick={handleCopyLinkPath}>Copy link to path</button>
                 <button onClick={handleCopyEmbeddedPath}>Copy embedded path</button>
                 <button onClick={handleExportPath}>Export path</button>
-                <button onClick={handleSetPathName}>Set name to path</button>
                 <button onClick={handleSavePathView}>Save view to path</button>
                 <button onClick={handleEditPath}>Edit path</button>
                 <button onClick={handleReversePath}>Reverse path</button>
                 <button onClick={handleAddSight}>Add sight to path</button>
                 <button onClick={handleTracePath}>Trace path</button>
+                <button onClick={handleSetPathName}>Set name to path</button>
+                <button onClick={handleToggleSavePathMenu}>
+                  {mapClickMenu.path._saved ? "Unsave path" : "Save path"}
+                </button>
                 <button onClick={handleDeletePath}>Delete path</button>
               </>
             ) : (
@@ -7747,7 +8122,7 @@ export default function Map() {
         </div>
       )}
       {showFeaturesList && !selectedFeature && (() => {
-        const items = buildFeaturesList();
+        const items = featuresListItems;
         const [sortField, sortDir] = featListSort.split("-");
         const darkClass = idMapStyle === "rontomap_streets_dark" ? " panel-dark" : "";
         return (
@@ -7792,25 +8167,65 @@ export default function Map() {
               </ActionIconButton>
             </div>
             <div className="panel-list-items">
-              {items.map((item, i) => (
-                <div key={i} className="panel-list-item" onClick={() => handleFeatureListClick(item)}>
-                  <IonIcon icon={item.type === "path" ? analyticsOutline : item.type === "sight" ? pinOutline : locationOutline} className={`panel-list-icon panel-list-icon-${item.type}`} />
-                  <div className="panel-list-text">
-                    <span className="panel-list-name">{item.name}</span>
-                    <span className="panel-list-info">
-                      {item.type === "path"
-                        ? [
-                            item.snap === "foot" ? "Foot" : item.snap === "bike" ? "Bike" : item.snap === "car" ? "Car" : "Free",
-                            item.length > 0 ? formatDistance(item.length) : null,
-                            item.duration != null ? formatDuration(item.duration) : null,
-                          ].filter(Boolean).join(" \u00b7 ")
-                        : `${item.lngLat.lat.toFixed(6)}, ${item.lngLat.lng.toFixed(6)}`}
-                    </span>
-                  </div>
-                  {sortField === "dist" && <span className="panel-list-meta">{formatDistance(item.dist)}</span>}
-                  {sortField === "length" && item.type === "path" && item.length > 0 && <span className="panel-list-meta">{formatDistance(item.length)}</span>}
-                </div>
-              ))}
+              {items.map((item, i) => {
+                const renderRow = (row, nested) => {
+                  const iconIcon = row.type === "path" ? analyticsOutline : row.type === "sight" ? pinOutline : locationOutline;
+                  const selected = row.ref === selectedFeatureListRef;
+                  return (
+                    <div
+                      className="panel-list-item"
+                      style={nested ? { paddingLeft: 28 } : undefined}
+                      onClick={() => handleFeatureListClick(row)}
+                    >
+                      <IonIcon icon={iconIcon} className={`panel-list-icon panel-list-icon-${row.type}`} />
+                      <div className="panel-list-text">
+                        <span className="panel-list-name">{row.name}</span>
+                        <span className="panel-list-info">
+                          {row.type === "path"
+                            ? [
+                                row.snap === "foot" ? "Foot" : row.snap === "bike" ? "Bike" : row.snap === "car" ? "Car" : "Free",
+                                row.length > 0 ? formatDistance(row.length) : null,
+                                row.duration != null ? formatDuration(row.duration) : null,
+                              ].filter(Boolean).join(" \u00b7 ")
+                            : `${row.lngLat.lat.toFixed(6)}, ${row.lngLat.lng.toFixed(6)}`}
+                        </span>
+                      </div>
+                      {selected && (
+                        <>
+                          <ActionIconButton
+                            label="Rename"
+                            onClick={(e) => { e.stopPropagation(); openRenameFromListItem(row); }}
+                          >
+                            <IonIcon icon={pencilOutline} />
+                          </ActionIconButton>
+                          {row.type !== "sight" && (
+                            <ActionIconButton
+                              label={row._saved ? "Unsave" : "Save"}
+                              onClick={(e) => { e.stopPropagation(); toggleSaveFeature(row); }}
+                            >
+                              <IonIcon icon={row._saved ? bookmark : bookmarkOutline} />
+                            </ActionIconButton>
+                          )}
+                          <ActionIconButton
+                            label="Delete"
+                            onClick={(e) => { e.stopPropagation(); deleteFromListItem(row); }}
+                          >
+                            <IonIcon icon={trashOutline} />
+                          </ActionIconButton>
+                        </>
+                      )}
+                    </div>
+                  );
+                };
+                return (
+                  <Fragment key={i}>
+                    {renderRow(item, false)}
+                    {item.type === "path" && item.sights && item.sights.map((sight, j) => (
+                      <Fragment key={`s-${j}`}>{renderRow(sight, true)}</Fragment>
+                    ))}
+                  </Fragment>
+                );
+              })}
               {items.length === 0 && <div className="panel-list-empty">No features</div>}
             </div>
           </div>
@@ -7857,27 +8272,35 @@ export default function Map() {
           return dir * ((a.name || a.id || "").localeCompare(b.name || b.id || ""));
         });
         const baseMapBlock = offlineBaseMap && (
-          <div key="base" className="panel-list-item panel-list-item-base">
+          <div
+            key="base"
+            className={`panel-list-item panel-list-item-base${shownRegionId === "__base__" ? " panel-list-item-active" : ""}`}
+            onClick={() => setShownRegionId((id) => (id === "__base__" ? null : "__base__"))}
+          >
             <IonIcon icon={globeOutline} className="panel-list-icon" />
             <div className="panel-list-text">
               <span className="panel-list-name">Base map</span>
               <span className="panel-list-info">
                 {`${(offlineBaseMap.tileCount ?? 0).toLocaleString()} tiles \u00b7 ${formatBytes(offlineBaseMap.sizeBytes)}`}
-                {offSortField === "date" && formatRegionDate(offlineBaseMap) && <> {"\u00b7 "}{formatRegionDate(offlineBaseMap)}</>}
+                {formatRegionDate(offlineBaseMap) && <> {"\u00b7 "}{formatRegionDate(offlineBaseMap)}</>}
               </span>
             </div>
-            <ActionIconButton
-              label="Update"
-              onClick={(e) => { e.stopPropagation(); ensureBaseMap({ force: true }); }}
-            >
-              <IonIcon icon={refreshOutline} />
-            </ActionIconButton>
-            <ActionIconButton
-              label="Delete"
-              onClick={(e) => { e.stopPropagation(); setOfflineBaseDeleteAlert(true); }}
-            >
-              <IonIcon icon={trashOutline} />
-            </ActionIconButton>
+            {shownRegionId === "__base__" && (
+              <>
+                <ActionIconButton
+                  label="Update"
+                  onClick={(e) => { e.stopPropagation(); ensureBaseMap({ force: true }); }}
+                >
+                  <IonIcon icon={refreshOutline} />
+                </ActionIconButton>
+                <ActionIconButton
+                  label="Delete"
+                  onClick={(e) => { e.stopPropagation(); setOfflineBaseDeleteAlert(true); }}
+                >
+                  <IonIcon icon={trashOutline} />
+                </ActionIconButton>
+              </>
+            )}
           </div>
         );
         return (
@@ -7981,30 +8404,31 @@ export default function Map() {
                         <span className="panel-list-name">{r.name}</span>
                         <span className="panel-list-info">
                           {`${(r.tileCount ?? 0).toLocaleString()} tiles \u00b7 ${formatBytes(r.sizeBytes)}`}
-                          {offSortField === "date" && formatRegionDate(r) && <> {"\u00b7 "}{formatRegionDate(r)}</>}
-                          {offSortField === "dist" && mapCenter && (
-                            <> {"\u00b7 "}{formatDistance(distToCenter(r))}</>
-                          )}
+                          {formatRegionDate(r) && <> {"\u00b7 "}{formatRegionDate(r)}</>}
                         </span>
                       </div>
-                      <ActionIconButton
-                        label="Rename"
-                        onClick={(e) => { e.stopPropagation(); setRenameRegionTarget(r); }}
-                      >
-                        <IonIcon icon={pencilOutline} />
-                      </ActionIconButton>
-                      <ActionIconButton
-                        label="Update"
-                        onClick={(e) => { e.stopPropagation(); handleUpdateOfflineRegion(r); }}
-                      >
-                        <IonIcon icon={refreshOutline} />
-                      </ActionIconButton>
-                      <ActionIconButton
-                        label="Delete"
-                        onClick={(e) => { e.stopPropagation(); handleDeleteOfflineRegion(r); }}
-                      >
-                        <IonIcon icon={trashOutline} />
-                      </ActionIconButton>
+                      {shownRegionId === r.id && (
+                        <>
+                          <ActionIconButton
+                            label="Rename"
+                            onClick={(e) => { e.stopPropagation(); setRenameRegionTarget(r); }}
+                          >
+                            <IonIcon icon={pencilOutline} />
+                          </ActionIconButton>
+                          <ActionIconButton
+                            label="Update"
+                            onClick={(e) => { e.stopPropagation(); handleUpdateOfflineRegion(r); }}
+                          >
+                            <IonIcon icon={refreshOutline} />
+                          </ActionIconButton>
+                          <ActionIconButton
+                            label="Delete"
+                            onClick={(e) => { e.stopPropagation(); handleDeleteOfflineRegion(r); }}
+                          >
+                            <IonIcon icon={trashOutline} />
+                          </ActionIconButton>
+                        </>
+                      )}
                     </div>
                   ))
                 )
@@ -8033,16 +8457,19 @@ export default function Map() {
                       const pct = active ? routingProgress.pct : null;
                       const indeterminate = active && pct != null && pct < 0;
                       const ringOffset = active && pct >= 0 ? 87.96 * (1 - pct / 100) : 87.96;
+                      const subKey = `suggest-${s.id}`;
+                      const expanded = selectedRoutingSubId === subKey;
                       return (
-                        <div key={`suggest-${s.id}`} style={{ display: "flex", alignItems: "center", gap: 8, paddingLeft: 28 }}>
+                        <div
+                          key={subKey}
+                          style={{ display: "flex", alignItems: "center", gap: 8, paddingLeft: 28, cursor: "pointer" }}
+                          onClick={() => setSelectedRoutingSubId((cur) => (cur === subKey ? null : subKey))}
+                        >
                           <div className="panel-list-text" style={{ flex: 1 }}>
                             <span className="panel-list-name">{s.name}</span>
                             <span className="panel-list-info">
                               {formatBytesGeofabrik(s.sizeBytes)} PBF
                               {active && ` \u00b7 ${pct >= 0 ? `${routingProgress.phase} ${pct}%` : (routingProgress.message || routingProgress.phase)}`}
-                              {offSortField === "dist" && mapCenter && s.bbox && (
-                                <> {"\u00b7 "}{formatDistance(distToBbox(s.bbox))}</>
-                              )}
                             </span>
                           </div>
                           {active ? (
@@ -8068,12 +8495,14 @@ export default function Map() {
                               </ActionIconButton>
                             </div>
                           ) : (
-                            <ActionIconButton
-                              label="Download routing data"
-                              onClick={(e) => { e.stopPropagation(); handleDownloadRoutingRegion(s); }}
-                            >
-                              <IonIcon icon={downloadOutline} />
-                            </ActionIconButton>
+                            expanded && (
+                              <ActionIconButton
+                                label="Download routing data"
+                                onClick={(e) => { e.stopPropagation(); handleDownloadRoutingRegion(s); }}
+                              >
+                                <IonIcon icon={downloadOutline} />
+                              </ActionIconButton>
+                            )
                           )}
                         </div>
                       );
@@ -8083,19 +8512,22 @@ export default function Map() {
                     const pct = active ? routingProgress.pct : null;
                     const indeterminate = active && pct != null && pct < 0;
                     const ringOffset = active && pct >= 0 ? 87.96 * (1 - pct / 100) : 87.96;
-                    const dateLabel = offSortField === "date" && r.updatedAt
+                    const dateLabel = r.updatedAt
                       ? new Date(r.updatedAt).toLocaleDateString()
                       : null;
+                    const subKey = `installed-${r.id}`;
+                    const expanded = selectedRoutingSubId === subKey;
                     return (
-                      <div key={`installed-${r.id}`} style={{ display: "flex", alignItems: "center", gap: 8, paddingLeft: 28 }}>
+                      <div
+                        key={subKey}
+                        style={{ display: "flex", alignItems: "center", gap: 8, paddingLeft: 28, cursor: "pointer" }}
+                        onClick={() => setSelectedRoutingSubId((cur) => (cur === subKey ? null : subKey))}
+                      >
                         <div className="panel-list-text" style={{ flex: 1 }}>
                           <span className="panel-list-name">{r.name || r.id}</span>
                           <span className="panel-list-info">
                             {formatBytesGeofabrik(r.sizeBytes)}{" \u00b7 car, bike, foot"}
                             {dateLabel && <> {"\u00b7 "}{dateLabel}</>}
-                            {offSortField === "dist" && mapCenter && r.bbox && (
-                              <> {"\u00b7 "}{formatDistance(distToBbox(r.bbox))}</>
-                            )}
                             {active && ` \u00b7 ${pct >= 0 ? `${routingProgress.phase} ${pct}%` : (routingProgress.message || routingProgress.phase)}`}
                           </span>
                         </div>
@@ -8121,7 +8553,7 @@ export default function Map() {
                               <IonIcon icon={closeOutline} />
                             </ActionIconButton>
                           </div>
-                        ) : (
+                        ) : expanded && (
                           <>
                             <ActionIconButton
                               label="Update routing data"
@@ -8233,33 +8665,24 @@ export default function Map() {
           },
         ]}
       />
-      <IonAlert
+      <RenameModal
         isOpen={!!renameRegionTarget}
-        cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
-        onDidDismiss={() => setRenameRegionTarget(null)}
-        header="Rename offline map"
-        inputs={[
-          {
-            name: "name",
-            type: "text",
-            placeholder: "Region name",
-            value: renameRegionTarget?.name || "",
-          },
-        ]}
-        buttons={[
-          { text: "Cancel", role: "cancel" },
-          {
-            text: "Save",
-            handler: async (data) => {
-              const name = (data?.name || "").trim();
-              const target = renameRegionTarget;
-              if (!target || !name || name === target.name) return;
-              const reg = await navigator.serviceWorker?.ready;
-              const sw = reg?.active;
-              if (sw) sw.postMessage({ type: "RENAME_REGION", regionId: target.id, name });
-            },
-          },
-        ]}
+        isDark={idMapStyle === "rontomap_streets_dark"}
+        title="Rename offline map"
+        initialValue={renameRegionTarget?.name || ""}
+        saveLabel="Save"
+        onCancel={() => setRenameRegionTarget(null)}
+        onSave={async (name) => {
+          const target = renameRegionTarget;
+          if (!target || !name || name === target.name) {
+            setRenameRegionTarget(null);
+            return;
+          }
+          const reg = await navigator.serviceWorker?.ready;
+          const sw = reg?.active;
+          if (sw) sw.postMessage({ type: "RENAME_REGION", regionId: target.id, name });
+          setRenameRegionTarget(null);
+        }}
       />
       {selectedFeature && (
         <>

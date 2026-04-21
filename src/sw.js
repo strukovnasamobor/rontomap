@@ -142,10 +142,37 @@ self.addEventListener("activate", (event) => {
           .filter((k) => k !== APP_CACHE && k !== TILES_CACHE)
           .map((k) => caches.delete(k)),
       );
+
+      // Prune stale APP_CACHE entries from previous builds (hashed bundle
+      // filenames change every build). Without this, a prior install's
+      // service worker can leave the cache holding an index.html that
+      // references JS files which no longer exist in the new APK —
+      // causing 404s on first launch after an update on Capacitor Android
+      // (WebView SW state survives reinstall).
+      const cache = await caches.open(APP_CACHE);
+      const expected = new Set(
+        [...SHELL_URLS, ...PRECACHE_URLS].map((u) =>
+          new URL(u, self.location.origin).toString(),
+        ),
+      );
+      const cachedReqs = await cache.keys();
+      await Promise.all(
+        cachedReqs
+          .filter((req) => !expected.has(req.url))
+          .map((req) => cache.delete(req)),
+      );
+
       await self.clients.claim();
+
+      // If an existing client was rendered by the previous SW with a
+      // stale shell, reload it so it picks up the current index.html.
+      const windowClients = await self.clients.matchAll({ type: "window" });
+      windowClients.forEach((c) => {
+        if (typeof c.navigate === "function") c.navigate(c.url);
+      });
+
       // Fire-and-forget: fill the rest of the precache without blocking
       // activation. Failures here only degrade offline-readiness.
-      const cache = await caches.open(APP_CACHE);
       Promise.allSettled(
         PRECACHE_URLS.filter((u) => !SHELL_URLS.includes(u)).map((u) =>
           cachePutClean(cache, u),

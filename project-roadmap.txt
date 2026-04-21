@@ -46,6 +46,7 @@ id | action                      | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10| 11| 1
   elapsed time in format hh:mm (do not count time in pause ?), on geolocate remove tost msg "recording paused",
   tracking info at bottom
 
+
 - vite.config.js - Set to true in production for logs
 - deploy version 1.3. (4), generate functionalities description
 
@@ -101,9 +102,9 @@ UI DESIGN & INTERACTIONS
 - double left mouse click / double tap => fullscreen enter/exit
 - right mouse click / long tap on map/feature => context menu opens (in embedded disabled)
     - map: Center here, Navigate here, Add marker here, Create path here
-    - marker: Center to marker, Fly to marker, Navigate to marker, Copy link to marker, Copy embedded marker, Export marker, Set name to marker, Save view to marker, Delete marker
-    - sight: Center to sight, Fly to sight, Navigate to sight, Copy link to sight, Copy embedded sight, Export sight, Set name to sight, Save view to sight, Detach sight, Delete sight
-    - path: Center to path, Fly to path, Navigate to path start, Copy link to path, Copy embedded path, Export path, Set name to path, Save view to path, Edit path, Reverse path, Add sight to path, Trace path, Delete path
+    - marker: Center to marker, Fly to marker, Navigate to marker, Copy link to marker, Copy embedded marker, Export marker, Save view to marker, Set name to marker, Save marker, Delete marker
+    - sight: Center to sight, Fly to sight, Navigate to sight, Copy link to sight, Copy embedded sight, Export sight, Save view to sight, Detach sight, Set name to sight, Delete sight
+    - path: Center to path, Fly to path, Navigate to path start, Copy link to path, Copy embedded path, Export path, Save view to path, Edit path, Reverse path, Add sight to path, Trace path, Set name to path, Save sight, Delete path
 - mouse wheel => zoom in/out
 - mouse over feature (alias cursor icon)
 - mouse over draggable feature (grab cursor icon)
@@ -134,14 +135,19 @@ FEATURES LIST PANEL
 - on landscape - left sidebar
 - on portrait - peeking bottom sheet (minimized - max-height: 25dvh, half state - height: 50dvh, expanded - height: 75dvh)
 - action icons
-    - Sort by distance (asc/desc) - ion-icon name="radio-outline" - show distance from map center
-    - Sort by name (asc/desc) - ion-icon "text-outline" - not showing additional data
-    - Sort by length (asc/desc) - ion-icon name="resize-outline" - show path length
+    - Sort by distance (asc/desc) - ion-icon name="radio-outline"
+    - Sort by name (asc/desc) - ion-icon "text-outline"
+    - Sort by length (asc/desc) - ion-icon name="resize-outline" 
     - Show/Hide Markers (toggle on/off for filtering) - ion-icon name="location-outline"
     - Show/Hide Sights (toggle on/off for filtering) - ion-icon name="pin-outline"
     - Show/Hide Paths (toggle on/off for filtering) - ion-icon name="analytics-outline"
     - Close - ion-icon name="close-outline"
-- list of features with name and below name show for marker/sight - coordinates, for path - snapping, distance, duration (for snapped paths)
+- list of features with name and details showing for marker/sight - coordinates, for path - snapping, distance, duration (for snapped paths)
+ with side icons actions (show when feature is clicked)
+    - Rename - ion-icon name="pencil-outline"
+    - Save/Unsave - ion-icon name="bookmark-outline"/ion-icon name="bookmark"
+    - Delete - ion-icon name="trash-outline"
+- sights show nested in there paths and implicitly save/unsave sync with the path, so no save/unsave side icon
 - when feature is clicked center to map and glow, do not open features detail panel
 
 OFFLINE MAPS PANEL
@@ -149,16 +155,16 @@ OFFLINE MAPS PANEL
 - on landscape - left sidebar
 - on portrait - peeking bottom sheet (minimized - max-height: 25dvh, half state - height: 50dvh, expanded - height: 75dvh)
 - action icons
-    - Sort by distance (asc/desc) - ion-icon name="radio-outline" - show distance from map center
-    - Sort by name (asc/desc) - ion-icon "text-outline" - not showing additional data
-    - Sort by date (asc/desc) - ion-icon name="time-outline" - show date when region was downloaded/updated
+    - Sort by distance (asc/desc) - ion-icon name="radio-outline"
+    - Sort by name (asc/desc) - ion-icon "text-outline"
+    - Sort by date (asc/desc) - ion-icon name="time-outline"
     - Show/Hide Base Map (toggle on/off for filtering) - ion-icon name="globe-outline"
     - Show/Hide Regions (toggle on/off for filtering) - ion-icon name="map-outline"
     - Add region - ion-icon "add-outline"
     - Close - ion-icon name="close-outline"
 - showing base map if is it downloaded with number of tiles and size with side action icons:
     - Delete - ion-icon name="trash-outline"
-- list of offline regions with number of tiles and size with side icons actions
+- list of offline regions with number of tiles, size and date of download/update with side icons actions (show when region is clicked)
     - Rename - ion-icon name="pencil-outline"
     - Update - ion-icon name="refresh-outline" - when clicked show downloading circle
     - Delete - ion-icon name="trash-outline"
