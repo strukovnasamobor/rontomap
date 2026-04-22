@@ -919,6 +919,51 @@ ion-icon.mapboxgl-ctrl-geocoder--icon-search {
   font-size: 16px;
   font-weight: 600;
   padding: 10px 0;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.panel-name-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.panel-name-actions .action-icon-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 4px;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.1);
+  background: white;
+  color: #333;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  font-size: 18px;
+}
+.panel-name-actions .action-icon-btn:hover { background: #f0f0f0; }
+.panel-dark .panel-name-actions .action-icon-btn { background: #2a2a2a; color: white; }
+.panel-dark .panel-name-actions .action-icon-btn:hover { background: #333; }
+
+/* Tooltips on the right-aligned name-row actions open to the left to avoid clipping */
+.panel-name-actions .action-icon-tooltip {
+  top: 50%;
+  bottom: auto;
+  left: auto;
+  right: calc(100% + 6px);
+  transform: translateY(-50%);
 }
 
 .panel-coords {

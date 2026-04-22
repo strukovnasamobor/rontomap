@@ -37,6 +37,8 @@ import {
   pencilOutline,
   bookmark,
   bookmarkOutline,
+  footstepsOutline,
+  gitMergeOutline,
 } from "ionicons/icons";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDoubleTap } from "use-double-tap";
@@ -994,17 +996,9 @@ export default function Map() {
         }
       });
       el.addEventListener("contextmenu", (e) => {
+        // Context menu on features is disabled — the map context menu
+        // handles all contextual actions. Prevent the browser default only.
         e.preventDefault();
-        e.stopPropagation();
-        if (wasDragged) return;
-        if (isPathModeRef.current) return;
-        if (isEmbeddedRef.current) return;
-        featureMenuOpenedRef.current = true;
-        setTimeout(() => {
-          featureMenuOpenedRef.current = false;
-        }, 300);
-        setMenuPos(computeMenuPos(marker));
-        setMarkerMenu({ marker });
       });
       let markerClickTimer = null;
       el.addEventListener("click", (e) => {
@@ -4159,46 +4153,11 @@ export default function Map() {
     };
   }, [isPathMode]);
 
-  // Show/remove temporary dot or glow at context menu location
+  // Show the context dot at the click location while the map context menu is
+  // open. Features don't glow on right-click/long-tap — the dot is the only
+  // visual indicator, same as clicking an empty spot.
   useEffect(() => {
     if (!mapClickMenu || !mapRef.current) return;
-    if (mapClickMenu.path) {
-      // Glow the entire path: line, vertices, midpoints, attached markers
-      const path = mapClickMenu.path;
-      const map = mapRef.current;
-      const layerId = path.layerId;
-      if (map.getLayer(layerId)) {
-        map.setPaintProperty(layerId, "line-width", 6);
-        map.setPaintProperty(layerId, "line-opacity", 0.8);
-      }
-      const glowEls = [];
-      path.vertices.forEach((v) => {
-        const el = v.marker.getElement();
-        el.classList.add("feature-glow");
-        glowEls.push(el);
-      });
-      path.midpoints.forEach((mp) => {
-        const el = mp.marker.getElement();
-        el.classList.add("feature-glow");
-        glowEls.push(el);
-      });
-      if (path.sights) {
-        path.sights.forEach((m) => {
-          const el = m.getElement();
-          el.classList.add("feature-glow");
-          glowEls.push(el);
-        });
-      }
-      return () => {
-        longPressHandledRef.current = false;
-        if (map.getLayer(layerId)) {
-          map.setPaintProperty(layerId, "line-width", ["coalesce", ["get", "width"], 3]);
-          map.setPaintProperty(layerId, "line-opacity", 1);
-        }
-        glowEls.forEach((el) => el.classList.remove("feature-glow"));
-      };
-    }
-    // Plain map click — show dot
     const el = document.createElement("div");
     el.className = "context-dot";
     const dot = new mapboxgl.Marker({ element: el, anchor: "center" })
@@ -4212,17 +4171,7 @@ export default function Map() {
         contextDotRef.current = null;
       }
     };
-  }, [mapClickMenu, selectedFeature]);
-
-  // Glow marker when marker menu is open. Depends on selectedFeature too so the
-  // glow is re-applied after the panel cleanup runs in the same commit
-  // that opened this menu (right-click on the currently-selected marker).
-  useEffect(() => {
-    if (!markerMenu) return;
-    const el = markerMenu.marker.getElement();
-    el.classList.add("feature-glow");
-    return () => el.classList.remove("feature-glow");
-  }, [markerMenu, selectedFeature]);
+  }, [mapClickMenu]);
 
   // Glow feature when feature panel is open; also enable feature drag while panel is open
   // (so loaded/imported markers and paths can be edited).
@@ -4997,9 +4946,64 @@ export default function Map() {
     }
   };
 
-  const handleFeatureTrace = () => {
-    if (!selectedFeature || selectedFeature.type !== "path") return;
-    const path = selectedFeature.path;
+  const handleFeatureRename = () => {
+    if (!selectedFeature) return;
+    if (selectedFeature.type === "path") {
+      namingTargetRef.current = { type: "path", target: selectedFeature.path };
+    } else {
+      namingTargetRef.current = { type: "marker", target: selectedFeature.marker };
+    }
+    setNameAlert(true);
+  };
+
+  const handleFeatureToggleSave = () => {
+    if (!selectedFeature) return;
+    if (selectedFeature.type === "path") {
+      toggleSaveFeature({ type: "path", ref: selectedFeature.path });
+    } else {
+      const m = selectedFeature.marker;
+      const type = m._sightPath ? "sight" : "marker";
+      toggleSaveFeature({ type, ref: m });
+    }
+  };
+
+  const handleFeatureDelete = () => {
+    if (!selectedFeature) return;
+    if (selectedFeature.type === "path") {
+      const p = selectedFeature.path;
+      setSelectedFeature(null);
+      setDeletePathAlert(p);
+    } else {
+      const m = selectedFeature.marker;
+      setSelectedFeature(null);
+      handleDeleteMarker(m);
+    }
+  };
+
+  const handleFeatureDetachSight = (markerArg) => {
+    const marker = markerArg ?? (selectedFeature?.type === "marker" ? selectedFeature.marker : null);
+    if (!marker) return;
+    const path = marker._sightPath;
+    if (!path) return;
+    if (path.sights) path.sights = path.sights.filter((m) => m !== marker);
+    const pos = marker.getLngLat();
+    const name = marker._markerName;
+    const draggable = marker.isDraggable();
+    marker.remove();
+    markersRef.current = markersRef.current.filter((m) => m !== marker);
+    const newMarker = createMarkerRef.current(pos, "#ff6f00");
+    if (name) {
+      newMarker._markerName = name;
+      updateMarkerLabel(newMarker);
+    }
+    if (!draggable) newMarker.setDraggable(false);
+    if (!markerArg) {
+      setSelectedFeature({ type: "marker", marker: newMarker });
+    }
+  };
+
+  const handleFeatureTrace = (pathArg) => {
+    const path = pathArg ?? (selectedFeature?.type === "path" ? selectedFeature.path : null);
     if (!path || path.vertices.length < 2) return;
     const ctrl = locationControlRef.current;
     if (!ctrl || ctrl._lastPostionLat == null || ctrl._lastPostionLong == null) {
@@ -5015,7 +5019,7 @@ export default function Map() {
       setTimeout(() => setToastMsg(null), 3000);
       return;
     }
-    setSelectedFeature(null);
+    if (!pathArg) setSelectedFeature(null);
     confirmTracePath(path.roadSnap ?? null, path);
   };
 
@@ -5909,9 +5913,11 @@ export default function Map() {
     setCanRedo(pathRedoStackRef.current.length > 0);
   };
 
-  const handleEditPath = () => {
-    const path = mapClickMenu.path;
-    setMapClickMenu(null);
+  const handleEditPath = (pathArg) => {
+    const path = pathArg || mapClickMenu?.path;
+    if (!pathArg) setMapClickMenu(null);
+    if (!path) return;
+    setSelectedFeature(null);
     pathUndoStackRef.current = [];
     pathRedoStackRef.current = [];
     setCanUndo(false);
@@ -5986,9 +5992,10 @@ export default function Map() {
     }, 2000);
   };
 
-  const handleDeletePath = () => {
-    const path = mapClickMenu.path;
-    setMapClickMenu(null);
+  const handleDeletePath = (pathArg) => {
+    const path = pathArg || mapClickMenu?.path;
+    if (!pathArg) setMapClickMenu(null);
+    if (!path) return;
     setDeletePathAlert(path);
   };
 
@@ -6681,9 +6688,9 @@ export default function Map() {
     path.sights.push(marker);
   };
 
-  const handleSetPathName = () => {
-    const path = mapClickMenu.path;
-    setMapClickMenu(null);
+  const handleSetPathName = (pathArg) => {
+    const path = pathArg || mapClickMenu?.path;
+    if (!pathArg) setMapClickMenu(null);
     if (path && path.vertices.length > 0) {
       namingTargetRef.current = { type: "path", target: path };
       setNameAlert(true);
@@ -7743,40 +7750,6 @@ export default function Map() {
           { text: "Cancel", role: "cancel" },
         ]}
       />
-      {markerMenu && (
-        <>
-          <div
-            className="marker-menu-overlay"
-            onClick={() => setMarkerMenu(null)}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              setMarkerMenu(null);
-            }}
-          />
-          <div
-            key={`${menuPos.x}-${menuPos.y}`}
-            ref={menuRefCallback}
-            className={`marker-menu${idMapStyle === "rontomap_streets_dark" ? " marker-menu-dark" : ""}`}
-            style={{ left: menuPos.x, top: menuPos.y }}
-            onContextMenu={(e) => e.preventDefault()}
-          >
-            <button onClick={handleCenterToMarker}>{markerMenu.marker._sightPath ? "Center to sight" : "Center to marker"}</button>
-            <button onClick={handleFlyToMarker}>{markerMenu.marker._sightPath ? "Fly to sight" : "Fly to marker"}</button>
-            <button onClick={handleNavigateToMarker}>{markerMenu.marker._sightPath ? "Navigate to sight" : "Navigate to marker"}</button>
-            <button onClick={handleCopyLinkMarker}>{markerMenu.marker._sightPath ? "Copy link to sight" : "Copy link to marker"}</button>
-            <button onClick={handleCopyMarkerCode}>{markerMenu.marker._sightPath ? "Copy embedded sight" : "Copy embedded marker"}</button>
-            <button onClick={handleExportMarker}>{markerMenu.marker._sightPath ? "Export sight" : "Export marker"}</button>
-            {markerMenu.marker._sightPath && <button onClick={handleDetachSight}>Detach sight</button>}
-            <button onClick={() => handleSetNameMarker()}>{markerMenu.marker._sightPath ? "Set name to sight" : "Set name to marker"}</button>
-            {!markerMenu.marker._sightPath && (
-              <button onClick={handleToggleSaveMarkerMenu}>
-                {markerMenu.marker._saved ? "Unsave marker" : "Save marker"}
-              </button>
-            )}
-            <button onClick={() => handleDeleteMarker()}>{markerMenu.marker._sightPath ? "Delete sight" : "Delete marker"}</button>
-          </div>
-        </>
-      )}
       {isSideMenuOpen && (
         <>
           <div
@@ -7845,31 +7818,11 @@ export default function Map() {
             style={{ left: mapClickMenu.x, top: mapClickMenu.y }}
             onContextMenu={(e) => e.preventDefault()}
           >
-            {mapClickMenu.path ? (
-              <>
-                <button onClick={handleCenterToPath}>Center to path</button>
-                <button onClick={handleFlyToPath}>Fly to path</button>
-                <button onClick={handleNavigateToPath}>Navigate to path start</button>
-                <button onClick={handleCopyLinkPath}>Copy link to path</button>
-                <button onClick={handleCopyEmbeddedPath}>Copy embedded path</button>
-                <button onClick={handleExportPath}>Export path</button>
-                <button onClick={handleEditPath}>Edit path</button>
-                <button onClick={handleAddSight}>Add sight to path</button>
-                <button onClick={handleTracePath}>Trace path</button>
-                <button onClick={handleSetPathName}>Set name to path</button>
-                <button onClick={handleToggleSavePathMenu}>
-                  {mapClickMenu.path._saved ? "Unsave path" : "Save path"}
-                </button>
-                <button onClick={handleDeletePath}>Delete path</button>
-              </>
-            ) : (
-              <>
-                <button onClick={handleCenterHere}>Center here</button>
-                <button onClick={handleNavigateHere}>Navigate here</button>
-                <button onClick={handleAddMarkerHere}>Add marker here</button>
-                <button onClick={handleCreatePath}>Create path here</button>
-              </>
-            )}
+            <button onClick={handleCenterHere}>Center here</button>
+            <button onClick={handleNavigateHere}>Navigate here</button>
+            <button onClick={handleAddMarkerHere}>Add marker here</button>
+            {mapClickMenu.path && <button onClick={handleAddSight}>Add sight here</button>}
+            <button onClick={handleCreatePath}>Create path here</button>
           </div>
         </>
       )}
@@ -8094,6 +8047,30 @@ export default function Map() {
                       </div>
                       {selected && (
                         <>
+                          {row.type === "path" && (
+                            <ActionIconButton
+                              label="Trace path"
+                              onClick={(e) => { e.stopPropagation(); handleFeatureTrace(row.ref); }}
+                            >
+                              <IonIcon icon={footstepsOutline} />
+                            </ActionIconButton>
+                          )}
+                          {row.type === "path" && (
+                            <ActionIconButton
+                              label="Edit path"
+                              onClick={(e) => { e.stopPropagation(); handleEditPath(row.ref); }}
+                            >
+                              <IonIcon icon={createOutline} />
+                            </ActionIconButton>
+                          )}
+                          {row.type === "sight" && (
+                            <ActionIconButton
+                              label="Detach sight"
+                              onClick={(e) => { e.stopPropagation(); handleFeatureDetachSight(row.ref); }}
+                            >
+                              <IonIcon icon={gitMergeOutline} />
+                            </ActionIconButton>
+                          )}
                           <ActionIconButton
                             label="Rename"
                             onClick={(e) => { e.stopPropagation(); openRenameFromListItem(row); }}
@@ -8606,43 +8583,91 @@ export default function Map() {
               <div className="panel-handle-bar" />
             </div>
             {(() => {
-              const featureNoun =
-                selectedFeature.type === "marker"
-                  ? (selectedFeature.marker._sightPath ? "sight" : "marker")
-                  : "path";
+              const isPath = selectedFeature.type === "path";
+              const isSight = !isPath && !!selectedFeature.marker._sightPath;
+              const featureNoun = isPath ? "path" : isSight ? "sight" : "marker";
+              const isSaved = isPath
+                ? !!selectedFeature.path._saved
+                : !!selectedFeature.marker._saved;
               return (
-                <div className="panel-actions">
-                  <ActionIconButton label={`Center to ${featureNoun}`} onClick={handleFeatureCenterTo}>
-                    <IonIcon icon={locateOutline} />
-                  </ActionIconButton>
-                  <ActionIconButton label={`Fly to ${featureNoun}`} onClick={handleFeatureFlyTo}>
-                    <IonIcon icon={rocketOutline} />
-                  </ActionIconButton>
-                  <ActionIconButton
-                    label={selectedFeature.type === "path" ? "Navigate to path start" : `Navigate to ${featureNoun}`}
-                    onClick={handleFeatureNavigateTo}
-                  >
-                    <IonIcon icon={navigateOutline} />
-                  </ActionIconButton>
-                  <ActionIconButton label={`Copy link to ${featureNoun}`} onClick={handleFeatureShare}>
-                    <IonIcon icon={linkOutline} />
-                  </ActionIconButton>
-                  <ActionIconButton label={`Copy embedded ${featureNoun}`} onClick={handleFeatureEmbed}>
-                    <IonIcon icon={codeSlashOutline} />
-                  </ActionIconButton>
-                  <ActionIconButton label={`Export ${featureNoun}`} onClick={handleFeatureExport}>
-                    <IonIcon icon={downloadOutline} />
-                  </ActionIconButton>
-                  <ActionIconButton label="Close" onClick={() => setSelectedFeature(null)}>
-                    <IonIcon icon={closeOutline} />
-                  </ActionIconButton>
-                </div>
+                <>
+                  <div className="panel-actions">
+                    <ActionIconButton label={`Center to ${featureNoun}`} onClick={handleFeatureCenterTo}>
+                      <IonIcon icon={locateOutline} />
+                    </ActionIconButton>
+                    <ActionIconButton label={`Fly to ${featureNoun}`} onClick={handleFeatureFlyTo}>
+                      <IonIcon icon={rocketOutline} />
+                    </ActionIconButton>
+                    <ActionIconButton
+                      label={isPath ? "Navigate to path start" : `Navigate to ${featureNoun}`}
+                      onClick={handleFeatureNavigateTo}
+                    >
+                      <IonIcon icon={navigateOutline} />
+                    </ActionIconButton>
+                    <ActionIconButton label={`Copy link to ${featureNoun}`} onClick={handleFeatureShare}>
+                      <IonIcon icon={linkOutline} />
+                    </ActionIconButton>
+                    <ActionIconButton label={`Copy embedded ${featureNoun}`} onClick={handleFeatureEmbed}>
+                      <IonIcon icon={codeSlashOutline} />
+                    </ActionIconButton>
+                    <ActionIconButton label={`Export ${featureNoun}`} onClick={handleFeatureExport}>
+                      <IonIcon icon={downloadOutline} />
+                    </ActionIconButton>
+                    <ActionIconButton label="Close" onClick={() => setSelectedFeature(null)}>
+                      <IonIcon icon={closeOutline} />
+                    </ActionIconButton>
+                  </div>
+                </>
               );
             })()}
-            <div className="panel-name">
-              {selectedFeature.type === "marker"
-                ? selectedFeature.marker._markerName || (selectedFeature.marker._sightPath ? "Sight" : "Marker")
-                : selectedFeature.path.name || "Path"}
+            <div className="panel-name-row">
+              <div className="panel-name">
+                {selectedFeature.type === "marker"
+                  ? selectedFeature.marker._markerName || (selectedFeature.marker._sightPath ? "Sight" : "Marker")
+                  : selectedFeature.path.name || "Path"}
+              </div>
+              {(() => {
+                const isPath = selectedFeature.type === "path";
+                const isSight = !isPath && !!selectedFeature.marker._sightPath;
+                const featureNoun = isPath ? "path" : isSight ? "sight" : "marker";
+                const isSaved = isPath
+                  ? !!selectedFeature.path._saved
+                  : !!selectedFeature.marker._saved;
+                return (
+                  <div className="panel-name-actions">
+                    {isPath && (
+                      <ActionIconButton label="Trace path" onClick={handleFeatureTrace}>
+                        <IonIcon icon={footstepsOutline} />
+                      </ActionIconButton>
+                    )}
+                    {isPath && (
+                      <ActionIconButton label="Edit path" onClick={() => handleEditPath(selectedFeature.path)}>
+                        <IonIcon icon={createOutline} />
+                      </ActionIconButton>
+                    )}
+                    {isSight && (
+                      <ActionIconButton label="Detach sight" onClick={handleFeatureDetachSight}>
+                        <IonIcon icon={gitMergeOutline} />
+                      </ActionIconButton>
+                    )}
+                    <ActionIconButton
+                      label={isPath || isSight ? `Set name to ${featureNoun}` : "Rename marker"}
+                      onClick={handleFeatureRename}
+                    >
+                      <IonIcon icon={pencilOutline} />
+                    </ActionIconButton>
+                    <ActionIconButton
+                      label={isSaved ? `Unsave ${featureNoun}` : `Save ${featureNoun}`}
+                      onClick={handleFeatureToggleSave}
+                    >
+                      <IonIcon icon={isSaved ? bookmark : bookmarkOutline} />
+                    </ActionIconButton>
+                    <ActionIconButton label={`Delete ${featureNoun}`} onClick={handleFeatureDelete}>
+                      <IonIcon icon={trashOutline} />
+                    </ActionIconButton>
+                  </div>
+                );
+              })()}
             </div>
             <div className="panel-details">
               {selectedFeature.type === "marker" && (
@@ -8676,8 +8701,6 @@ export default function Map() {
                         <span>{formatDuration(path.routeDuration)}</span>
                       </>
                     )}
-                    <span className="route-info-separator">&middot;</span>
-                    <span className="panel-trace-link" onClick={handleFeatureTrace}>Trace path</span>
                   </div>
                 );
               })()}

@@ -99,11 +99,12 @@ UI DESIGN & INTERACTIONS
 - left mouse click / tap on feature => features list panel opens (in embedded disabled) sorted by the distance from clicked point or from user's location if it is known
 - left mouse click / tap on feature => feature detail panel opens (in embedded disabled)
 - double left mouse click / double tap => fullscreen enter/exit
-- right mouse click / long tap on map/feature => context menu opens (in embedded disabled)
-    - map: Center here, Navigate here, Add marker here, Create path here
-    - marker: Center to marker, Fly to marker, Navigate to marker, Copy link to marker, Copy embedded marker, Export marker, Set name to marker, Save marker, Delete marker
-    - sight: Center to sight, Fly to sight, Navigate to sight, Copy link to sight, Copy embedded sight, Export sight, Detach sight, Set name to sight, Delete sight
-    - path: Center to path, Fly to path, Navigate to path start, Copy link to path, Copy embedded path, Export path, Edit path, Add sight to path, Trace path, Set name to path, Save sight, Delete path
+- right mouse click / long tap on map => context menu opens (in embedded disabled)
+    - Center here
+    - Navigate here
+    - Add marker here
+    - Add sight here (if clicked near path)
+    - Create path here
 - mouse wheel => zoom in/out
 - mouse over feature (alias cursor icon)
 - mouse over draggable feature (grab cursor icon)
@@ -123,11 +124,28 @@ FEATURE DETAIL PANEL
     - Fly to marker/sight/path - ion-icon name="rocket-outline"
     - Navigate to marker/sight/path - ion-icon name="navigate-outline"
     - Copy link to marker/sight/path - ion-icon name="link-outline"
+    - Set name to marker/sight/path - ion-icon name="pencil-outline"
+    - Save/unsave marker/sight/path - ion-icon name="bookmark-outline"/ion-icon name="bookmark"
     - Copy embedded marker/sight/path - ion-icon name="code-slash-outline"
     - Export marker/sight/path - ion-icon name="download-outline"
     - Close - ion-icon name="close-outline"
-- name of feature
-- for marker/sight - coordinates, for path - snapping, distance, duration (for snapped paths), trace path (action text)
+- show name of ther feature
+- show details for marker/sight - coordinates, for path - snapping, distance, duration (for snapped paths)
+- side actions for marker
+    - Rename - ion-icon name="pencil-outline"
+    - Save/Unsave - ion-icon name="bookmark-outline"/ion-icon name="bookmark"
+    - Delete - ion-icon name="trash-outline"
+- side actions for sight
+    - Detach from path - ion-icon name="git-merge-outline"
+    - Set name - ion-icon name="pencil-outline"
+    - Save/Unsave - ion-icon name="bookmark-outline"/ion-icon name="bookmark"
+    - Delete - ion-icon name="trash-outline"
+-  side actions for path
+    - Trace path - ion-icon name="footsteps-outline"
+    - Edit path - ion-icon name="create-outline"
+    - Set name - ion-icon name="pencil-outline"
+    - Save/Unsave - ion-icon name="bookmark-outline"/ion-icon name="bookmark"
+    - Delete - ion-icon name="trash-outline"
 
 FEATURES LIST PANEL
 - opening on menu option "Features list"
@@ -143,7 +161,7 @@ FEATURES LIST PANEL
     - Close - ion-icon name="close-outline"
 - list of features with name and details showing for marker/sight - coordinates, for path - snapping, distance, duration (for snapped paths)
  with side icons actions (show when feature is clicked)
-    - Rename - ion-icon name="pencil-outline"
+    - Set name - ion-icon name="pencil-outline"
     - Save/Unsave - ion-icon name="bookmark-outline"/ion-icon name="bookmark"
     - Delete - ion-icon name="trash-outline"
 - sights show nested in there paths and implicitly save/unsave sync with the path, so no save/unsave side icon
