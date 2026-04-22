@@ -434,12 +434,6 @@ export default function Map() {
   // which is declared before the callbacks are defined.
   const persistSavedFeaturesRef = useRef(null);
   const hydrateSavedFeaturesRef = useRef(null);
-  // Side actions (save/rename/delete) trigger a memo bump but shouldn't
-  // shuffle the user's rows. freezeFeatListOrderRef pins the current row
-  // order until the user explicitly changes sort/filter or the map moves
-  // (those are the only events that legitimately resort the list).
-  const freezeFeatListOrderRef = useRef(null); // null | { refs, sort, filter, tick }
-  const lastSortedRefsRef = useRef([]);
   const featListGlowCleanupRef = useRef(null);
   const sheetDragRef = useRef({ startY: 0, dragging: false, startLevel: 0 });
   const featurePanelRef = useRef(null);
@@ -1028,7 +1022,7 @@ export default function Map() {
         markerClickTimer = setTimeout(() => {
           markerClickTimer = null;
           setSelectedFeature({ type: "marker", marker });
-          setSheetLevel(0);
+          if (!showFeaturesListRef.current) setSheetLevel(0);
         }, 300);
       });
       // Sync cursor with draggable state
@@ -1888,7 +1882,7 @@ export default function Map() {
               pathClickHandledRef.current = false;
             }, 400);
             setSelectedFeature({ type: "path", path });
-            setSheetLevel(0);
+            if (!showFeaturesListRef.current) setSheetLevel(0);
             return;
           }
         }
@@ -2995,6 +2989,17 @@ export default function Map() {
       }
     });
 
+    // Toggle marker-label visibility class when crossing the label zoom threshold
+    const LABEL_ZOOM_THRESHOLD = 12;
+    const syncLabelVisibility = () => {
+      const container = mapRef.current?.getContainer();
+      if (!container) return;
+      const visible = mapRef.current.getZoom() >= LABEL_ZOOM_THRESHOLD;
+      container.classList.toggle("show-marker-labels", visible);
+    };
+    mapRef.current.on("zoom", syncLabelVisibility);
+    syncLabelVisibility();
+
     // On zoomend
     mapRef.current.on("zoomend", () => {
       console.log("Event > map > zoomend");
@@ -3115,13 +3120,25 @@ export default function Map() {
           }
           if (hitPath) {
             setSelectedFeature({ type: "path", path: hitPath });
-            setSheetLevel(0);
+            if (!showFeaturesListRef.current) setSheetLevel(0);
             return;
           }
-          // Click on empty map: close feature panel / features list / offline panel
-          setSelectedFeature(null);
-          setOpenFeaturesList(false);
+          // Empty-map click:
+          //  1. Details panel open → close it.
+          //  2. Features list open → close it.
+          //  3. Nothing open → open the list (sorted by current map center).
+          if (selectedFeatureRef.current) {
+            setSelectedFeature(null);
+            return;
+          }
+          if (showFeaturesListRef.current) {
+            setOpenFeaturesList(false);
+            return;
+          }
           setShowOfflineMapsPanel(false);
+          setFeatListSort("dist-asc");
+          setOpenFeaturesList(true);
+          setSheetLevel(0);
         }
 
         // Path mode: add vertex or start new path
@@ -3927,6 +3944,12 @@ export default function Map() {
   useEffect(() => {
     isPathModeRef.current = isPathMode;
   }, [isPathMode]);
+  // Mirror these pieces of state so the long-lived map click handler (set up
+  // once in the setup effect) can branch on the current value.
+  const selectedFeatureRef = useRef(null);
+  useEffect(() => { selectedFeatureRef.current = selectedFeature; }, [selectedFeature]);
+  const showFeaturesListRef = useRef(false);
+  useEffect(() => { showFeaturesListRef.current = showFeaturesList; }, [showFeaturesList]);
   useEffect(() => {
     forceModeRef.current = forceMode;
   }, [forceMode]);
@@ -4270,7 +4293,9 @@ export default function Map() {
       featListGlowCleanupRef.current();
       featListGlowCleanupRef.current = null;
     }
-    if (!showFeaturesList) setSelectedFeatureListRef(null);
+    if (!showFeaturesList) {
+      setSelectedFeatureListRef(null);
+    }
     if (showFeaturesList) bumpFeaturesVersion();
   }, [showFeaturesList, bumpFeaturesVersion]);
 
@@ -4345,22 +4370,30 @@ export default function Map() {
     };
   }, [markerMenu]);
 
-  // Re-render dist-sorted list panels when the map center changes.
+  // Re-render dist-sorted list panels when the map center changes, and
+  // deselect the highlighted feature-list row on user-initiated moves.
   // Programmatic moves triggered by a feature-list click are ignored so that
   // clicking an item doesn't reorder the list under the user's finger.
   useEffect(() => {
+    if (!showFeaturesList && !showOfflineMapsPanel) return;
+    const map = mapRef.current;
+    if (!map) return;
     const distSortActive =
       (showFeaturesList && featListSort.startsWith("dist")) ||
       (showOfflineMapsPanel && offlineSort.startsWith("dist"));
-    if (!distSortActive) return;
-    const map = mapRef.current;
-    if (!map) return;
     const bump = () => {
       if (skipNextMoveBumpRef.current) {
         skipNextMoveBumpRef.current = false;
         return;
       }
-      setMapCenterTick((t) => t + 1);
+      if (showFeaturesList) {
+        if (featListGlowCleanupRef.current) {
+          featListGlowCleanupRef.current();
+          featListGlowCleanupRef.current = null;
+        }
+        setSelectedFeatureListRef(null);
+      }
+      if (distSortActive) setMapCenterTick((t) => t + 1);
     };
     map.on("moveend", bump);
     return () => map.off("moveend", bump);
@@ -4625,8 +4658,6 @@ export default function Map() {
     markersRef.current = markersRef.current.filter((m) => m !== marker);
     if (!target) setMarkerMenu(null);
     if (wasSaved || parentSaved) persistSavedFeaturesRef.current?.();
-    // Deletes should not trigger a re-sort of the list — just remove the row.
-    freezeFeatListOrderFnRef.current();
     bumpFeaturesVersion();
   };
 
@@ -4807,7 +4838,6 @@ export default function Map() {
         target._saved = false;
       }
       persistSavedFeatures();
-      freezeFeatListOrderFnRef.current();
       bumpFeaturesVersion();
     },
     [persistSavedFeatures, bumpFeaturesVersion],
@@ -4994,24 +5024,14 @@ export default function Map() {
     setFeatListSort((prev) => (prev === `${field}-asc` ? `${field}-desc` : `${field}-asc`));
   };
 
-  // Capture the current row order + dep values so the next memo runs keep
-  // the list pinned. Released automatically inside the memo when the user
-  // changes sort/filter or the map moves.
-  const freezeFeatListOrder = () => {
-    freezeFeatListOrderRef.current = {
-      refs: lastSortedRefsRef.current.slice(),
-      sort: featListSort,
-      filter: featListFilter,
-      tick: mapCenterTick,
-    };
-  };
-  const freezeFeatListOrderFnRef = useRef(freezeFeatListOrder);
-  freezeFeatListOrderFnRef.current = freezeFeatListOrder;
-
   const featuresListItems = useMemo(() => {
     const map = mapRef.current;
     if (!map) return [];
-    const center = map.getCenter();
+    // Sort distance relative to the current map center; re-runs on moveend
+    // via mapCenterTick.
+    const ref = map.getCenter();
+    const refLat = ref.lat;
+    const refLng = ref.lng;
     const items = [];
 
     if (featListFilter.markers) {
@@ -5022,7 +5042,7 @@ export default function Map() {
           type: "marker",
           name: m._markerName || "Marker",
           lngLat: ll,
-          dist: haversinePoint(center.lat, center.lng, ll.lat, ll.lng),
+          dist: haversinePoint(refLat, refLng, ll.lat, ll.lng),
           length: 0,
           ref: m,
           _saved: !!m._saved,
@@ -5058,7 +5078,7 @@ export default function Map() {
                   type: "sight",
                   name: s._markerName || "Sight",
                   lngLat: sll,
-                  dist: haversinePoint(center.lat, center.lng, sll.lat, sll.lng),
+                  dist: haversinePoint(refLat, refLng, sll.lat, sll.lng),
                   length: 0,
                   ref: s,
                   parentPath: p,
@@ -5069,7 +5089,7 @@ export default function Map() {
           type: "path",
           name: p.name || "Path",
           lngLat: c,
-          dist: haversinePoint(center.lat, center.lng, c.lat, c.lng),
+          dist: haversinePoint(refLat, refLng, c.lat, c.lng),
           length: dist || 0,
           snap: p.roadSnap,
           duration: p.routeDuration,
@@ -5080,51 +5100,33 @@ export default function Map() {
       }
     }
 
-    const frozen = freezeFeatListOrderRef.current;
-    const frozenStillValid =
-      frozen &&
-      frozen.sort === featListSort &&
-      frozen.filter === featListFilter &&
-      frozen.tick === mapCenterTick;
-
-    if (frozenStillValid) {
-      // `Map` here refers to the enclosing component (`function Map()`),
-      // so we reach through globalThis for the built-in constructor.
-      const orderMap = new globalThis.Map(frozen.refs.map((r, i) => [r, i]));
-      items.sort((a, b) => {
-        const ai = orderMap.has(a.ref) ? orderMap.get(a.ref) : Number.POSITIVE_INFINITY;
-        const bi = orderMap.has(b.ref) ? orderMap.get(b.ref) : Number.POSITIVE_INFINITY;
-        return ai - bi;
-      });
-    } else {
-      if (frozen) freezeFeatListOrderRef.current = null;
-      const [field, dir] = featListSort.split("-");
-      const mul = dir === "desc" ? -1 : 1;
-      items.sort((a, b) => {
-        if (field === "name") return mul * a.name.localeCompare(b.name);
-        if (field === "dist") return mul * (a.dist - b.dist);
-        if (field === "length") {
-          const aIsPath = a.type === "path";
-          const bIsPath = b.type === "path";
-          if (aIsPath !== bIsPath) return aIsPath ? -1 : 1;
-          return mul * (a.length - b.length);
-        }
-        return 0;
-      });
-    }
-    lastSortedRefsRef.current = items.map((it) => it.ref);
+    const [field, dir] = featListSort.split("-");
+    const mul = dir === "desc" ? -1 : 1;
+    items.sort((a, b) => {
+      if (field === "name") return mul * a.name.localeCompare(b.name);
+      if (field === "dist") return mul * (a.dist - b.dist);
+      if (field === "length") {
+        const aIsPath = a.type === "path";
+        const bIsPath = b.type === "path";
+        if (aIsPath !== bIsPath) return aIsPath ? -1 : 1;
+        return mul * (a.length - b.length);
+      }
+      return 0;
+    });
 
     return items;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [featListFilter, featListSort, mapCenterTick, featuresVersion]);
 
   const handleFeatureListClick = (item) => {
-    // Toggle selection: clicking the already-selected row collapses it.
+    // Second tap on the already-selected row opens the details panel.
+    // The list stays mounted (hidden via CSS) so its scroll position
+    // is preserved, and the details panel inherits the current sheet level.
     if (selectedFeatureListRef === item.ref) {
-      setSelectedFeatureListRef(null);
-      if (featListGlowCleanupRef.current) {
-        featListGlowCleanupRef.current();
-        featListGlowCleanupRef.current = null;
+      if (item.type === "path") {
+        setSelectedFeature({ type: "path", path: item.ref });
+      } else {
+        setSelectedFeature({ type: "marker", marker: item.ref });
       }
       return;
     }
@@ -5138,15 +5140,14 @@ export default function Map() {
     const map = mapRef.current;
     const pp = getPanelPadding();
     const glowEls = [];
+    const coords = [];
 
     if (item.type === "path") {
       const path = item.ref;
-      // Glow path line
       if (map.getLayer(path.layerId)) {
         map.setPaintProperty(path.layerId, "line-width", 6);
         map.setPaintProperty(path.layerId, "line-opacity", 0.8);
       }
-      // Glow vertices
       path.vertices.forEach((v) => {
         v.marker.getElement().classList.add("feature-glow");
         glowEls.push(v.marker.getElement());
@@ -5157,18 +5158,14 @@ export default function Map() {
           glowEls.push(s.getElement());
         });
       }
-      // Center
-      const bounds = new mapboxgl.LngLatBounds();
-      let extended = false;
+      // For paths, zoom-out reference is the start of the path only — so the
+      // user sees the path's beginning and can follow it.
       if (path.snappedSegments && path.snappedSegments.length > 0) {
-        path.snappedSegments.forEach((seg) => seg.coords.forEach((c) => { bounds.extend(c); extended = true; }));
-      }
-      if (!extended) {
-        path.vertices.forEach((v) => { bounds.extend(v.lngLat); extended = true; });
-      }
-      if (extended) {
-        skipNextMoveBumpRef.current = true;
-        map.easeTo({ center: bounds.getCenter(), padding: pp, duration: 500 });
+        const first = path.snappedSegments[0]?.coords?.[0];
+        if (first) coords.push([first.lng, first.lat]);
+      } else if (path.vertices.length > 0) {
+        const first = path.vertices[0].lngLat;
+        coords.push([first.lng, first.lat]);
       }
 
       featListGlowCleanupRef.current = () => {
@@ -5182,12 +5179,49 @@ export default function Map() {
       const el = item.ref.getElement();
       el.classList.add("feature-glow");
       glowEls.push(el);
-      skipNextMoveBumpRef.current = true;
-      map.easeTo({ center: item.ref.getLngLat(), padding: pp, offset: [0, 20], duration: 500 });
+      const ll = item.ref.getLngLat();
+      coords.push([ll.lng, ll.lat]);
 
       featListGlowCleanupRef.current = () => {
         glowEls.forEach((el) => el.classList.remove("feature-glow"));
       };
+    }
+
+    // Keep current center; zoom out only if the feature is off-screen or
+    // hidden under the opened panel. Uses asymmetric per-side padding so
+    // the feature can't fall under the list/details panel (levels 1 & 2).
+    if (coords.length > 0) {
+      const rect = map.getContainer().getBoundingClientRect();
+      const MARGIN = 40;
+      const centerLL = map.getCenter();
+      const cPx = map.project(centerLL);
+      const leftAvail = Math.max(20, cPx.x - (pp.left || 0) - MARGIN);
+      const rightAvail = Math.max(20, rect.width - (pp.right || 0) - cPx.x - MARGIN);
+      const topAvail = Math.max(20, cPx.y - (pp.top || 0) - MARGIN);
+      const bottomAvail = Math.max(20, rect.height - (pp.bottom || 0) - cPx.y - MARGIN);
+
+      let ratio = 1;
+      for (const [lng, lat] of coords) {
+        const p = map.project([lng, lat]);
+        const dx = p.x - cPx.x;
+        const dy = p.y - cPx.y;
+        if (dx > 0 && dx > rightAvail) ratio = Math.max(ratio, dx / rightAvail);
+        else if (dx < 0 && -dx > leftAvail) ratio = Math.max(ratio, -dx / leftAvail);
+        if (dy > 0 && dy > bottomAvail) ratio = Math.max(ratio, dy / bottomAvail);
+        else if (dy < 0 && -dy > topAvail) ratio = Math.max(ratio, -dy / topAvail);
+      }
+      if (ratio > 1) {
+        const dz = Math.log2(ratio);
+        const newZoom = Math.max(map.getMinZoom(), map.getZoom() - dz - 0.1);
+        skipNextMoveBumpRef.current = true;
+        map.easeTo({
+          zoom: newZoom,
+          center: centerLL,
+          duration: 500,
+          bearing: map.getBearing(),
+          pitch: map.getPitch(),
+        });
+      }
     }
 
     // Auto-clear glow after 2s
@@ -6468,7 +6502,6 @@ export default function Map() {
       setToastMsg(null);
     }
     if (wasSaved) persistSavedFeaturesRef.current?.();
-    freezeFeatListOrderFnRef.current();
     bumpFeaturesVersion();
   };
 
@@ -7574,7 +7607,6 @@ export default function Map() {
           setNameAlert(false);
           const t = namingTargetRef.current;
           if (t?.target?._saved) persistSavedFeaturesRef.current?.();
-          freezeFeatListOrderFnRef.current();
           bumpFeaturesVersion();
         }}
         onClear={() => {
@@ -7589,7 +7621,6 @@ export default function Map() {
           }
           setNameAlert(false);
           if (t?.target?._saved) persistSavedFeaturesRef.current?.();
-          freezeFeatListOrderFnRef.current();
           bumpFeaturesVersion();
         }}
         onSave={(name) => {
@@ -7604,7 +7635,6 @@ export default function Map() {
           }
           setNameAlert(false);
           if (t?.target?._saved) persistSavedFeaturesRef.current?.();
-          freezeFeatListOrderFnRef.current();
           bumpFeaturesVersion();
         }}
       />
@@ -7990,15 +8020,18 @@ export default function Map() {
           )}
         </div>
       )}
-      {showFeaturesList && !selectedFeature && (() => {
+      {showFeaturesList && (() => {
         const items = featuresListItems;
         const [sortField, sortDir] = featListSort.split("-");
         const darkClass = idMapStyle === "rontomap_streets_dark" ? " panel-dark" : "";
+        // Keep the list mounted while details are shown so scroll position
+        // is preserved — just hide it visually.
+        const hiddenClass = selectedFeature ? " panel-hidden" : "";
         return (
           <div
-            {...featurePanelSwipe}
-            ref={(el) => { featurePanelRef.current = el; featurePanelSwipe.ref(el); }}
-            className={`panel panel-list${darkClass}${sheetLevel > 0 ? ` sheet-level-${sheetLevel}` : ""}`}
+            {...(selectedFeature ? {} : featurePanelSwipe)}
+            ref={(el) => { if (!selectedFeature) { featurePanelRef.current = el; featurePanelSwipe.ref(el); } }}
+            className={`panel panel-list${darkClass}${sheetLevel > 0 ? ` sheet-level-${sheetLevel}` : ""}${hiddenClass}`}
           >
             <div
               className="panel-handle"

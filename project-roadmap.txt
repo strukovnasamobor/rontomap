@@ -96,7 +96,7 @@ UI DESIGN & INTERACTIONS
     - middle - toast msg
     - right - map change style & location icon (in embedded hidden)
 - right sidebar - menu 
-- left mouse click / tap on feature => features list panel opens (in embedded disabled) sorted by the distance from clicked point
+- left mouse click / tap on feature => features list panel opens (in embedded disabled) sorted by the distance from clicked point or from user's location if it is known
 - left mouse click / tap on feature => feature detail panel opens (in embedded disabled)
 - double left mouse click / double tap => fullscreen enter/exit
 - right mouse click / long tap on map/feature => context menu opens (in embedded disabled)
@@ -117,7 +117,7 @@ UI DESIGN & INTERACTIONS
 FEATURE DETAIL PANEL
 - opening on left mouse click / tap on feature
 - on landscape - left sidebar
-- on portrait - peeking bottom sheet (minimized - max-height: 25dvh, half state - height: 50dvh, expanded - height: 75dvh)
+- on portrait - peeking bottom sheet (minimized lvl. 1. - height: 25dvh, half state lvl. 2. - height: 50dvh, expanded lvl. 3. - height: 75dvh)
 - action icons
     - Center to marker/sight/path - ion-icon name="locate-outline"
     - Fly to marker/sight/path - ion-icon name="rocket-outline"
@@ -132,7 +132,7 @@ FEATURE DETAIL PANEL
 FEATURES LIST PANEL
 - opening on menu option "Features list"
 - on landscape - left sidebar
-- on portrait - peeking bottom sheet (minimized - max-height: 25dvh, half state - height: 50dvh, expanded - height: 75dvh)
+- on portrait - peeking bottom sheet (minimized lvl. 1. - height: 25dvh, half state lvl. 2. - height: 50dvh, expanded lvl. 3. - height: 75dvh)
 - action icons
     - Sort by distance (asc/desc) - ion-icon name="radio-outline"
     - Sort by name (asc/desc) - ion-icon "text-outline"
@@ -147,16 +147,16 @@ FEATURES LIST PANEL
     - Save/Unsave - ion-icon name="bookmark-outline"/ion-icon name="bookmark"
     - Delete - ion-icon name="trash-outline"
 - sights show nested in there paths and implicitly save/unsave sync with the path, so no save/unsave side icon
-- when feature list panel is opened and user first click on feature the action icons appears and feature gets centered and glowing
-(if user location is available the it zoom out so that user location is visible too), 
-if user clicks second time on that feature then feature details panel opens, 
-when feature detail panel closes then feature list panel reopens, 
-same if user click on feature while feature list is opened then closing feature detail panel it will reopen feature list
+- when feature list panel is opened and user first click on feature the action icons appears and feature glows,
+  if feature doen't appear zoom out so that is visible, 
+  if user clicks second time on that feature then feature details panel opens, 
+  when feature detail panel closes then feature list panel reopens (in same level), 
+  same if user click on feature while feature list is opened then closing feature detail panel it will reopen feature list
 
 OFFLINE MAPS PANEL
 - opening on menu option "Offline maps"
 - on landscape - left sidebar
-- on portrait - peeking bottom sheet (minimized - max-height: 25dvh, half state - height: 50dvh, expanded - height: 75dvh)
+- on portrait - peeking bottom sheet (minimized lvl. 1. - height: 25dvh, half state lvl. 2. - height: 50dvh, expanded lvl. 3. - height: 75dvh)
 - action icons
     - Sort by distance (asc/desc) - ion-icon name="radio-outline"
     - Sort by name (asc/desc) - ion-icon "text-outline"

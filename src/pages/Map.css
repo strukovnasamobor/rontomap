@@ -498,6 +498,11 @@ ion-icon.mapboxgl-ctrl-geocoder--icon-search {
   font-weight: 500;
   text-align: center;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+  display: none;
+}
+
+.show-marker-labels .marker-label {
+  display: block;
 }
 
 /* Glow effect on selected features */
@@ -1012,25 +1017,22 @@ ion-icon.mapboxgl-ctrl-geocoder--icon-search {
     bottom: 0;
     border-radius: 16px 16px 0 0;
     padding: 0 10px calc(20px + env(safe-area-inset-bottom, 0px));
-    height: auto;
-    max-height: 25dvh;
+    height: 25dvh;
     transform: translateY(0);
-    transition: transform 0.3s ease, height 0.3s ease, max-height 0.3s ease;
+    transition: transform 0.3s ease, height 0.3s ease;
     box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.15);
   }
 
   .panel-list {
-    max-height: 25dvh;
-    height: auto;
+    height: 25dvh;
     transform: translateY(0);
-    transition: transform 0.3s ease, height 0.3s ease, max-height 0.3s ease;
+    transition: transform 0.3s ease, height 0.3s ease;
   }
 
-  .panel-list.sheet-level-1 { max-height: none; height: 50dvh; }
-  .panel-list.sheet-level-2 { max-height: none; height: 75dvh; }
+  .panel-list.sheet-level-1 { height: 50dvh; }
+  .panel-list.sheet-level-2 { height: 75dvh; }
 
   .panel-expanded {
-    max-height: none;
     height: 50dvh;
     transform: translateY(0) !important;
     padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
@@ -1068,6 +1070,10 @@ ion-icon.mapboxgl-ctrl-geocoder--icon-search {
   display: flex;
   flex-direction: column;
   overflow: hidden !important;
+}
+
+.panel-hidden {
+  display: none !important;
 }
 
 .sort-dir-icon {
