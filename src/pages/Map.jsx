@@ -39,6 +39,9 @@ import {
   bookmarkOutline,
   footstepsOutline,
   gitMergeOutline,
+  arrowBackOutline,
+  eyeOutline,
+  eyeOffOutline,
 } from "ionicons/icons";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDoubleTap } from "use-double-tap";
@@ -108,6 +111,8 @@ const formatBytes = (bytes) => {
 };
 
 // Ramer-Douglas-Peucker simplification (~5m tolerance)
+const UNDO_MS = 5000;
+
 const RDP_TOLERANCE = 0.00005;
 const rdpSimplify = (coords, tolerance) => {
   if (coords.length <= 2) return coords;
@@ -163,14 +168,16 @@ const deserializeSnappedSegments = (segments) =>
 // IonAlert's focus-trap was reliably stealing focus from the input on
 // Chrome and Android; a plain React-controlled modal with a ref'd <input>
 // gives us guaranteed focus + text-selection + soft-keyboard behavior.
-function RenameModal({ isOpen, title, initialValue, onCancel, onClear, onSave, saveLabel, isDark }) {
+function RenameModal({ isOpen, title, initialValue, onCancel, onClear, onSave, saveLabel, isDark, placeholder, multiline, maxLength }) {
   const inputRef = useRef(null);
+  const [charCount, setCharCount] = useState(0);
 
   // Focus + select-all + raise soft keyboard once the input is mounted.
   // Uncontrolled input: defaultValue is the DOM value from first paint, so
   // setSelectionRange can select the pre-filled text on the very first open.
   useEffect(() => {
     if (!isOpen) return;
+    setCharCount((initialValue || "").length);
     const raf = requestAnimationFrame(() => {
       const input = inputRef.current;
       if (!input) return;
@@ -182,20 +189,45 @@ function RenameModal({ isOpen, title, initialValue, onCancel, onClear, onSave, s
       }
     });
     return () => cancelAnimationFrame(raf);
-  }, [isOpen]);
+  }, [isOpen, initialValue]);
+
+  // Multiline: Enter inserts a newline inside the textarea, but if the
+  // textarea is not focused (e.g. the user tabbed/clicked out) Enter should
+  // behave like pressing OK.
+  useEffect(() => {
+    if (!isOpen || !multiline) return;
+    const onKey = (e) => {
+      if (e.key !== "Enter") return;
+      if (document.activeElement === inputRef.current) return;
+      e.preventDefault();
+      onSave((inputRef.current?.value || "").trim());
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [isOpen, multiline, onSave]);
 
   if (!isOpen) return null;
 
   const getValue = () => (inputRef.current?.value || "").trim();
 
   const handleKeyDown = (e) => {
-    if (e.key === "Enter") {
+    if (e.key === "Enter" && !multiline) {
       e.preventDefault();
       onSave(getValue());
     } else if (e.key === "Escape") {
       e.preventDefault();
       onCancel();
     }
+  };
+
+  const commonProps = {
+    ref: inputRef,
+    className: "rename-modal-input",
+    defaultValue: initialValue || "",
+    placeholder: placeholder || "Enter name",
+    onKeyDown: handleKeyDown,
+    onInput: (e) => setCharCount(e.target.value.length),
+    ...(maxLength ? { maxLength } : {}),
   };
 
   return (
@@ -206,19 +238,19 @@ function RenameModal({ isOpen, title, initialValue, onCancel, onClear, onSave, s
         onContextMenu={(e) => { e.preventDefault(); onCancel(); }}
       />
       <div
-        className={`rename-modal${isDark ? " rename-modal-dark" : ""}`}
+        className={`rename-modal${multiline ? " rename-modal-wide" : ""}${isDark ? " rename-modal-dark" : ""}`}
         role="dialog"
         aria-modal="true"
       >
         <h2 className="rename-modal-header">{title}</h2>
-        <input
-          ref={inputRef}
-          className="rename-modal-input"
-          type="text"
-          defaultValue={initialValue || ""}
-          placeholder="Enter name"
-          onKeyDown={handleKeyDown}
-        />
+        {multiline ? (
+          <textarea {...commonProps} rows={6} />
+        ) : (
+          <input {...commonProps} type="text" />
+        )}
+        {maxLength && (
+          <div className="rename-modal-counter">{charCount}/{maxLength}</div>
+        )}
         <div className="rename-modal-buttons">
           <button type="button" className="rename-modal-button" onClick={onCancel}>
             Cancel
@@ -416,7 +448,7 @@ export default function Map() {
   const [defaultPitch, setDefaultPitch] = useState(0);
   const [defaultPitchOnUserTrackingBearing, setDefaultPitchOnUserTrackingBearing] = useState(60);
   const [defaultBearing, setDefaultBearing] = useState(0);
-  const [showTips, setShowTips] = useState(true);
+  const [showAbout, setShowAbout] = useState(false);
   const [markerMenu, setMarkerMenu] = useState(null); // { marker }
   const [menuPos, setMenuPos] = useState({ x: 0, y: 0 });
   const [mapClickMenu, setMapClickMenu] = useState(null); // { lngLat, x, y }
@@ -429,6 +461,18 @@ export default function Map() {
   const [mapCenterTick, setMapCenterTick] = useState(0);
   const [featuresVersion, setFeaturesVersion] = useState(0);
   const bumpFeaturesVersion = useCallback(() => setFeaturesVersion((v) => v + 1), []);
+  const [detailsOrigin, setDetailsOrigin] = useState(null);
+  // Action icons inside the details header row start hidden; revealed when the
+  // user clicks the header — mirrors the feature-list row pattern.
+  const [detailsActionsOpen, setDetailsActionsOpen] = useState(false);
+  const [descActionsOpen, setDescActionsOpen] = useState(false);
+  const listRestoreRef = useRef(null);
+  // When going back from details to list we want the re-opening list panel
+  // to appear instantly (no landscape slide-in). Stays true for the whole
+  // lifetime of that list panel — cleared only when the list closes so a
+  // mid-life re-render can't retrigger the CSS animation.
+  const [skipPanelAnim, setSkipPanelAnim] = useState(false);
+  const listScrollRef = useRef(null);
   // Whenever the features list opens, refresh the memoised item list so any
   // background mutations (creates, deletes, renames) are reflected immediately.
   const skipNextMoveBumpRef = useRef(false);
@@ -445,8 +489,9 @@ export default function Map() {
   const geocoderOpenRef = useRef(false);
   const geocoderRef = useRef(null);
   const [nameAlert, setNameAlert] = useState(false);
+  const [descAlert, setDescAlert] = useState(false);
+  const descTargetRef = useRef(null);
   const [deleteAllAlert, setDeleteAllAlert] = useState(false);
-  const [deletePathAlert, setDeletePathAlert] = useState(null);
   const [cancelPathAlert, setCancelPathAlert] = useState(false);
   const cancelPathAlertRef = useRef(false);
   const [circuitAlert, setCircuitAlert] = useState(false);
@@ -468,6 +513,7 @@ export default function Map() {
   const isPathModeRef = useRef(false);
   const activePathRef = useRef(null);
   const pathsRef = useRef([]);
+  const pendingDeleteRef = useRef(null);
   const pathPointToastShownRef = useRef(false);
   const pathClickHandledRef = useRef(false);
   const longPressHandledRef = useRef(false);
@@ -721,9 +767,9 @@ export default function Map() {
     return urlParams.get(param);
   };
 
-  // Add source and support links to the map
-  const addSourceAndSupportLink = () => {
-    console.log("addSourceAndSupportLink");
+  // Add an "About" link to the attribution that opens the about alert
+  const addAboutLink = () => {
+    console.log("addAboutLink");
     const tryAdd = () => {
       const el = mapRef.current?.getContainer()?.querySelector(".mapboxgl-ctrl-attrib-inner");
 
@@ -734,16 +780,18 @@ export default function Map() {
       }
 
       // Prevent duplicates
-      if (el.innerHTML.includes("rontomap")) return;
+      if (el.querySelector(".rontomap-about-link")) return;
       el.innerHTML = el.innerHTML.replace("Improve this map", "");
-      el.innerHTML += ` | <a href="https://github.com/strukovnasamobor/rontomap"
-        target="_blank"
-        rel="noopener">
-        Source</a>
-          | <a href="https://www.paypal.com/ncp/payment/ZRBQZMWTCJYFE"
-        target="_blank"
-        rel="noopener">
-        Support</a>`;
+      el.appendChild(document.createTextNode(" | "));
+      const link = document.createElement("a");
+      link.className = "rontomap-about-link";
+      link.href = "#";
+      link.textContent = "About";
+      link.addEventListener("click", (e) => {
+        e.preventDefault();
+        setShowAbout(true);
+      });
+      el.appendChild(link);
     };
 
     tryAdd();
@@ -1015,6 +1063,10 @@ export default function Map() {
         }
         markerClickTimer = setTimeout(() => {
           markerClickTimer = null;
+          if (showFeaturesListRef.current) {
+            setSkipPanelAnim(true);
+            setDetailsOrigin("list");
+          }
           setSelectedFeature({ type: "marker", marker });
           if (!showFeaturesListRef.current) setSheetLevel(0);
         }, 300);
@@ -1875,6 +1927,10 @@ export default function Map() {
             setTimeout(() => {
               pathClickHandledRef.current = false;
             }, 400);
+            if (showFeaturesListRef.current) {
+              setSkipPanelAnim(true);
+              setDetailsOrigin("list");
+            }
             setSelectedFeature({ type: "path", path });
             if (!showFeaturesListRef.current) setSheetLevel(0);
             return;
@@ -2032,6 +2088,36 @@ export default function Map() {
 
     if (mapRef.current) mapRef.current.resize();
 
+    // Persisted camera helpers. Scope: app close → relaunch.
+    const CAMERA_KEY = "rontomap_camera";
+    const loadCamera = () => {
+      try {
+        const raw = localStorage.getItem(CAMERA_KEY);
+        if (!raw) return null;
+        const v = JSON.parse(raw);
+        if (!Array.isArray(v.center) || v.center.length !== 2) return null;
+        return v;
+      } catch {
+        return null;
+      }
+    };
+    const saveCamera = () => {
+      const map = mapRef.current;
+      if (!map || isEmbeddedRef.current) return;
+      try {
+        const c = map.getCenter();
+        localStorage.setItem(
+          CAMERA_KEY,
+          JSON.stringify({
+            center: [c.lng, c.lat],
+            zoom: map.getZoom(),
+            bearing: map.getBearing(),
+            pitch: map.getPitch(),
+          }),
+        );
+      } catch {}
+    };
+
     // Get camera params from the URL
     const lat = parseFloat(getQueryParams("lat"));
     const long = parseFloat(getQueryParams("long"));
@@ -2039,11 +2125,27 @@ export default function Map() {
     const urlBearing = parseFloat(getQueryParams("bearing"));
     const urlPitch = parseFloat(getQueryParams("pitch"));
 
+    // Restore last camera view from localStorage (app close → relaunch).
+    // URL params win; embedded mode never restores (the URL defines the view).
+    const savedCam = !isEmbeddedRef.current ? loadCamera() : null;
+
     // Set new center and zoom
-    const center = !isNaN(lat) && !isNaN(long) ? [long, lat] : defaultCenter;
-    const zoom = !isNaN(urlZoom) ? urlZoom : !isNaN(lat) && !isNaN(long) ? defaultZoomOnQueryParams : defaultZoom;
-    const pitch = !isNaN(urlPitch) ? urlPitch : defaultPitch;
-    const bearing = !isNaN(urlBearing) ? urlBearing : defaultBearing;
+    const center =
+      !isNaN(lat) && !isNaN(long)
+        ? [long, lat]
+        : savedCam?.center || defaultCenter;
+    const zoom =
+      !isNaN(urlZoom)
+        ? urlZoom
+        : !isNaN(lat) && !isNaN(long)
+          ? defaultZoomOnQueryParams
+          : savedCam?.zoom != null
+            ? savedCam.zoom
+            : defaultZoom;
+    const pitch =
+      !isNaN(urlPitch) ? urlPitch : savedCam?.pitch != null ? savedCam.pitch : defaultPitch;
+    const bearing =
+      !isNaN(urlBearing) ? urlBearing : savedCam?.bearing != null ? savedCam.bearing : defaultBearing;
 
     // If map already initialized fly to the new center and zoom
     if (mapRef.current) {
@@ -2084,7 +2186,7 @@ export default function Map() {
     // Listen for styledata changes
     mapRef.current.on("styledata", () => {
       console.log("Event > map > styledata");
-      addSourceAndSupportLink();
+      addAboutLink();
     });
 
     // Custom location control
@@ -3113,6 +3215,10 @@ export default function Map() {
             if (features.length > 0) { hitPath = p; break; }
           }
           if (hitPath) {
+            if (showFeaturesListRef.current) {
+              setSkipPanelAnim(true);
+              setDetailsOrigin("list");
+            }
             setSelectedFeature({ type: "path", path: hitPath });
             if (!showFeaturesListRef.current) setSheetLevel(0);
             return;
@@ -3518,13 +3624,30 @@ export default function Map() {
     // On small screens, hide scale + logo when attribution is expanded
     const attribEl = mapRef.current.getContainer().querySelector(".mapboxgl-ctrl-attrib");
     if (attribEl) {
+      const attribBtn = attribEl.querySelector(".mapboxgl-ctrl-attrib-button");
+      const closeAttrib = () => {
+        if (attribEl.classList.contains("mapboxgl-compact-show")) {
+          attribBtn?.click();
+        }
+      };
+      const onAnyPointerDown = (e) => {
+        // Any click/tap outside the expanded attribution collapses it —
+        // including the map canvas, nav controls, map-style, menu, etc.
+        if (!attribEl.contains(e.target)) closeAttrib();
+      };
       const observer = new MutationObserver(() => {
         const open = attribEl.classList.contains("mapboxgl-compact-show");
         mapRef.current?.getContainer()?.classList.toggle("attrib-open", open);
+        if (open) {
+          document.addEventListener("pointerdown", onAnyPointerDown, true);
+          mapRef.current?.on("movestart", closeAttrib);
+        } else {
+          document.removeEventListener("pointerdown", onAnyPointerDown, true);
+          mapRef.current?.off("movestart", closeAttrib);
+        }
       });
       observer.observe(attribEl, { attributes: true, attributeFilter: ["class"] });
 
-      const attribBtn = attribEl.querySelector(".mapboxgl-ctrl-attrib-button");
       if (attribBtn) {
         addMapControlTooltip(attribBtn, "Attribution", "above");
       }
@@ -3822,6 +3945,30 @@ export default function Map() {
     } else {
       mapRef.current.once("load", runHydrate);
     }
+
+    // Persist camera on app exit AND on every moveend (debounced). Exit events
+    // are unreliable across browsers on refresh, so moveend is the safety net:
+    // whatever the user last panned/zoomed to is in localStorage within 500ms.
+    let cameraSaveTimer = null;
+    const scheduleCameraSave = () => {
+      if (cameraSaveTimer) return;
+      cameraSaveTimer = setTimeout(() => {
+        cameraSaveTimer = null;
+        saveCamera();
+      }, 500);
+    };
+    mapRef.current.on("moveend", scheduleCameraSave);
+    const onPageHide = () => saveCamera();
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") saveCamera();
+    };
+    window.addEventListener("pagehide", onPageHide);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      if (cameraSaveTimer) clearTimeout(cameraSaveTimer);
+      window.removeEventListener("pagehide", onPageHide);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, []);
 
   // Handle file open from Android intent (e.g. opening a .gpx from Files app)
@@ -4227,6 +4374,61 @@ export default function Map() {
     }
   }, [selectedFeature]);
 
+  // When details opens, zoom out if the feature falls outside the unobstructed
+  // region (the part of the viewport not covered by the panel). Mirrors the
+  // list-click zoom-out so any entry point — map click, url param, etc. —
+  // leaves the feature centered in the visible area.
+  useEffect(() => {
+    setDetailsActionsOpen(false);
+    setDescActionsOpen(false);
+    if (!selectedFeature || !mapRef.current) return;
+    const map = mapRef.current;
+    const pp = getPanelPadding();
+    const coords = [];
+    if (selectedFeature.type === "marker") {
+      const ll = selectedFeature.marker.getLngLat();
+      coords.push([ll.lng, ll.lat]);
+    } else if (selectedFeature.type === "path") {
+      const path = selectedFeature.path;
+      const asLngLat = (ll) => (Array.isArray(ll) ? [ll[0], ll[1]] : [ll.lng, ll.lat]);
+      if (path.snappedSegments && path.snappedSegments.length > 0) {
+        path.snappedSegments.forEach((seg) => seg.coords.forEach((c) => coords.push(asLngLat(c))));
+      } else if (path.vertices) {
+        path.vertices.forEach((v) => coords.push(asLngLat(v.lngLat)));
+      }
+    }
+    if (coords.length === 0) return;
+    const rect = map.getContainer().getBoundingClientRect();
+    const MARGIN = 40;
+    const centerLL = map.getCenter();
+    const cPx = map.project(centerLL);
+    const availW = Math.max(20, (rect.width - (pp.left || 0) - (pp.right || 0)) / 2 - MARGIN);
+    const availH = Math.max(20, (rect.height - (pp.top || 0) - (pp.bottom || 0)) / 2 - MARGIN);
+    let ratio = 1;
+    let outside = false;
+    for (const [lng, lat] of coords) {
+      const p = map.project([lng, lat]);
+      const dx = Math.abs(p.x - cPx.x);
+      const dy = Math.abs(p.y - cPx.y);
+      if (dx > availW) { ratio = Math.max(ratio, dx / availW); outside = true; }
+      if (dy > availH) { ratio = Math.max(ratio, dy / availH); outside = true; }
+    }
+    if (outside) {
+      const dz = Math.log2(ratio);
+      const newZoom = Math.max(map.getMinZoom(), map.getZoom() - dz - 0.1);
+      skipNextMoveBumpRef.current = true;
+      map.easeTo({
+        zoom: newZoom,
+        center: centerLL,
+        padding: pp,
+        duration: 500,
+        bearing: map.getBearing(),
+        pitch: map.getPitch(),
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedFeature]);
+
   // Close the feature detail panel whenever a context menu or the side menu opens
   useEffect(() => {
     if (markerMenu || mapClickMenu || isSideMenuOpen) {
@@ -4236,6 +4438,14 @@ export default function Map() {
     }
   }, [markerMenu, mapClickMenu, isSideMenuOpen]);
 
+  // Track where the feature details panel was opened from so the close icon
+  // can switch between "Back to list" and "Close". When details opens without
+  // an explicit origin (e.g. from a map click), default to "map".
+  useEffect(() => {
+    if (selectedFeature && !detailsOrigin) setDetailsOrigin("map");
+    if (!selectedFeature && detailsOrigin) setDetailsOrigin(null);
+  }, [selectedFeature, detailsOrigin]);
+
   // Clean up feature list glow when list closes
   useEffect(() => {
     if (!showFeaturesList && featListGlowCleanupRef.current) {
@@ -4244,9 +4454,41 @@ export default function Map() {
     }
     if (!showFeaturesList) {
       setSelectedFeatureListRef(null);
+      setSkipPanelAnim(false);
     }
     if (showFeaturesList) bumpFeaturesVersion();
   }, [showFeaturesList, bumpFeaturesVersion]);
+
+  // Apply the feature-list filter to the map itself: hidden types disappear
+  // from the map, not just the list. Sights also hide when their parent path
+  // is filtered out. Per-feature `_hidden` overrides add an independent layer.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    for (const m of markersRef.current) {
+      const isSight = !!m._sightPath;
+      const typeAllowed = isSight ? (featListFilter.sights && featListFilter.paths) : featListFilter.markers;
+      const hidden = !typeAllowed
+        || !!m._hidden
+        || !!m._pendingDelete
+        || (isSight && (!!m._sightPath._hidden || !!m._sightPath._pendingDelete));
+      const el = m.getElement();
+      if (el) el.style.display = hidden ? "none" : "";
+    }
+    for (const p of pathsRef.current) {
+      const hidden = !featListFilter.paths || !!p._hidden || !!p._pendingDelete;
+      const vis = hidden ? "none" : "visible";
+      if (map.getLayer(p.layerId)) map.setLayoutProperty(p.layerId, "visibility", vis);
+      if (map.getLayer(`${p.layerId}-hit`)) map.setLayoutProperty(`${p.layerId}-hit`, "visibility", vis);
+      if (map.getLayer(`${p.layerId}-arrows`)) map.setLayoutProperty(`${p.layerId}-arrows`, "visibility", vis);
+      if (p.vertices) {
+        for (const v of p.vertices) {
+          const el = v.marker?.getElement();
+          if (el) el.style.display = hidden ? "none" : "";
+        }
+      }
+    }
+  }, [featListFilter, featuresVersion]);
 
   // Clear routing sub-selection when the offline panel closes.
   useEffect(() => {
@@ -4324,7 +4566,7 @@ export default function Map() {
   // Programmatic moves triggered by a feature-list click are ignored so that
   // clicking an item doesn't reorder the list under the user's finger.
   useEffect(() => {
-    if (!showFeaturesList && !showOfflineMapsPanel) return;
+    if (!showFeaturesList && !showOfflineMapsPanel && !selectedFeature) return;
     const map = mapRef.current;
     if (!map) return;
     const distSortActive =
@@ -4342,11 +4584,32 @@ export default function Map() {
         }
         setSelectedFeatureListRef(null);
       }
+      if (selectedFeature) {
+        setDetailsActionsOpen(false);
+        setDescActionsOpen(false);
+      }
       if (distSortActive) setMapCenterTick((t) => t + 1);
     };
     map.on("moveend", bump);
     return () => map.off("moveend", bump);
-  }, [showFeaturesList, showOfflineMapsPanel, featListSort, offlineSort]);
+  }, [showFeaturesList, showOfflineMapsPanel, featListSort, offlineSort, selectedFeature]);
+
+  useEffect(() => {
+    if (!detailsActionsOpen && !descActionsOpen) return;
+    const onDocDown = (e) => {
+      const t = e.target;
+      const inHeader = !!t.closest?.(".panel-list-item-header");
+      const inDesc = !!t.closest?.(".panel-description");
+      if (!inHeader) setDetailsActionsOpen(false);
+      if (!inDesc) setDescActionsOpen(false);
+    };
+    document.addEventListener("mousedown", onDocDown);
+    document.addEventListener("touchstart", onDocDown);
+    return () => {
+      document.removeEventListener("mousedown", onDocDown);
+      document.removeEventListener("touchstart", onDocDown);
+    };
+  }, [detailsActionsOpen, descActionsOpen]);
 
   const handleCenterToMarker = () => {
     mapRef.current.easeTo({
@@ -4566,6 +4829,11 @@ export default function Map() {
   };
 
   const confirmDeleteAllFeatures = () => {
+    if (pendingDeleteRef.current) {
+      clearTimeout(pendingDeleteRef.current.timerId);
+      pendingDeleteRef.current = null;
+      setToastMsg(null);
+    }
     const map = mapRef.current;
 
     // Remove all paths
@@ -4594,8 +4862,7 @@ export default function Map() {
     }
   };
 
-  const handleDeleteMarker = (target) => {
-    const marker = target || markerMenu?.marker;
+  const performDeleteMarker = (marker) => {
     if (!marker) return;
     const wasSaved = marker._saved;
     const sightParent = marker._sightPath;
@@ -4605,9 +4872,65 @@ export default function Map() {
     }
     marker.remove();
     markersRef.current = markersRef.current.filter((m) => m !== marker);
-    if (!target) setMarkerMenu(null);
     if (wasSaved || parentSaved) persistSavedFeaturesRef.current?.();
     bumpFeaturesVersion();
+  };
+
+  const commitPendingDelete = () => {
+    const pending = pendingDeleteRef.current;
+    if (!pending) return;
+    if (pending.timerId) clearTimeout(pending.timerId);
+    pendingDeleteRef.current = null;
+    delete pending.target._pendingDelete;
+    if (pending.type === "path") performDeletePath(pending.target);
+    else performDeleteMarker(pending.target);
+    setToastMsg((cur) =>
+      cur && typeof cur === "object" && cur.__undo === pending.token ? null : cur
+    );
+  };
+
+  const undoPendingDelete = () => {
+    const pending = pendingDeleteRef.current;
+    if (!pending) return;
+    if (pending.timerId) clearTimeout(pending.timerId);
+    pendingDeleteRef.current = null;
+    delete pending.target._pendingDelete;
+    bumpFeaturesVersion();
+    setToastMsg(null);
+  };
+
+  useEffect(() => () => {
+    if (pendingDeleteRef.current) {
+      clearTimeout(pendingDeleteRef.current.timerId);
+      pendingDeleteRef.current = null;
+    }
+  }, []);
+
+  const queueDelete = (target, type) => {
+    if (!target) return;
+    if (pendingDeleteRef.current) commitPendingDelete();
+    target._pendingDelete = true;
+    const token = Symbol("undo");
+    const timerId = setTimeout(() => {
+      // Only commit if this pending is still the active one.
+      if (pendingDeleteRef.current?.token === token) commitPendingDelete();
+    }, UNDO_MS);
+    pendingDeleteRef.current = { target, type, timerId, token };
+    bumpFeaturesVersion();
+    const label = type === "path" ? "Path" : type === "sight" ? "Sight" : "Marker";
+    setToastMsg({
+      text: `${label} deleted`,
+      action: { label: "Undo", onClick: undoPendingDelete },
+      __undo: token,
+    });
+  };
+
+  const handleDeleteMarker = (target) => {
+    const marker = target || markerMenu?.marker;
+    if (!marker) return;
+    const type = marker._sightPath ? "sight" : "marker";
+    if (!target) setMarkerMenu(null);
+    queueDelete(marker, type);
   };
 
   const handleToggleSaveMarkerMenu = () => {
@@ -4682,6 +5005,11 @@ export default function Map() {
     if (!draggable) newMarker.setDraggable(false);
     if (!path.sights) path.sights = [];
     path.sights.push(newMarker);
+    if (selectedFeatureRef.current?.type === "marker" && selectedFeatureRef.current.marker === marker) {
+      setSelectedFeature({ type: "marker", marker: newMarker });
+    }
+    if (selectedFeatureListRef === marker) setSelectedFeatureListRef(newMarker);
+    bumpFeaturesVersion();
   };
 
   const handleSetNameMarker = (target) => {
@@ -4704,11 +5032,7 @@ export default function Map() {
 
   const deleteFromListItem = (item) => {
     if (!item?.ref) return;
-    if (item.type === "path") {
-      setDeletePathAlert(item.ref);
-    } else {
-      handleDeleteMarker(item.ref);
-    }
+    queueDelete(item.ref, item.type);
   };
 
   // === Saved-feature persistence (localStorage) ===
@@ -4729,6 +5053,8 @@ export default function Map() {
           id: m._id || (m._id = generateFeatureId()),
           name: m._markerName || "",
           pos: [ll.lat, ll.lng],
+          ...(m._hidden ? { hidden: true } : {}),
+          ...(m._description ? { description: m._description } : {}),
         };
         savedMarkers.push(entry);
       }
@@ -4756,10 +5082,14 @@ export default function Map() {
         if (p.closingForced) pathData.closingForced = true;
         if (p.isRoute) pathData.isRoute = true;
         if (p.isTrack) pathData.isTrack = true;
+        if (p._hidden) pathData.hidden = true;
+        if (p._description) pathData.description = p._description;
         if (p.sights && p.sights.length > 0) {
           pathData.sights = p.sights.map((s) => {
             const am = { segmentIndex: s._segmentIndex, t: s._t };
             if (s._markerName) am.name = s._markerName;
+            if (s._hidden) am.hidden = true;
+            if (s._description) am.description = s._description;
             return am;
           });
         }
@@ -4822,6 +5152,8 @@ export default function Map() {
         m._saved = true;
         const entry = savedMarkerData[mIdx++];
         if (entry?.id) m._id = entry.id;
+        if (entry?.hidden) m._hidden = true;
+        if (entry?.description) m._description = entry.description;
       }
       const savedPathData = data.paths || [];
       for (let i = pathsBefore; i < pathsRef.current.length; i++) {
@@ -4829,6 +5161,14 @@ export default function Map() {
         p._saved = true;
         const entry = savedPathData[i - pathsBefore];
         if (entry?.id) p._id = entry.id;
+        if (entry?.hidden) p._hidden = true;
+        if (entry?.description) p._description = entry.description;
+        if (entry?.sights && p.sights) {
+          for (let j = 0; j < Math.min(entry.sights.length, p.sights.length); j++) {
+            if (entry.sights[j]?.hidden) p.sights[j]._hidden = true;
+            if (entry.sights[j]?.description) p.sights[j]._description = entry.sights[j].description;
+          }
+        }
       }
 
       bumpFeaturesVersion();
@@ -4967,16 +5307,28 @@ export default function Map() {
     }
   };
 
+  const handleFeatureToggleVisibility = (itemOrEvent) => {
+    let target = null;
+    if (itemOrEvent && itemOrEvent.ref) target = itemOrEvent.ref;
+    else if (selectedFeature?.type === "path") target = selectedFeature.path;
+    else if (selectedFeature?.type === "marker") target = selectedFeature.marker;
+    if (!target) return;
+    target._hidden = !target._hidden;
+    bumpFeaturesVersion();
+    if (target._saved) persistSavedFeatures();
+  };
+
   const handleFeatureDelete = () => {
     if (!selectedFeature) return;
     if (selectedFeature.type === "path") {
       const p = selectedFeature.path;
       setSelectedFeature(null);
-      setDeletePathAlert(p);
+      queueDelete(p, "path");
     } else {
       const m = selectedFeature.marker;
+      const type = m._sightPath ? "sight" : "marker";
       setSelectedFeature(null);
-      handleDeleteMarker(m);
+      queueDelete(m, type);
     }
   };
 
@@ -5041,6 +5393,7 @@ export default function Map() {
     if (featListFilter.markers) {
       for (const m of markersRef.current) {
         if (m._sightPath) continue;
+        if (m._pendingDelete) continue;
         const ll = m.getLngLat();
         items.push({
           type: "marker",
@@ -5057,6 +5410,7 @@ export default function Map() {
     if (featListFilter.paths) {
       for (const p of pathsRef.current) {
         if (!p.isFinished) continue;
+        if (p._pendingDelete) continue;
         if (!p.vertices || p.vertices.length === 0) continue;
         const bounds = new mapboxgl.LngLatBounds();
         let extended = false;
@@ -5076,18 +5430,20 @@ export default function Map() {
         // the path implicitly, so they have no independent _saved flag.
         const sights =
           featListFilter.sights && p.sights && p.sights.length > 0
-            ? p.sights.map((s) => {
-                const sll = s.getLngLat();
-                return {
-                  type: "sight",
-                  name: s._markerName || "Sight",
-                  lngLat: sll,
-                  dist: haversinePoint(refLat, refLng, sll.lat, sll.lng),
-                  length: 0,
-                  ref: s,
-                  parentPath: p,
-                };
-              })
+            ? p.sights
+                .filter((s) => !s._pendingDelete)
+                .map((s) => {
+                  const sll = s.getLngLat();
+                  return {
+                    type: "sight",
+                    name: s._markerName || "Sight",
+                    lngLat: sll,
+                    dist: haversinePoint(refLat, refLng, sll.lat, sll.lng),
+                    length: 0,
+                    ref: s,
+                    parentPath: p,
+                  };
+                })
             : [];
         items.push({
           type: "path",
@@ -5127,6 +5483,12 @@ export default function Map() {
     // The list stays mounted (hidden via CSS) so its scroll position
     // is preserved, and the details panel inherits the current sheet level.
     if (selectedFeatureListRef === item.ref) {
+      listRestoreRef.current = {
+        sheetLevel,
+        scrollTop: listScrollRef.current?.scrollTop || 0,
+      };
+      setSkipPanelAnim(true);
+      setDetailsOrigin("list");
       if (item.type === "path") {
         setSelectedFeature({ type: "path", path: item.ref });
       } else {
@@ -5162,14 +5524,16 @@ export default function Map() {
           glowEls.push(s.getElement());
         });
       }
-      // For paths, zoom-out reference is the start of the path only — so the
-      // user sees the path's beginning and can follow it.
+      // Collect every vertex (or snapped point) so the zoom-out ratio is
+      // computed against the whole path — the user wants to see it all in
+      // the unobscured area, not just the start.
+      const asLngLat = (ll) => (Array.isArray(ll) ? [ll[0], ll[1]] : [ll.lng, ll.lat]);
       if (path.snappedSegments && path.snappedSegments.length > 0) {
-        const first = path.snappedSegments[0]?.coords?.[0];
-        if (first) coords.push([first.lng, first.lat]);
-      } else if (path.vertices.length > 0) {
-        const first = path.vertices[0].lngLat;
-        coords.push([first.lng, first.lat]);
+        path.snappedSegments.forEach((seg) =>
+          seg.coords.forEach((c) => coords.push(asLngLat(c))),
+        );
+      } else {
+        path.vertices.forEach((v) => coords.push(asLngLat(v.lngLat)));
       }
 
       featListGlowCleanupRef.current = () => {
@@ -5191,28 +5555,26 @@ export default function Map() {
       };
     }
 
-    // Keep current center; zoom out only if the feature is off-screen or
-    // hidden under the opened panel. Uses asymmetric per-side padding so
-    // the feature can't fall under the list/details panel (levels 1 & 2).
+    // Zoom out if the feature is off-screen or hidden under the open panel.
+    // Use the unobstructed region's symmetric half-widths so after the
+    // animation the camera is centered in the visible (non-panel) area —
+    // padding: pp tells Mapbox to place centerLL at the center of the padded
+    // (unobstructed) region.
     if (coords.length > 0) {
       const rect = map.getContainer().getBoundingClientRect();
       const MARGIN = 40;
       const centerLL = map.getCenter();
       const cPx = map.project(centerLL);
-      const leftAvail = Math.max(20, cPx.x - (pp.left || 0) - MARGIN);
-      const rightAvail = Math.max(20, rect.width - (pp.right || 0) - cPx.x - MARGIN);
-      const topAvail = Math.max(20, cPx.y - (pp.top || 0) - MARGIN);
-      const bottomAvail = Math.max(20, rect.height - (pp.bottom || 0) - cPx.y - MARGIN);
+      const availW = Math.max(20, (rect.width - (pp.left || 0) - (pp.right || 0)) / 2 - MARGIN);
+      const availH = Math.max(20, (rect.height - (pp.top || 0) - (pp.bottom || 0)) / 2 - MARGIN);
 
       let ratio = 1;
       for (const [lng, lat] of coords) {
         const p = map.project([lng, lat]);
-        const dx = p.x - cPx.x;
-        const dy = p.y - cPx.y;
-        if (dx > 0 && dx > rightAvail) ratio = Math.max(ratio, dx / rightAvail);
-        else if (dx < 0 && -dx > leftAvail) ratio = Math.max(ratio, -dx / leftAvail);
-        if (dy > 0 && dy > bottomAvail) ratio = Math.max(ratio, dy / bottomAvail);
-        else if (dy < 0 && -dy > topAvail) ratio = Math.max(ratio, -dy / topAvail);
+        const dx = Math.abs(p.x - cPx.x);
+        const dy = Math.abs(p.y - cPx.y);
+        if (dx > availW) ratio = Math.max(ratio, dx / availW);
+        if (dy > availH) ratio = Math.max(ratio, dy / availH);
       }
       if (ratio > 1) {
         const dz = Math.log2(ratio);
@@ -5221,6 +5583,7 @@ export default function Map() {
         map.easeTo({
           zoom: newZoom,
           center: centerLL,
+          padding: pp,
           duration: 500,
           bearing: map.getBearing(),
           pitch: map.getPitch(),
@@ -5359,10 +5722,38 @@ export default function Map() {
     setMapClickMenu(null);
   };
 
+  const handleFlyHere = () => {
+    const map = mapRef.current;
+    const z = map.getZoom();
+    const targetZoom =
+      z < 8 ? 10 :
+      z < 12 ? 14 :
+      z < 16 ? 18 :
+      z < 20 ? 22 :
+      z;
+    map.flyTo({
+      center: mapClickMenu.lngLat,
+      zoom: targetZoom,
+      padding: { top: 0, bottom: 0, left: 0, right: 0 },
+      duration: 1500,
+    });
+    setMapClickMenu(null);
+  };
+
   const handleAddMarkerHere = () => {
     const m = createMarkerRef.current(mapClickMenu.lngLat);
     setMapClickMenu(null);
     // Auto-open the detail panel; the selectedFeature effect handles drag enable.
+    setSelectedFeature({ type: "marker", marker: m });
+    setSheetLevel(0);
+  };
+
+  const handleAddMarkerAtCenter = () => {
+    const map = mapRef.current;
+    if (!map) return;
+    const center = map.getCenter();
+    const m = createMarkerRef.current(center);
+    setIsSideMenuOpen(false);
     setSelectedFeature({ type: "marker", marker: m });
     setSheetLevel(0);
   };
@@ -5918,6 +6309,24 @@ export default function Map() {
     if (!pathArg) setMapClickMenu(null);
     if (!path) return;
     setSelectedFeature(null);
+    setOpenFeaturesList(false);
+    setDetailsOrigin(null);
+    // Fly so the full path is visible in the unobscured area (the path-mode
+    // toolbar bottom still occludes the map, so leave a generous bottom pad).
+    const map = mapRef.current;
+    if (map && path.vertices && path.vertices.length > 0) {
+      const bounds = new mapboxgl.LngLatBounds();
+      if (path.snappedSegments && path.snappedSegments.length > 0) {
+        path.snappedSegments.forEach((seg) => seg.coords.forEach((c) => bounds.extend(c)));
+      } else {
+        path.vertices.forEach((v) => bounds.extend(v.lngLat));
+      }
+      const isPortrait = window.matchMedia("(orientation: portrait)").matches;
+      const padding = isPortrait
+        ? { top: 80, bottom: 160, left: 40, right: 40 }
+        : { top: 60, bottom: 60, left: 380, right: 60 };
+      map.fitBounds(bounds, { padding, bearing: map.getBearing(), pitch: map.getPitch(), duration: 800 });
+    }
     pathUndoStackRef.current = [];
     pathRedoStackRef.current = [];
     setCanUndo(false);
@@ -6479,8 +6888,7 @@ export default function Map() {
     ctrl._handleTrackBearing();
   };
 
-  const confirmDeletePath = () => {
-    const path = deletePathAlert;
+  const performDeletePath = (path) => {
     if (!path) return;
     const wasSaved = path._saved;
     const map = mapRef.current;
@@ -6713,15 +7121,6 @@ export default function Map() {
     if (url) shareOrCopy({ text: buildEmbedCode(url), kind: "Embed code" });
   };
 
-
-  // Show tips
-  useEffect(() => {
-    console.log("useEffect > Show tips");
-    const dontShowTips = localStorage.getItem("rontomap_dont_show_tips");
-    if (dontShowTips || isEmbeddedRef.current) {
-      setShowTips(false);
-    }
-  }, []);
 
   // ---- Offline maps ----
 
@@ -7566,11 +7965,12 @@ export default function Map() {
   return (
     <PageFixedLayout name="map">
       <IonAlert
-        isOpen={showTips}
-        cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
-        onDidDismiss={() => setShowTips(false)}
+        isOpen={showAbout}
+        cssClass={`alert-about${idMapStyle === "rontomap_streets_dark" ? " alert-dark" : ""}`}
+        onDidDismiss={() => setShowAbout(false)}
         header="RontoMap"
         message={
+          "Add features: Long-press or right-click on the map to add a marker or path.\n\n" +
           "Tilt the map: Use two fingers in parallel on touchscreen or right/wheel-click and drag with mouse.\n\n" +
           "Location tracking: Click location icon for tracking, click once more to follow direction. \n\n" +
           "Full screen: Double-click to enter/exit.\n\n" +
@@ -7578,21 +7978,15 @@ export default function Map() {
         }
         buttons={[
           {
-            text: "SOURCE",
+            text: "Source",
             handler: () => {
               window.open("https://github.com/strukovnasamobor/rontomap", "_blank");
             },
           },
           {
-            text: "SUPPORT",
+            text: "Support",
             handler: () => {
               window.open("https://www.paypal.com/ncp/payment/ZRBQZMWTCJYFE", "_blank");
-            },
-          },
-          {
-            text: "DON'T SHOW AGAIN",
-            handler: () => {
-              localStorage.setItem("rontomap_dont_show_tips", "true");
             },
           },
           {
@@ -7605,6 +7999,7 @@ export default function Map() {
         isOpen={nameAlert}
         isDark={idMapStyle === "rontomap_streets_dark"}
         title={namingTargetRef.current?.type === "path" ? "Path name" : "Marker name"}
+        maxLength={50}
         initialValue={
           namingTargetRef.current?.type === "path"
             ? namingTargetRef.current?.target?.name ?? ""
@@ -7645,6 +8040,36 @@ export default function Map() {
           bumpFeaturesVersion();
         }}
       />
+      <RenameModal
+        isOpen={descAlert}
+        isDark={idMapStyle === "rontomap_streets_dark"}
+        title="Description"
+        placeholder="Enter description"
+        multiline
+        maxLength={500}
+        initialValue={
+          descTargetRef.current?.type === "path"
+            ? descTargetRef.current?.path?._description ?? ""
+            : descTargetRef.current?.marker?._description ?? ""
+        }
+        onCancel={() => setDescAlert(false)}
+        onClear={() => {
+          const t = descTargetRef.current;
+          const target = t?.type === "path" ? t.path : t?.marker;
+          if (target) target._description = "";
+          setDescAlert(false);
+          if (target?._saved) persistSavedFeaturesRef.current?.();
+          bumpFeaturesVersion();
+        }}
+        onSave={(val) => {
+          const t = descTargetRef.current;
+          const target = t?.type === "path" ? t.path : t?.marker;
+          if (target) target._description = val;
+          setDescAlert(false);
+          if (target?._saved) persistSavedFeaturesRef.current?.();
+          bumpFeaturesVersion();
+        }}
+      />
       <IonAlert
         isOpen={stopRecordingAlert}
         cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
@@ -7665,17 +8090,6 @@ export default function Map() {
         buttons={[
           { text: "Cancel", role: "cancel" },
           { text: "Delete", handler: confirmDeleteAllFeatures },
-        ]}
-      />
-      <IonAlert
-        isOpen={!!deletePathAlert}
-        cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
-        onDidDismiss={() => setDeletePathAlert(null)}
-        header="Delete path"
-        message="Are you sure you want to delete this path?"
-        buttons={[
-          { text: "Cancel", role: "cancel" },
-          { text: "Delete", handler: confirmDeletePath },
         ]}
       />
       <IonAlert
@@ -7770,6 +8184,7 @@ export default function Map() {
               </button>
             </div>
             <div className="side-menu-separator" />
+            <button onClick={handleAddMarkerAtCenter}>Add marker</button>
             <button onClick={() => {
               setIsSideMenuOpen(false);
               handleCreatePath({ noAutoVertex: true });
@@ -7819,6 +8234,7 @@ export default function Map() {
             onContextMenu={(e) => e.preventDefault()}
           >
             <button onClick={handleCenterHere}>Center here</button>
+            <button onClick={handleFlyHere}>Fly here</button>
             <button onClick={handleNavigateHere}>Navigate here</button>
             <button onClick={handleAddMarkerHere}>Add marker here</button>
             {mapClickMenu.path && <button onClick={handleAddSight}>Add sight here</button>}
@@ -7984,7 +8400,7 @@ export default function Map() {
           <div
             {...(selectedFeature ? {} : featurePanelSwipe)}
             ref={(el) => { if (!selectedFeature) { featurePanelRef.current = el; featurePanelSwipe.ref(el); } }}
-            className={`panel panel-list${darkClass}${sheetLevel > 0 ? ` sheet-level-${sheetLevel}` : ""}${hiddenClass}`}
+            className={`panel panel-list${darkClass}${sheetLevel > 0 ? ` sheet-level-${sheetLevel}` : ""}${hiddenClass}${skipPanelAnim ? " panel-no-anim" : ""}`}
           >
             <div
               className="panel-handle"
@@ -8021,14 +8437,15 @@ export default function Map() {
                 <IonIcon icon={closeOutline} />
               </ActionIconButton>
             </div>
-            <div className="panel-list-items">
+            <div className="panel-list-items" ref={listScrollRef}>
               {items.map((item, i) => {
                 const renderRow = (row, nested) => {
                   const iconIcon = row.type === "path" ? analyticsOutline : row.type === "sight" ? pinOutline : locationOutline;
                   const selected = row.ref === selectedFeatureListRef;
+                  const rowHidden = !!row.ref._hidden || (row.type === "sight" && !!row.ref._sightPath?._hidden);
                   return (
                     <div
-                      className="panel-list-item"
+                      className={`panel-list-item${rowHidden ? " panel-list-item-hidden" : ""}`}
                       style={nested ? { paddingLeft: 28 } : undefined}
                       onClick={() => handleFeatureListClick(row)}
                     >
@@ -8063,21 +8480,26 @@ export default function Map() {
                               <IonIcon icon={createOutline} />
                             </ActionIconButton>
                           )}
-                          {row.type === "sight" && (
+                          <ActionIconButton
+                            label={`Set name to ${row.type}`}
+                            onClick={(e) => { e.stopPropagation(); openRenameFromListItem(row); }}
+                          >
+                            <IonIcon icon={pencilOutline} />
+                          </ActionIconButton>
+                          <ActionIconButton
+                            label={row.ref._hidden ? `Show ${row.type}` : `Hide ${row.type}`}
+                            onClick={(e) => { e.stopPropagation(); handleFeatureToggleVisibility(row); }}
+                          >
+                            <IonIcon icon={row.ref._hidden ? eyeOffOutline : eyeOutline} />
+                          </ActionIconButton>
+                          {row.type === "sight" ? (
                             <ActionIconButton
                               label="Detach sight"
                               onClick={(e) => { e.stopPropagation(); handleFeatureDetachSight(row.ref); }}
                             >
                               <IonIcon icon={gitMergeOutline} />
                             </ActionIconButton>
-                          )}
-                          <ActionIconButton
-                            label="Rename"
-                            onClick={(e) => { e.stopPropagation(); openRenameFromListItem(row); }}
-                          >
-                            <IonIcon icon={pencilOutline} />
-                          </ActionIconButton>
-                          {row.type !== "sight" && (
+                          ) : (
                             <ActionIconButton
                               label={row._saved ? "Unsave" : "Save"}
                               onClick={(e) => { e.stopPropagation(); toggleSaveFeature(row); }}
@@ -8105,7 +8527,14 @@ export default function Map() {
                   </Fragment>
                 );
               })}
-              {items.length === 0 && <div className="panel-list-empty">No features</div>}
+              {items.length === 0 && (
+                <div className="panel-list-empty">
+                  No features yet.<br />
+                  {("ontouchstart" in window || navigator.maxTouchPoints > 0)
+                    ? "Long tap to add."
+                    : "Right-click to add."}
+                </div>
+              )}
             </div>
           </div>
         );
@@ -8571,7 +9000,7 @@ export default function Map() {
               featurePanelRef.current = el;
               featurePanelSwipe.ref(el);
             }}
-            className={`panel${idMapStyle === "rontomap_streets_dark" ? " panel-dark" : ""}${sheetLevel > 0 ? ` panel-expanded sheet-level-${sheetLevel}` : ""}`}
+            className={`panel panel-details-view${idMapStyle === "rontomap_streets_dark" ? " panel-dark" : ""}${sheetLevel > 0 ? ` panel-expanded sheet-level-${sheetLevel}` : ""}${skipPanelAnim ? " panel-no-anim" : ""}`}
           >
             <div
               className="panel-handle"
@@ -8613,104 +9042,181 @@ export default function Map() {
                     <ActionIconButton label={`Export ${featureNoun}`} onClick={handleFeatureExport}>
                       <IonIcon icon={downloadOutline} />
                     </ActionIconButton>
-                    <ActionIconButton label="Close" onClick={() => setSelectedFeature(null)}>
-                      <IonIcon icon={closeOutline} />
+                    <ActionIconButton
+                      label={detailsOrigin === "list" ? "Back to list" : "Close"}
+                      onClick={() => {
+                        if (detailsOrigin === "list") {
+                          const restore = listRestoreRef.current;
+                          setSkipPanelAnim(true);
+                          setSelectedFeature(null);
+                          setDetailsOrigin(null);
+                          setOpenFeaturesList(true);
+                          if (restore) {
+                            setSheetLevel(restore.sheetLevel);
+                            requestAnimationFrame(() => {
+                              if (listScrollRef.current && restore.scrollTop != null) {
+                                listScrollRef.current.scrollTop = restore.scrollTop;
+                              }
+                            });
+                          }
+                        } else {
+                          setSelectedFeature(null);
+                          setDetailsOrigin(null);
+                        }
+                      }}
+                    >
+                      <IonIcon icon={detailsOrigin === "list" ? arrowBackOutline : closeOutline} />
                     </ActionIconButton>
                   </div>
                 </>
               );
             })()}
-            <div className="panel-name-row">
-              <div className="panel-name">
-                {selectedFeature.type === "marker"
-                  ? selectedFeature.marker._markerName || (selectedFeature.marker._sightPath ? "Sight" : "Marker")
-                  : selectedFeature.path.name || "Path"}
-              </div>
+            <div className="panel-details-scroll">
+            {(() => {
+              const isPath = selectedFeature.type === "path";
+              const isSight = !isPath && !!selectedFeature.marker._sightPath;
+              const featureNoun = isPath ? "path" : isSight ? "sight" : "marker";
+              const isSaved = isPath
+                ? !!selectedFeature.path._saved
+                : !!selectedFeature.marker._saved;
+              const headerIcon = isPath ? analyticsOutline : isSight ? pinOutline : locationOutline;
+              const headerTypeClass = isPath ? "path" : isSight ? "sight" : "marker";
+              const headerName = selectedFeature.type === "marker"
+                ? selectedFeature.marker._markerName || (isSight ? "Sight" : "Marker")
+                : selectedFeature.path.name || "Path";
+              let headerInfo = "";
+              if (isPath) {
+                const p = selectedFeature.path;
+                let dist = p.routeDistance;
+                if (dist == null && p.vertices && p.vertices.length >= 2) {
+                  dist = haversineDistance(p.vertices.map((v) => v.lngLat));
+                }
+                const snapLabel =
+                  p.roadSnap === "foot" ? "Foot"
+                  : p.roadSnap === "bike" ? "Bike"
+                  : p.roadSnap === "car" ? "Car"
+                  : "Free";
+                headerInfo = [
+                  snapLabel,
+                  dist > 0 ? formatDistance(dist) : null,
+                  p.routeDuration != null ? formatDuration(p.routeDuration) : null,
+                ].filter(Boolean).join(" \u00b7 ");
+              } else {
+                const ll = selectedFeature.marker.getLngLat();
+                headerInfo = `${ll.lat.toFixed(6)}, ${ll.lng.toFixed(6)}`;
+              }
+              return (
+                <div
+                  className="panel-list-item panel-list-item-header"
+                  onClick={() => setDetailsActionsOpen((v) => !v)}
+                >
+                  <IonIcon icon={headerIcon} className={`panel-list-icon panel-list-icon-${headerTypeClass}`} />
+                  <div className="panel-list-text">
+                    <span className="panel-list-name">{headerName}</span>
+                    <span className="panel-list-info">{headerInfo}</span>
+                  </div>
+                  {detailsActionsOpen && (
+                    <div className="panel-name-actions">
+                      {isPath && (
+                        <ActionIconButton label="Trace path" onClick={(e) => { e.stopPropagation(); handleFeatureTrace(); }}>
+                          <IonIcon icon={footstepsOutline} />
+                        </ActionIconButton>
+                      )}
+                      {isPath && (
+                        <ActionIconButton label="Edit path" onClick={(e) => { e.stopPropagation(); handleEditPath(selectedFeature.path); }}>
+                          <IonIcon icon={createOutline} />
+                        </ActionIconButton>
+                      )}
+                      <ActionIconButton
+                        label={`Set name to ${featureNoun}`}
+                        onClick={(e) => { e.stopPropagation(); handleFeatureRename(); }}
+                      >
+                        <IonIcon icon={pencilOutline} />
+                      </ActionIconButton>
+                      {(() => {
+                        const target = isPath ? selectedFeature.path : selectedFeature.marker;
+                        const isHidden = !!target._hidden;
+                        return (
+                          <ActionIconButton
+                            label={isHidden ? `Show ${featureNoun}` : `Hide ${featureNoun}`}
+                            onClick={(e) => { e.stopPropagation(); handleFeatureToggleVisibility(); }}
+                          >
+                            <IonIcon icon={isHidden ? eyeOffOutline : eyeOutline} />
+                          </ActionIconButton>
+                        );
+                      })()}
+                      {isSight ? (
+                        <ActionIconButton label="Detach sight" onClick={(e) => { e.stopPropagation(); handleFeatureDetachSight(); }}>
+                          <IonIcon icon={gitMergeOutline} />
+                        </ActionIconButton>
+                      ) : (
+                        <ActionIconButton
+                          label={isSaved ? `Unsave ${featureNoun}` : `Save ${featureNoun}`}
+                          onClick={(e) => { e.stopPropagation(); handleFeatureToggleSave(); }}
+                        >
+                          <IonIcon icon={isSaved ? bookmark : bookmarkOutline} />
+                        </ActionIconButton>
+                      )}
+                      <ActionIconButton label={`Delete ${featureNoun}`} onClick={(e) => { e.stopPropagation(); handleFeatureDelete(); }}>
+                        <IonIcon icon={trashOutline} />
+                      </ActionIconButton>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+            <div className="panel-details">
               {(() => {
-                const isPath = selectedFeature.type === "path";
-                const isSight = !isPath && !!selectedFeature.marker._sightPath;
-                const featureNoun = isPath ? "path" : isSight ? "sight" : "marker";
-                const isSaved = isPath
-                  ? !!selectedFeature.path._saved
-                  : !!selectedFeature.marker._saved;
+                const target = selectedFeature.type === "path" ? selectedFeature.path : selectedFeature.marker;
+                const desc = target?._description || "";
                 return (
-                  <div className="panel-name-actions">
-                    {isPath && (
-                      <ActionIconButton label="Trace path" onClick={handleFeatureTrace}>
-                        <IonIcon icon={footstepsOutline} />
-                      </ActionIconButton>
+                  <div
+                    className="panel-description"
+                    onClick={() => setDescActionsOpen((v) => !v)}
+                  >
+                    <span className={`panel-description-text${desc ? "" : " empty"}`}>
+                      {desc || "No description yet."}
+                    </span>
+                    {descActionsOpen && (
+                      <div className="panel-name-actions">
+                        <ActionIconButton
+                          label="Set description"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            descTargetRef.current = selectedFeature;
+                            setDescAlert(true);
+                          }}
+                        >
+                          <IonIcon icon={pencilOutline} />
+                        </ActionIconButton>
+                      </div>
                     )}
-                    {isPath && (
-                      <ActionIconButton label="Edit path" onClick={() => handleEditPath(selectedFeature.path)}>
-                        <IonIcon icon={createOutline} />
-                      </ActionIconButton>
-                    )}
-                    {isSight && (
-                      <ActionIconButton label="Detach sight" onClick={handleFeatureDetachSight}>
-                        <IonIcon icon={gitMergeOutline} />
-                      </ActionIconButton>
-                    )}
-                    <ActionIconButton
-                      label={isPath || isSight ? `Set name to ${featureNoun}` : "Rename marker"}
-                      onClick={handleFeatureRename}
-                    >
-                      <IonIcon icon={pencilOutline} />
-                    </ActionIconButton>
-                    <ActionIconButton
-                      label={isSaved ? `Unsave ${featureNoun}` : `Save ${featureNoun}`}
-                      onClick={handleFeatureToggleSave}
-                    >
-                      <IonIcon icon={isSaved ? bookmark : bookmarkOutline} />
-                    </ActionIconButton>
-                    <ActionIconButton label={`Delete ${featureNoun}`} onClick={handleFeatureDelete}>
-                      <IonIcon icon={trashOutline} />
-                    </ActionIconButton>
                   </div>
                 );
               })()}
             </div>
-            <div className="panel-details">
-              {selectedFeature.type === "marker" && (
-                <div className="panel-coords">
-                  {selectedFeature.marker.getLngLat().lat.toFixed(6)}, {selectedFeature.marker.getLngLat().lng.toFixed(6)}
-                </div>
-              )}
-              {selectedFeature.type === "path" && selectedFeature.path.vertices.length > 0 && (() => {
-                const path = selectedFeature.path;
-                const snapLabel =
-                  path.roadSnap === "foot" ? "Foot"
-                  : path.roadSnap === "bike" ? "Bike"
-                  : path.roadSnap === "car" ? "Car"
-                  : "Free";
-                let dist = path.routeDistance;
-                if (dist == null && path.vertices.length >= 2) {
-                  dist = haversineDistance(path.vertices.map((v) => v.lngLat));
-                }
-                return (
-                  <div className="panel-meta">
-                    <span>{snapLabel}</span>
-                    {dist != null && (
-                      <>
-                        <span className="route-info-separator">&middot;</span>
-                        <span>{formatDistance(dist)}</span>
-                      </>
-                    )}
-                    {path.routeDuration != null && (
-                      <>
-                        <span className="route-info-separator">&middot;</span>
-                        <span>{formatDuration(path.routeDuration)}</span>
-                      </>
-                    )}
-                  </div>
-                );
-              })()}
             </div>
           </div>
         </>
       )}
-      {toastMsg && (
-        <div className={`toast-msg${idMapStyle === "rontomap_streets_dark" ? " toast-msg-dark" : ""}`} style={toastBottom != null ? { bottom: toastBottom, zIndex: 1004 } : undefined}>{toastMsg}</div>
-      )}
+      {toastMsg && (() => {
+        const isObj = typeof toastMsg === "object";
+        const text = isObj ? toastMsg.text : toastMsg;
+        const action = isObj ? toastMsg.action : null;
+        return (
+          <div
+            className={`toast-msg${idMapStyle === "rontomap_streets_dark" ? " toast-msg-dark" : ""}${action ? " toast-msg-interactive" : ""}`}
+            style={toastBottom != null ? { bottom: toastBottom, zIndex: 1004 } : undefined}
+          >
+            <span className="toast-msg-text">{text}</span>
+            {action && (
+              <button type="button" className="toast-msg-action" onClick={action.onClick}>
+                {action.label}
+              </button>
+            )}
+          </div>
+        );
+      })()}
       <div
         ref={mapContainerRef}
         {...bind}

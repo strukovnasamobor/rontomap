@@ -43,6 +43,7 @@ id | action                      | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10| 11| 1
 - in recording path start tracking user bearing same as clicking start/resume, on start show toast msg "Click stop tracking to pause recording". 
   elapsed time in format hh:mm (do not count time in pause ?), on geolocate remove tost msg "recording paused",
   tracking info at bottom
+- back button on mobile actions
 
 
 - vite.config.js - Set to true in production for logs
@@ -57,9 +58,9 @@ GOALS
 UPGRADES
 - features descriptions and pictures
 - organize feature collections and features
+- login - sync offline regions, sync feature collections
 - finding and collaboration editing public paths
-- tracing public paths
-- login - sync offline regions, sync feature collections, traced paths
+- tracing public paths, sync traced paths
 
 Ver. x.y. (z)
 - change vesrion in build gradle
@@ -95,13 +96,14 @@ UI DESIGN & INTERACTIONS
     - left - attribute icon & scale
     - middle - toast msg
     - right - map change style & location icon (in embedded hidden)
-- right sidebar - menu 
+- right sidebar - side menu 
 - left mouse click / tap on feature => features list panel opens (in embedded disabled) sorted by the distance from clicked point or from user's location if it is known
 - left mouse click / tap on feature => feature detail panel opens (in embedded disabled)
 - double left mouse click / double tap => fullscreen enter/exit
 - right mouse click / long tap on map => context menu opens (in embedded disabled)
     - Center here
     - Navigate here
+    - Fly here
     - Add marker here
     - Add sight here (if clicked near path)
     - Create path here
@@ -114,6 +116,21 @@ UI DESIGN & INTERACTIONS
 - mouse wheel click & drag (croosshair cursor icon) => map rotation and tilt camera panning
 - two fingers twisting => map rotation
 - two fingers tilt => map tilt
+
+SIDE MENU
+- options
+    - Add marker
+    - Create path
+    - Record path
+    ==============================
+    - Features list
+    - Copy link to features
+    - Copy embedded features
+    - Export features
+    - Import features
+    - Delete all features
+    ==============================
+    - Offline maps
 
 FEATURE DETAIL PANEL
 - opening on left mouse click / tap on feature
@@ -128,24 +145,30 @@ FEATURE DETAIL PANEL
     - Save/unsave marker/sight/path - ion-icon name="bookmark-outline"/ion-icon name="bookmark"
     - Copy embedded marker/sight/path - ion-icon name="code-slash-outline"
     - Export marker/sight/path - ion-icon name="download-outline"
-    - Close - ion-icon name="close-outline"
+    - Close / Back to list (if origin is feature list) - ion-icon name="close-outline"/ion-icon name="arrow-back-outline"
 - show name of ther feature
-- show details for marker/sight - coordinates, for path - snapping, distance, duration (for snapped paths)
+- show details for marker/sight - coordinates, for path - snapping, distance, duration (for snapped paths),
+  when user click on feature item the side action icons appears
 - side actions for marker
-    - Rename - ion-icon name="pencil-outline"
-    - Save/Unsave - ion-icon name="bookmark-outline"/ion-icon name="bookmark"
-    - Delete - ion-icon name="trash-outline"
+    - Set name to marker - ion-icon name="pencil-outline"
+    - Hide/Unhide marker - ion-icon name="eye-outline"/ion-icon name="eye-off-outline"
+    - Save/Unsave marker - ion-icon name="bookmark-outline"/ion-icon name="bookmark"
+    - Delete marker - ion-icon name="trash-outline"
 - side actions for sight
-    - Detach from path - ion-icon name="git-merge-outline"
-    - Set name - ion-icon name="pencil-outline"
-    - Save/Unsave - ion-icon name="bookmark-outline"/ion-icon name="bookmark"
-    - Delete - ion-icon name="trash-outline"
+    - Set name to sight - ion-icon name="pencil-outline"
+    - Hide/Unhide sight - ion-icon name="eye-outline"/ion-icon name="eye-off-outline"
+    - Detach sight - ion-icon name="git-merge-outline"
+    - Delete sight - ion-icon name="trash-outline"
 -  side actions for path
     - Trace path - ion-icon name="footsteps-outline"
     - Edit path - ion-icon name="create-outline"
-    - Set name - ion-icon name="pencil-outline"
-    - Save/Unsave - ion-icon name="bookmark-outline"/ion-icon name="bookmark"
+    - Set name to path - ion-icon name="pencil-outline"
+    - Hide/Unhide path - ion-icon name="eye-outline"/ion-icon name="eye-off-outline"
+    - Save/Unsave path - ion-icon name="bookmark-outline"/ion-icon name="bookmark"
     - Delete - ion-icon name="trash-outline"
+- show description, when user click on description the side action  appears
+- side actions for description
+    - Set description - ion-icon name="pencil-outline"
 
 FEATURES LIST PANEL
 - opening on menu option "Features list"
@@ -160,13 +183,10 @@ FEATURES LIST PANEL
     - Show/Hide Paths (toggle on/off for filtering) - ion-icon name="analytics-outline"
     - Close - ion-icon name="close-outline"
 - list of features with name and details showing for marker/sight - coordinates, for path - snapping, distance, duration (for snapped paths)
- with side icons actions (show when feature is clicked)
-    - Set name - ion-icon name="pencil-outline"
-    - Save/Unsave - ion-icon name="bookmark-outline"/ion-icon name="bookmark"
-    - Delete - ion-icon name="trash-outline"
+  with side icons actions (show when feature is clicked) same as side actions icons in feature details
 - sights show nested in there paths and implicitly save/unsave sync with the path, so no save/unsave side icon
 - when feature list panel is opened and user first click on feature the action icons appears and feature glows,
-  if feature doen't appear zoom out so that is visible, 
+  if feature doesn't appear in obstructed area then zoom out so that is visible, 
   if user clicks second time on that feature then feature details panel opens, 
   when feature detail panel closes then feature list panel reopens (in same level), 
   same if user click on feature while feature list is opened then closing feature detail panel it will reopen feature list
@@ -194,7 +214,7 @@ OFFLINE MAPS PANEL
 - when download is clicked on creating new offline region show offline maps panel with downloading circle
 - when close is clicked on creating new offline region show offline maps panel
 - only on Android: show Routings data with search icon that suggests data for current view
-and list of suggested regions (side action: install) and then installed routing data (side actions: update, delete)
+  and list of suggested regions (side action: install) and then installed routing data (side actions: update, delete)
 - when trying to snap the path to the road
     - on web if it fails because of device is offline then show toast msg
     - on Android first try using offline routing, if fails try online, if that fails then show toast msg
