@@ -45,7 +45,6 @@ id | action                      | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10| 11| 1
   tracking info at bottom
 - back button on mobile actions
 
-
 - vite.config.js - Set to true in production for logs
 - deploy version 1.3. (4), generate functionalities description
 
@@ -56,7 +55,7 @@ GOALS
 - finding and collaboration editing public paths
 
 UPGRADES
-- features descriptions and pictures
+- add features pictures (indexDB <=> Firestore, export/import)
 - organize feature collections and features
 - login - sync offline regions, sync feature collections
 - finding and collaboration editing public paths
@@ -177,10 +176,10 @@ FEATURES LIST PANEL
 - action icons
     - Sort by distance (asc/desc) - ion-icon name="radio-outline"
     - Sort by name (asc/desc) - ion-icon "text-outline"
-    - Sort by length (asc/desc) - ion-icon name="resize-outline" 
     - Show/Hide Markers (toggle on/off for filtering) - ion-icon name="location-outline"
     - Show/Hide Sights (toggle on/off for filtering) - ion-icon name="pin-outline"
     - Show/Hide Paths (toggle on/off for filtering) - ion-icon name="analytics-outline"
+    - Show/Hide Saved Features (toggle on/off for filtering) - ion-icon name="bookmark-outline"
     - Close - ion-icon name="close-outline"
 - list of features with name and details showing for marker/sight - coordinates, for path - snapping, distance, duration (for snapped paths)
   with side icons actions (show when feature is clicked) same as side actions icons in feature details
@@ -301,17 +300,19 @@ SHARING LINKS & EMBEDDED CODE
 - marker
     https://rontomap.web.app/
     ?lat=<center_lat>&long=<center_lng>&zoom=<z>&bearing=<b>&pitch=<p>
-    &marker=<lat>-<lng>-<urlEncodedName>
-    &saved_view=<lat>-<lng>-<z>-<b>-<p>     [optional, only if marker._savedView]
+    &marker=<lat>-<lng>
+    &name=<urlEncodedName>                      [optional]
+    &description=<description>                  [optional]
 - path
     https://rontomap.web.app/
     ?lat=<center_lat>&long=<center_lng>&zoom=<z>&bearing=<b>&pitch=<p>
-    &path=<urlEncodedName>                  [optional]
+    &path                                       
+    &name=<urlEncodedName>                      [optional]
     &road_snap=<free|foot|bike|car>
-    &is_circuit=<true|false>                [optional, only if true]
-    &sight=<segIdx>-<t>-<urlEncodedName>    [repeated, one per sight]
-    &saved_view=<lat>-<lng>-<z>-<b>-<p>     [optional, only if path.savedView]
-    #polyline_encoded_path
+    &is_circuit=<true|false>                    [optional, only if true]
+    &sight=<segIdx>-<t>-<urlEncodedName>-<desc.>[optional, repeated, one per sight]
+    &description=<description>                  [optional]
+    #polyline_encoded_path!<base64 extras>
 - features
     ?lat=<center_lat>&long=<center_lng>&zoom=<z>&bearing=<b>&pitch=<p>
     &features_collection=<docId>

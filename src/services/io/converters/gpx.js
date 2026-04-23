@@ -32,7 +32,9 @@ export function toRonto(content) {
     if (!isFinite(lat) || !isFinite(lon)) continue;
     const nameEl = wpt.querySelector("name");
     const typeEl = wpt.querySelector("type");
+    const descEl = wpt.querySelector("desc");
     const name = nameEl?.textContent || "";
+    const description = descEl?.textContent || "";
 
     // Check if this is a sight (has rontomap:sight extension or type=sight)
     const sightExt = parseExtSight(wpt);
@@ -42,6 +44,7 @@ export function toRonto(content) {
         segmentIndex: sightExt?.segmentIndex ?? 0,
         t: sightExt?.t ?? 0.5,
         name,
+        description,
         lng: lon,
         lat,
       });
@@ -53,6 +56,7 @@ export function toRonto(content) {
       name,
       pos: [lat, lon],
     };
+    if (description) marker.description = description;
     markers.push(marker);
   }
 
@@ -80,6 +84,8 @@ export function toRonto(content) {
       coords.pop();
     }
     if (nameEl?.textContent) pathData.name = nameEl.textContent;
+    const descEl = rte.querySelector("desc");
+    if (descEl?.textContent) pathData.description = descEl.textContent;
     const snap = parseExtRoadSnap(rte);
     if (snap) pathData.roadSnap = snap;
     const rteDist = parseFloat(parseExtValue(rte, "routeDistance"));
@@ -114,6 +120,8 @@ export function toRonto(content) {
         coords.pop();
       }
       if (nameEl?.textContent) pathData.name = nameEl.textContent;
+      const trkDescEl = trk.querySelector("desc");
+      if (trkDescEl?.textContent) pathData.description = trkDescEl.textContent;
       paths.push(pathData);
     }
   }
@@ -127,14 +135,17 @@ export function toRonto(content) {
         ? { segmentIndex: sight.segmentIndex, t: sight.t }
         : projectPointOnPath(targetPath.coords, sight.lng, sight.lat);
       if (sight.name) am.name = sight.name;
+      if (sight.description) am.description = sight.description;
       targetPath.sights.push(am);
     } else {
       // No matching path — import as standalone marker
-      markers.push({
+      const fallback = {
         id: `m${mIdx++}`,
         name: sight.name || "",
         pos: [sight.lat, sight.lng],
-      });
+      };
+      if (sight.description) fallback.description = sight.description;
+      markers.push(fallback);
     }
   }
 
@@ -158,6 +169,7 @@ export function fromRonto(data, scope) {
   for (const m of scoped.markers || []) {
     lines.push(`  <wpt lat="${m.pos[0]}" lon="${m.pos[1]}">`);
     lines.push(`    <name>${escapeXml(m.name || "")}</name>`);
+    if (m.description) lines.push(`    <desc>${escapeXml(m.description)}</desc>`);
     lines.push(`  </wpt>`);
   }
 
@@ -170,6 +182,7 @@ export function fromRonto(data, scope) {
         const [lng, lat] = interpolateSightPosition(p, s);
         lines.push(`  <wpt lat="${lat}" lon="${lng}">`);
         lines.push(`    <name>${escapeXml(s.name || `Sight on ${p.name || p.id}`)}</name>`);
+        if (s.description) lines.push(`    <desc>${escapeXml(s.description)}</desc>`);
         lines.push(`    <type>sight</type>`);
         lines.push(`    <extensions>`);
         lines.push(`      <rontomap:sight pathId="${escapeXml(p.id)}" segmentIndex="${s.segmentIndex}" t="${s.t}"/>`);
@@ -181,6 +194,7 @@ export function fromRonto(data, scope) {
     // All paths export as <rte>
     lines.push(`  <rte>`);
     if (p.name) lines.push(`    <name>${escapeXml(p.name)}</name>`);
+    if (p.description) lines.push(`    <desc>${escapeXml(p.description)}</desc>`);
     const rteExtensions = [];
     if (p.sights && p.sights.length > 0) {
       rteExtensions.push(`      <rontomap:id>${escapeXml(p.id)}</rontomap:id>`);

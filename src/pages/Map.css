@@ -833,6 +833,25 @@ textarea.rename-modal-input {
   overflow-x: hidden;
 }
 
+/* Hide scrollbars on all panel scroll containers; scrolling still works. */
+.panel,
+.panel-details-scroll,
+.panel-list-items,
+.side-menu,
+.marker-menu {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.panel::-webkit-scrollbar,
+.panel-details-scroll::-webkit-scrollbar,
+.panel-list-items::-webkit-scrollbar,
+.side-menu::-webkit-scrollbar,
+.marker-menu::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 .panel-handle {
   display: none;
 }
@@ -841,6 +860,7 @@ textarea.rename-modal-input {
   display: flex;
   justify-content: center;
   gap: 10px;
+  padding-bottom: 10px;
 }
 
 .panel-actions button {
@@ -952,6 +972,22 @@ textarea.rename-modal-input {
 .panel-list-item-hidden .panel-list-text,
 .panel-list-item-hidden .panel-list-icon {
   opacity: 0.4;
+}
+
+.panel-details-hidden .panel-list-item-header .panel-list-text,
+.panel-details-hidden .panel-list-item-header .panel-list-icon,
+.panel-details-hidden .panel-description {
+  opacity: 0.4;
+}
+
+.panel-saved-indicator {
+  flex-shrink: 0;
+  font-size: 18px;
+  color: #888;
+}
+
+.panel-dark .panel-saved-indicator {
+  color: #aaa;
 }
 
 .panel-name-actions {
@@ -1082,11 +1118,6 @@ textarea.rename-modal-input {
     animation: panel-slide-left 0.2s ease-out;
   }
 
-  .panel .panel-actions {
-    gap: 10px;
-    padding-bottom: 10px;
-  }
-
   .panel-details {
     display: block;
   }
@@ -1191,7 +1222,6 @@ textarea.rename-modal-input {
 }
 
 .panel-list-items {
-  margin-top: 10px;
   overflow-y: auto;
   overflow-x: hidden;
   flex: 1;
@@ -1342,6 +1372,7 @@ textarea.rename-modal-input {
   text-align: center;
   color: #888;
   font-size: 14px;
+  padding: 10px 4px;
 }
 
 /* Features list dark mode */

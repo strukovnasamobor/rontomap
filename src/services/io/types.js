@@ -9,6 +9,7 @@
  * @property {string} id
  * @property {string} name
  * @property {[number, number]} pos - [lat, lng]
+ * @property {string} [description]
  */
 
 /**
@@ -23,6 +24,7 @@
  * @property {"car"|"bike"|"foot"} [roadSnap]
  * @property {RontoSnappedSegment[]} [snappedSegments]
  * @property {RontoSight[]} [sights]
+ * @property {string} [description]
  */
 
 /**
@@ -43,6 +45,7 @@
  * @property {number} segmentIndex
  * @property {number} t
  * @property {string} [name]
+ * @property {string} [description]
  */
 
 /**

@@ -28,6 +28,8 @@ export function toRonto(content) {
   for (const pm of placemarks) {
     const nameEl = pm.querySelector("name");
     const name = nameEl?.textContent || "";
+    const descEl = pm.querySelector("description");
+    const description = descEl?.textContent || "";
     const extType = parseExtData(pm, "type");
 
     // Check for sight Placemarks (Point with type=sight in ExtendedData)
@@ -41,6 +43,7 @@ export function toRonto(content) {
             segmentIndex: parseFloat(parseExtData(pm, "segmentIndex")) || 0,
             t: parseFloat(parseExtData(pm, "t")) || 0.5,
             name,
+            description,
             lng: ptCoords[0].long,
             lat: ptCoords[0].lat,
           });
@@ -66,11 +69,13 @@ export function toRonto(content) {
             lineCoords.pop();
           }
           if (name) pathData.name = name;
+          if (description) pathData.description = description;
 
           const ptCoords = parseKmlCoordinates(point.querySelector("coordinates")?.textContent || "");
           if (ptCoords.length > 0) {
             const sight = projectPointOnPath(lineCoords, ptCoords[0].long, ptCoords[0].lat);
             if (name) sight.name = name;
+            if (description) sight.description = description;
             pathData.sights = [sight];
           }
           paths.push(pathData);
@@ -91,6 +96,7 @@ export function toRonto(content) {
           name,
           pos: [coords[0].lat, coords[0].long],
         };
+        if (description) marker.description = description;
         markers.push(marker);
       }
     } else if (lineString) {
@@ -107,6 +113,7 @@ export function toRonto(content) {
           coords.pop();
         }
         if (name) pathData.name = name;
+        if (description) pathData.description = description;
         const snap = parseExtRoadSnap(pm);
         if (snap) pathData.roadSnap = snap;
         const kmlDist = parseFloat(parseExtData(pm, "routeDistance"));
@@ -131,6 +138,7 @@ export function toRonto(content) {
           coords.pop();
         }
         if (name) pathData.name = name;
+        if (description) pathData.description = description;
         paths.push(pathData);
       }
     }
@@ -145,13 +153,16 @@ export function toRonto(content) {
         ? { segmentIndex: sight.segmentIndex, t: sight.t }
         : projectPointOnPath(targetPath.coords, sight.lng, sight.lat);
       if (sight.name) am.name = sight.name;
+      if (sight.description) am.description = sight.description;
       targetPath.sights.push(am);
     } else {
-      markers.push({
+      const fallback = {
         id: `m${mIdx++}`,
         name: sight.name || "",
         pos: [sight.lat, sight.lng],
-      });
+      };
+      if (sight.description) fallback.description = sight.description;
+      markers.push(fallback);
     }
   }
 
@@ -191,6 +202,7 @@ export function fromRonto(data, scope) {
   for (const m of scoped.markers || []) {
     lines.push(`  <Placemark>`);
     lines.push(`    <name>${escapeXml(m.name || "")}</name>`);
+    if (m.description) lines.push(`    <description>${escapeXml(m.description)}</description>`);
     lines.push(`    <styleUrl>#marker-style</styleUrl>`);
     lines.push(`    <Point>`);
     lines.push(`      <coordinates>${m.pos[1]},${m.pos[0]},0</coordinates>`);
@@ -209,6 +221,7 @@ export function fromRonto(data, scope) {
         const [lng, lat] = interpolateSightPosition(p, s);
         lines.push(`  <Placemark>`);
         lines.push(`    <name>${escapeXml(s.name || "Sight")}</name>`);
+        if (s.description) lines.push(`    <description>${escapeXml(s.description)}</description>`);
         lines.push(`    <styleUrl>#sight-style</styleUrl>`);
         lines.push(`    <ExtendedData>`);
         lines.push(`      <Data name="type"><value>sight</value></Data>`);
@@ -226,6 +239,7 @@ export function fromRonto(data, scope) {
     // Main path placemark
     lines.push(`  <Placemark>`);
     lines.push(`    <name>${escapeXml(p.name || "")}</name>`);
+    if (p.description) lines.push(`    <description>${escapeXml(p.description)}</description>`);
     lines.push(`    <styleUrl>#${styleId}</styleUrl>`);
     const extData = [];
     if (p.sights && p.sights.length > 0) extData.push(`      <Data name="pathId"><value>${escapeXml(p.id)}</value></Data>`);

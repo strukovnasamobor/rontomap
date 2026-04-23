@@ -22,7 +22,6 @@ import {
   pauseCircleOutline,
   textOutline,
   radioOutline,
-  resizeOutline,
   chevronUpOutline,
   chevronDownOutline,
   locationOutline,
@@ -457,7 +456,7 @@ export default function Map() {
   const [sheetLevel, setSheetLevel] = useState(0);
   const [showFeaturesList, setOpenFeaturesList] = useState(false);
   const [featListSort, setFeatListSort] = useState("dist-asc");
-  const [featListFilter, setFeatListFilter] = useState({ markers: true, sights: true, paths: true });
+  const [featListFilter, setFeatListFilter] = useState({ markers: true, sights: true, paths: true, saved: true });
   const [mapCenterTick, setMapCenterTick] = useState(0);
   const [featuresVersion, setFeaturesVersion] = useState(0);
   const bumpFeaturesVersion = useCallback(() => setFeaturesVersion((v) => v + 1), []);
@@ -3809,6 +3808,15 @@ export default function Map() {
       }
     }
 
+    // Shared failure handler for import-from-link: toast + reset URL to home.
+    const onLinkImportFailed = () => {
+      setToastMsg("Failed to import from link.");
+      setTimeout(() => setToastMsg(null), 3000);
+      if (!isEmbeddedRef.current) {
+        window.history.replaceState(null, "", window.location.pathname);
+      }
+    };
+
     // Recreate single marker from URL params
     const markerParam = getQueryParams("marker");
     if (markerParam) {
@@ -3817,15 +3825,28 @@ export default function Map() {
       const markerLng = parseFloat(parts[1]);
       if (!isNaN(markerLat) && !isNaN(markerLng)) {
         const m = createMarker([markerLng, markerLat]);
-        const markerName = decodeURIComponent(parts.slice(2).join("-"));
+        const topName = getQueryParams("name");
+        const topDesc = getQueryParams("description");
+        // New spec: name / description in top-level params.
+        // Legacy: name embedded as 3rd+ hyphen-joined segment of `marker=`.
+        const markerName = topName != null
+          ? topName
+          : parts.length > 2 ? decodeURIComponent(parts.slice(2).join("-")) : "";
         if (markerName) {
           m._markerName = markerName;
           updateMarkerLabel(m);
         }
+        if (topDesc) m._description = topDesc;
         featuresLockedRef.current = true;
         setFeaturesLocked(true);
         m.setDraggable(false);
         mapRef.current.getContainer().classList.add("features-locked");
+        setFeatListFilter((f) => ({ ...f, saved: false }));
+        if (!isEmbeddedRef.current) {
+          window.history.replaceState(null, "", window.location.pathname);
+        }
+      } else {
+        onLinkImportFailed();
       }
     }
 
@@ -3835,7 +3856,12 @@ export default function Map() {
     // if invoked before the style is ready.
     const runPathFromHash = () => {
       const rawHash = window.location.hash ? decodeURIComponent(window.location.hash.slice(1)) : "";
-      if (!rawHash) return;
+      // Path intent is signaled by the `path` query param; hash carries the polyline.
+      const pathIntent = new URLSearchParams(window.location.search).has("path");
+      if (!rawHash) {
+        if (pathIntent) onLinkImportFailed();
+        return;
+      }
       const sepIdx = rawHash.indexOf("!");
       const vertexPolyStr = sepIdx >= 0 ? rawHash.slice(0, sepIdx) : rawHash;
       const extrasStr = sepIdx >= 0 ? rawHash.slice(sepIdx + 1) : "";
@@ -3871,8 +3897,28 @@ export default function Map() {
             const segIdx = parseInt(parts[0]);
             const t = parseFloat(parts[1]);
             if (Number.isNaN(segIdx) || Number.isNaN(t)) return null;
-            const name = parts.length > 2 ? decodeURIComponent(parts.slice(2).join("-")) : undefined;
-            return { segmentIndex: segIdx, t, ...(name ? { name } : {}) };
+            // New spec: segIdx-t-<encName>-<encDesc>, with hyphens inside name/desc
+            // escaped as %2D so split("-") gives at most 4 parts.
+            // Legacy: segIdx-t-<encName> where encName may contain literal hyphens →
+            // parts.length > 4 means legacy; join everything from index 2.
+            let name;
+            let description;
+            if (parts.length <= 2) {
+              // no extra slots
+            } else if (parts.length === 3) {
+              name = decodeURIComponent(parts[2]) || undefined;
+            } else if (parts.length === 4) {
+              name = decodeURIComponent(parts[2]) || undefined;
+              description = decodeURIComponent(parts[3]) || undefined;
+            } else {
+              name = decodeURIComponent(parts.slice(2).join("-")) || undefined;
+            }
+            return {
+              segmentIndex: segIdx,
+              t,
+              ...(name ? { name } : {}),
+              ...(description ? { description } : {}),
+            };
           })
           .filter(Boolean);
 
@@ -3885,9 +3931,18 @@ export default function Map() {
         }
 
         const roadSnapParam = getQueryParams("road_snap");
+        // New spec: name / description in top-level params.
+        // Legacy: name was emitted as `path=<encName>`.
+        const topName = getQueryParams("name");
+        const legacyPathName = getQueryParams("path");
+        const pathName = topName != null && topName !== ""
+          ? topName
+          : legacyPathName ? legacyPathName : undefined;
+        const pathDesc = getQueryParams("description") || undefined;
         const entry = {
           coords,
-          name: decodeURIComponent(getQueryParams("path") || "") || undefined,
+          name: pathName,
+          description: pathDesc,
           roadSnap: roadSnapParam && roadSnapParam !== "free" ? roadSnapParam : undefined,
           isCircuit: getQueryParams("is_circuit") === "true",
           closingForced: extras.cf === true,
@@ -3910,6 +3965,12 @@ export default function Map() {
         mapRef.current.getContainer().classList.add("features-locked");
         pathsRef.current.forEach((p) => p.vertices.forEach((v) => v.marker.setDraggable(false)));
         pathsRef.current.forEach((p) => p.sights?.forEach((m) => m.setDraggable(false)));
+        setFeatListFilter((f) => ({ ...f, saved: false }));
+        if (!isEmbeddedRef.current) {
+          window.history.replaceState(null, "", window.location.pathname);
+        }
+      } else if (pathIntent) {
+        onLinkImportFailed();
       }
     };
     if (mapRef.current.isStyleLoaded()) {
@@ -3921,19 +3982,28 @@ export default function Map() {
     // Recreate markers from a Firebase features collection
     const featuresCollectionId = getQueryParams("features_collection");
     if (featuresCollectionId) {
-      getDoc(doc(db, "featuresCollections", featuresCollectionId)).then((snap) => {
-        if (!snap.exists()) return;
-        const data = snap.data();
-        materializeFeatures(data, { createMarker, pathHelpersRef, updateMarkerLabel, deserializeSnappedSegments, pathsRef });
-        // Lock features when loaded from URL
-        featuresLockedRef.current = true;
-        setFeaturesLocked(true);
-        mapRef.current.getContainer().classList.add("features-locked");
-        markersRef.current.forEach((m) => m.setDraggable(false));
-        pathsRef.current.forEach((p) => {
-          p.vertices.forEach((v) => v.marker.setDraggable(false));
-        });
-      });
+      getDoc(doc(db, "featuresCollections", featuresCollectionId))
+        .then((snap) => {
+          if (!snap.exists()) {
+            onLinkImportFailed();
+            return;
+          }
+          const data = snap.data();
+          materializeFeatures(data, { createMarker, pathHelpersRef, updateMarkerLabel, deserializeSnappedSegments, pathsRef });
+          // Lock features when loaded from URL
+          featuresLockedRef.current = true;
+          setFeaturesLocked(true);
+          mapRef.current.getContainer().classList.add("features-locked");
+          markersRef.current.forEach((m) => m.setDraggable(false));
+          pathsRef.current.forEach((p) => {
+            p.vertices.forEach((v) => v.marker.setDraggable(false));
+          });
+          setFeatListFilter((f) => ({ ...f, saved: false }));
+          if (!isEmbeddedRef.current) {
+            window.history.replaceState(null, "", window.location.pathname);
+          }
+        })
+        .catch(() => onLinkImportFailed());
     }
 
     // Rehydrate user-saved features from localStorage (after URL imports so
@@ -3994,6 +4064,7 @@ export default function Map() {
         const { data } = await importFromContent(name, content);
         const createMarker = createMarkerRef.current;
         const result = materializeFeatures(data, { createMarker, pathHelpersRef, updateMarkerLabel, deserializeSnappedSegments, pathsRef });
+        setFeatListFilter((f) => ({ ...f, saved: false }));
 
         // Fly to fit all imported content
         const map = mapRef.current;
@@ -4468,7 +4539,9 @@ export default function Map() {
     for (const m of markersRef.current) {
       const isSight = !!m._sightPath;
       const typeAllowed = isSight ? (featListFilter.sights && featListFilter.paths) : featListFilter.markers;
+      const savedHidden = !featListFilter.saved && (isSight ? !!m._sightPath._saved : !!m._saved);
       const hidden = !typeAllowed
+        || savedHidden
         || !!m._hidden
         || !!m._pendingDelete
         || (isSight && (!!m._sightPath._hidden || !!m._sightPath._pendingDelete));
@@ -4476,7 +4549,7 @@ export default function Map() {
       if (el) el.style.display = hidden ? "none" : "";
     }
     for (const p of pathsRef.current) {
-      const hidden = !featListFilter.paths || !!p._hidden || !!p._pendingDelete;
+      const hidden = !featListFilter.paths || (!featListFilter.saved && !!p._saved) || !!p._hidden || !!p._pendingDelete;
       const vis = hidden ? "none" : "visible";
       if (map.getLayer(p.layerId)) map.setLayoutProperty(p.layerId, "visibility", vis);
       if (map.getLayer(`${p.layerId}-hit`)) map.setLayoutProperty(`${p.layerId}-hit`, "visibility", vis);
@@ -4611,6 +4684,22 @@ export default function Map() {
     };
   }, [detailsActionsOpen, descActionsOpen]);
 
+  useEffect(() => {
+    if (!selectedFeatureListRef) return;
+    const onDocDown = (e) => {
+      const t = e.target;
+      if (!t.closest?.(".panel-list-item")) {
+        setSelectedFeatureListRef(null);
+      }
+    };
+    document.addEventListener("mousedown", onDocDown);
+    document.addEventListener("touchstart", onDocDown);
+    return () => {
+      document.removeEventListener("mousedown", onDocDown);
+      document.removeEventListener("touchstart", onDocDown);
+    };
+  }, [selectedFeatureListRef]);
+
   const handleCenterToMarker = () => {
     mapRef.current.easeTo({
       center: markerMenu.marker.getLngLat(),
@@ -4643,25 +4732,47 @@ export default function Map() {
   };
 
   const buildMarkerUrl = (marker) => {
-    const params = new URLSearchParams(buildBaseParams());
+    const base = buildBaseParams();
     const ll = marker.getLngLat();
-    const namePart = marker._markerName ? `-${encodeURIComponent(marker._markerName)}` : "";
-    params.set("marker", `${ll.lat.toFixed(6)}-${ll.lng.toFixed(6)}${namePart}`);
-    return `https://rontomap.web.app/?${params}`;
+    const parts = [
+      `lat=${base.lat}`,
+      `long=${base.long}`,
+      `zoom=${base.zoom}`,
+      `bearing=${base.bearing}`,
+      `pitch=${base.pitch}`,
+      `marker=${ll.lat.toFixed(6)}-${ll.lng.toFixed(6)}`,
+    ];
+    if (marker._markerName) parts.push(`name=${encodeURIComponent(marker._markerName)}`);
+    if (marker._description) parts.push(`description=${encodeURIComponent(marker._description)}`);
+    return `https://rontomap.web.app/?${parts.join("&")}`;
   };
 
   const buildPathUrl = (path) => {
     if (!path || path.vertices.length < 2) return null;
-    const params = new URLSearchParams(buildBaseParams());
-    if (path.name) params.set("path", path.name);
-    params.set("road_snap", path.roadSnap || "free");
-    if (path.isCircuit) params.set("is_circuit", "true");
+    const base = buildBaseParams();
+    const parts = [
+      `lat=${base.lat}`,
+      `long=${base.long}`,
+      `zoom=${base.zoom}`,
+      `bearing=${base.bearing}`,
+      `pitch=${base.pitch}`,
+      `path`,
+    ];
+    if (path.name) parts.push(`name=${encodeURIComponent(path.name)}`);
+    parts.push(`road_snap=${path.roadSnap || "free"}`);
+    if (path.isCircuit) parts.push(`is_circuit=true`);
     if (path.sights?.length) {
       path.sights.forEach((m) => {
-        const namePart = m._markerName ? `-${encodeURIComponent(m._markerName)}` : "";
-        params.append("sight", `${m._segmentIndex}-${m._t.toFixed(4)}${namePart}`);
+        const encName = m._markerName ? encodeURIComponent(m._markerName).replace(/-/g, "%2D") : "";
+        const encDesc = m._description ? encodeURIComponent(m._description).replace(/-/g, "%2D") : "";
+        let sight = `${m._segmentIndex}-${m._t.toFixed(4)}`;
+        if (encDesc) sight += `-${encName}-${encDesc}`;
+        else if (encName) sight += `-${encName}`;
+        parts.push(`sight=${sight}`);
       });
     }
+    if (path._description) parts.push(`description=${encodeURIComponent(path._description)}`);
+
     // Hash: vertex polyline + optional extras blob (separated by `!`)
     const vertexPoly = polyline.encode(path.vertices.map((v) => [v.lngLat[1], v.lngLat[0]]));
 
@@ -4681,7 +4792,7 @@ export default function Map() {
     const hash = Object.keys(extras).length
       ? `${vertexPoly}!${b64uEncode(JSON.stringify(extras))}`
       : vertexPoly;
-    return `https://rontomap.web.app/?${params}#${encodeURIComponent(hash)}`;
+    return `https://rontomap.web.app/?${parts.join("&")}#${encodeURIComponent(hash)}`;
   };
 
   const buildEmbedCode = (url) => {
@@ -4764,6 +4875,7 @@ export default function Map() {
       const { data } = await importFeatures();
       const createMarker = createMarkerRef.current;
       const result = materializeFeatures(data, { createMarker, pathHelpersRef, updateMarkerLabel, deserializeSnappedSegments, pathsRef });
+      setFeatListFilter((f) => ({ ...f, saved: false }));
       const parts = [];
       if (result.markerCount > 0) parts.push(`${result.markerCount} marker${result.markerCount > 1 ? "s" : ""}`);
       if (result.pathCount > 0) parts.push(`${result.pathCount} path${result.pathCount > 1 ? "s" : ""}`);
@@ -5394,6 +5506,7 @@ export default function Map() {
       for (const m of markersRef.current) {
         if (m._sightPath) continue;
         if (m._pendingDelete) continue;
+        if (!featListFilter.saved && m._saved) continue;
         const ll = m.getLngLat();
         items.push({
           type: "marker",
@@ -5411,6 +5524,7 @@ export default function Map() {
       for (const p of pathsRef.current) {
         if (!p.isFinished) continue;
         if (p._pendingDelete) continue;
+        if (!featListFilter.saved && p._saved) continue;
         if (!p.vertices || p.vertices.length === 0) continue;
         const bounds = new mapboxgl.LngLatBounds();
         let extended = false;
@@ -5442,6 +5556,7 @@ export default function Map() {
                     length: 0,
                     ref: s,
                     parentPath: p,
+                    _saved: !!p._saved,
                   };
                 })
             : [];
@@ -5465,12 +5580,6 @@ export default function Map() {
     items.sort((a, b) => {
       if (field === "name") return mul * a.name.localeCompare(b.name);
       if (field === "dist") return mul * (a.dist - b.dist);
-      if (field === "length") {
-        const aIsPath = a.type === "path";
-        const bIsPath = b.type === "path";
-        if (aIsPath !== bIsPath) return aIsPath ? -1 : 1;
-        return mul * (a.length - b.length);
-      }
       return 0;
     });
 
@@ -8420,10 +8529,6 @@ export default function Map() {
                 <IonIcon icon={textOutline} />
                 {sortField === "name" && <IonIcon icon={sortDir === "asc" ? chevronUpOutline : chevronDownOutline} className="sort-dir-icon" />}
               </ActionIconButton>
-              <ActionIconButton label={`Sort by length${sortField === "length" ? (sortDir === "asc" ? " (shortest)" : " (longest)") : ""}`} onClick={() => toggleFeatListSort("length")}>
-                <IonIcon icon={resizeOutline} />
-                {sortField === "length" && <IonIcon icon={sortDir === "asc" ? chevronUpOutline : chevronDownOutline} className="sort-dir-icon" />}
-              </ActionIconButton>
               <ActionIconButton label={featListFilter.markers ? "Hide markers" : "Show markers"} onClick={() => setFeatListFilter((f) => ({ ...f, markers: !f.markers }))}>
                 <IonIcon icon={locationOutline} style={featListFilter.markers ? undefined : { opacity: 0.3 }} />
               </ActionIconButton>
@@ -8432,6 +8537,9 @@ export default function Map() {
               </ActionIconButton>
               <ActionIconButton label={featListFilter.paths ? "Hide paths" : "Show paths"} onClick={() => setFeatListFilter((f) => ({ ...f, paths: !f.paths }))}>
                 <IonIcon icon={analyticsOutline} style={featListFilter.paths ? undefined : { opacity: 0.3 }} />
+              </ActionIconButton>
+              <ActionIconButton label={featListFilter.saved ? "Hide saved features" : "Show saved features"} onClick={() => setFeatListFilter((f) => ({ ...f, saved: !f.saved }))}>
+                <IonIcon icon={bookmarkOutline} style={featListFilter.saved ? undefined : { opacity: 0.3 }} />
               </ActionIconButton>
               <ActionIconButton label="Close" onClick={() => setOpenFeaturesList(false)}>
                 <IonIcon icon={closeOutline} />
@@ -8462,6 +8570,9 @@ export default function Map() {
                             : `${row.lngLat.lat.toFixed(6)}, ${row.lngLat.lng.toFixed(6)}`}
                         </span>
                       </div>
+                      {row._saved && !selected && (
+                        <IonIcon icon={bookmark} className="panel-saved-indicator" />
+                      )}
                       {selected && (
                         <>
                           {row.type === "path" && (
@@ -8527,14 +8638,26 @@ export default function Map() {
                   </Fragment>
                 );
               })}
-              {items.length === 0 && (
-                <div className="panel-list-empty">
-                  No features yet.<br />
-                  {("ontouchstart" in window || navigator.maxTouchPoints > 0)
-                    ? "Long tap to add."
-                    : "Right-click to add."}
-                </div>
-              )}
+              {items.length === 0 && (() => {
+                const hasAnyFeatures =
+                  markersRef.current.some((m) => !m._sightPath && !m._pendingDelete) ||
+                  pathsRef.current.some((p) => !p._pendingDelete && p.isFinished);
+                if (hasAnyFeatures) {
+                  return (
+                    <div className="panel-list-empty">
+                      Features are hidden by filters.
+                    </div>
+                  );
+                }
+                return (
+                  <div className="panel-list-empty">
+                    No features yet.<br />
+                    {("ontouchstart" in window || navigator.maxTouchPoints > 0)
+                      ? "Long tap to add."
+                      : "Right-click to add."}
+                  </div>
+                );
+              })()}
             </div>
           </div>
         );
@@ -8992,7 +9115,10 @@ export default function Map() {
           setRenameRegionTarget(null);
         }}
       />
-      {selectedFeature && (
+      {selectedFeature && (() => {
+        const selectedTarget = selectedFeature.type === "path" ? selectedFeature.path : selectedFeature.marker;
+        const targetHidden = !!selectedTarget?._hidden || !!selectedTarget?._sightPath?._hidden;
+        return (
         <>
           <div
             {...featurePanelSwipe}
@@ -9000,7 +9126,7 @@ export default function Map() {
               featurePanelRef.current = el;
               featurePanelSwipe.ref(el);
             }}
-            className={`panel panel-details-view${idMapStyle === "rontomap_streets_dark" ? " panel-dark" : ""}${sheetLevel > 0 ? ` panel-expanded sheet-level-${sheetLevel}` : ""}${skipPanelAnim ? " panel-no-anim" : ""}`}
+            className={`panel panel-details-view${idMapStyle === "rontomap_streets_dark" ? " panel-dark" : ""}${sheetLevel > 0 ? ` panel-expanded sheet-level-${sheetLevel}` : ""}${skipPanelAnim ? " panel-no-anim" : ""}${targetHidden ? " panel-details-hidden" : ""}`}
           >
             <div
               className="panel-handle"
@@ -9017,7 +9143,9 @@ export default function Map() {
               const featureNoun = isPath ? "path" : isSight ? "sight" : "marker";
               const isSaved = isPath
                 ? !!selectedFeature.path._saved
-                : !!selectedFeature.marker._saved;
+                : isSight
+                  ? !!selectedFeature.marker._sightPath?._saved
+                  : !!selectedFeature.marker._saved;
               return (
                 <>
                   <div className="panel-actions">
@@ -9078,7 +9206,9 @@ export default function Map() {
               const featureNoun = isPath ? "path" : isSight ? "sight" : "marker";
               const isSaved = isPath
                 ? !!selectedFeature.path._saved
-                : !!selectedFeature.marker._saved;
+                : isSight
+                  ? !!selectedFeature.marker._sightPath?._saved
+                  : !!selectedFeature.marker._saved;
               const headerIcon = isPath ? analyticsOutline : isSight ? pinOutline : locationOutline;
               const headerTypeClass = isPath ? "path" : isSight ? "sight" : "marker";
               const headerName = selectedFeature.type === "marker"
@@ -9115,6 +9245,9 @@ export default function Map() {
                     <span className="panel-list-name">{headerName}</span>
                     <span className="panel-list-info">{headerInfo}</span>
                   </div>
+                  {isSaved && !detailsActionsOpen && (
+                    <IonIcon icon={bookmark} className="panel-saved-indicator" />
+                  )}
                   {detailsActionsOpen && (
                     <div className="panel-name-actions">
                       {isPath && (
@@ -9198,7 +9331,8 @@ export default function Map() {
             </div>
           </div>
         </>
-      )}
+        );
+      })()}
       {toastMsg && (() => {
         const isObj = typeof toastMsg === "object";
         const text = isObj ? toastMsg.text : toastMsg;

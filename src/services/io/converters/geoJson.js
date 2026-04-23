@@ -35,6 +35,7 @@ export function toRonto(content) {
           segmentIndex: props.segmentIndex ?? 0,
           t: props.t ?? 0.5,
           name: props.name || "",
+          description: props.description || "",
           lng,
           lat,
         });
@@ -45,6 +46,7 @@ export function toRonto(content) {
         name: props.name || props.title || "",
         pos: [lat, lng],
       };
+      if (props.description) marker.description = props.description;
       markers.push(marker);
     } else if (geomType === "LineString") {
       const coords = f.geometry.coordinates.map(([lng, lat]) => ({ long: lng, lat }));
@@ -56,6 +58,7 @@ export function toRonto(content) {
       if (props.name || props.title) {
         pathData.name = props.name || props.title;
       }
+      if (props.description) pathData.description = props.description;
       if (props.isCircuit) {
         pathData.isCircuit = true;
       } else if (isCircuitCoords(coords)) {
@@ -78,14 +81,17 @@ export function toRonto(content) {
       if (!targetPath.sights) targetPath.sights = [];
       const am = { segmentIndex: sight.segmentIndex, t: sight.t };
       if (sight.name) am.name = sight.name;
+      if (sight.description) am.description = sight.description;
       targetPath.sights.push(am);
     } else {
       // No matching path — import as a standalone marker
-      markers.push({
+      const fallback = {
         id: `m${mIdx++}`,
         name: sight.name || "",
         pos: [sight.lat, sight.lng],
-      });
+      };
+      if (sight.description) fallback.description = sight.description;
+      markers.push(fallback);
     }
   }
 
@@ -103,16 +109,18 @@ export function fromRonto(data, scope) {
   const features = [];
 
   for (const m of scoped.markers || []) {
+    const properties = {
+      name: m.name || "",
+      type: "marker",
+    };
+    if (m.description) properties.description = m.description;
     features.push({
       type: "Feature",
       geometry: {
         type: "Point",
         coordinates: [m.pos[1], m.pos[0]], // [lng, lat]
       },
-      properties: {
-        name: m.name || "",
-        type: "marker",
-      },
+      properties,
     });
   }
 
@@ -129,6 +137,7 @@ export function fromRonto(data, scope) {
     if (p.roadSnap) props.roadSnap = p.roadSnap;
     if (p.routeDistance != null) props.routeDistance = p.routeDistance;
     if (p.routeDuration != null) props.routeDuration = p.routeDuration;
+    if (p.description) props.description = p.description;
 
     features.push({
       type: "Feature",
@@ -143,19 +152,21 @@ export function fromRonto(data, scope) {
     if (p.sights) {
       for (const s of p.sights) {
         const sightPos = interpolateSightPosition(p, s);
+        const sightProps = {
+          name: s.name || "",
+          type: "sight",
+          pathId: p.id,
+          segmentIndex: s.segmentIndex,
+          t: s.t,
+        };
+        if (s.description) sightProps.description = s.description;
         features.push({
           type: "Feature",
           geometry: {
             type: "Point",
             coordinates: sightPos,
           },
-          properties: {
-            name: s.name || "",
-            type: "sight",
-            pathId: p.id,
-            segmentIndex: s.segmentIndex,
-            t: s.t,
-          },
+          properties: sightProps,
         });
       }
     }
