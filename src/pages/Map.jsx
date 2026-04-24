@@ -430,6 +430,12 @@ export default function Map() {
   const locationControlRef = useRef(null);
   const markersRef = useRef([]);
   const [fullscreen, setFullscreen] = useState(false);
+  const LABEL_ZOOM_THRESHOLD = 12;
+  const [showMarkerLabels, setShowMarkerLabels] = useState(false);
+  const syncLabelsNow = () => {
+    if (!mapRef.current) return;
+    setShowMarkerLabels(mapRef.current.getZoom() >= LABEL_ZOOM_THRESHOLD);
+  };
   const [idMapStyle, setIdMapStyle] = useState(() => {
     const urlStyle = new URLSearchParams(window.location.search).get("style");
     if (urlStyle && ["rontomap_streets_light", "rontomap_streets_dark", "rontomap_satellite"].includes(urlStyle)) {
@@ -454,6 +460,7 @@ export default function Map() {
   const [isSideMenuOpen, setIsSideMenuOpen] = useState(false);
   const [selectedFeature, setSelectedFeature] = useState(null);
   const [sheetLevel, setSheetLevel] = useState(0);
+  const preferredSheetLevel = useRef(0);
   const [showFeaturesList, setOpenFeaturesList] = useState(false);
   const [featListSort, setFeatListSort] = useState("dist-asc");
   const [featListFilter, setFeatListFilter] = useState({ markers: true, sights: true, paths: true, saved: true });
@@ -1067,7 +1074,7 @@ export default function Map() {
             setDetailsOrigin("list");
           }
           setSelectedFeature({ type: "marker", marker });
-          if (!showFeaturesListRef.current) setSheetLevel(0);
+          if (!showFeaturesListRef.current) setSheetLevel(preferredSheetLevel.current);
         }, 300);
       });
       // Sync cursor with draggable state
@@ -1931,7 +1938,7 @@ export default function Map() {
               setDetailsOrigin("list");
             }
             setSelectedFeature({ type: "path", path });
-            if (!showFeaturesListRef.current) setSheetLevel(0);
+            if (!showFeaturesListRef.current) setSheetLevel(preferredSheetLevel.current);
             return;
           }
         }
@@ -3084,16 +3091,10 @@ export default function Map() {
       }
     });
 
-    // Toggle marker-label visibility class when crossing the label zoom threshold
-    const LABEL_ZOOM_THRESHOLD = 12;
-    const syncLabelVisibility = () => {
-      const container = mapRef.current?.getContainer();
-      if (!container) return;
-      const visible = mapRef.current.getZoom() >= LABEL_ZOOM_THRESHOLD;
-      container.classList.toggle("show-marker-labels", visible);
-    };
-    mapRef.current.on("zoom", syncLabelVisibility);
-    syncLabelVisibility();
+    // Toggle marker-label visibility class when crossing the label zoom threshold.
+    // State-driven so the class survives React re-renders of the map container.
+    mapRef.current.on("zoom", syncLabelsNow);
+    syncLabelsNow();
 
     // On zoomend
     mapRef.current.on("zoomend", () => {
@@ -3219,7 +3220,7 @@ export default function Map() {
               setDetailsOrigin("list");
             }
             setSelectedFeature({ type: "path", path: hitPath });
-            if (!showFeaturesListRef.current) setSheetLevel(0);
+            if (!showFeaturesListRef.current) setSheetLevel(preferredSheetLevel.current);
             return;
           }
           // Empty-map click:
@@ -3237,7 +3238,7 @@ export default function Map() {
           setShowOfflineMapsPanel(false);
           setFeatListSort("dist-asc");
           setOpenFeaturesList(true);
-          setSheetLevel(0);
+          setSheetLevel(preferredSheetLevel.current);
         }
 
         // Path mode: add vertex or start new path
@@ -3808,13 +3809,12 @@ export default function Map() {
       }
     }
 
-    // Shared failure handler for import-from-link: toast + reset URL to home.
+    // Shared failure handler for import-from-link: toast only, URL is preserved.
+    // Suppressed in embedded mode.
     const onLinkImportFailed = () => {
+      if (isEmbeddedRef.current) return;
       setToastMsg("Failed to import from link.");
       setTimeout(() => setToastMsg(null), 3000);
-      if (!isEmbeddedRef.current) {
-        window.history.replaceState(null, "", window.location.pathname);
-      }
     };
 
     // Recreate single marker from URL params
@@ -3841,9 +3841,10 @@ export default function Map() {
         setFeaturesLocked(true);
         m.setDraggable(false);
         mapRef.current.getContainer().classList.add("features-locked");
-        setFeatListFilter((f) => ({ ...f, saved: false }));
+        syncLabelsNow();
         if (!isEmbeddedRef.current) {
-          window.history.replaceState(null, "", window.location.pathname);
+          setToastMsg("Imported 1 marker.");
+          setTimeout(() => setToastMsg(null), 3000);
         }
       } else {
         onLinkImportFailed();
@@ -3965,9 +3966,12 @@ export default function Map() {
         mapRef.current.getContainer().classList.add("features-locked");
         pathsRef.current.forEach((p) => p.vertices.forEach((v) => v.marker.setDraggable(false)));
         pathsRef.current.forEach((p) => p.sights?.forEach((m) => m.setDraggable(false)));
-        setFeatListFilter((f) => ({ ...f, saved: false }));
+        syncLabelsNow();
         if (!isEmbeddedRef.current) {
-          window.history.replaceState(null, "", window.location.pathname);
+          const nSights = sights.length;
+          const sightStr = nSights > 0 ? ` with ${nSights} sight${nSights > 1 ? "s" : ""}` : "";
+          setToastMsg(`Imported 1 path${sightStr}.`);
+          setTimeout(() => setToastMsg(null), 3000);
         }
       } else if (pathIntent) {
         onLinkImportFailed();
@@ -3989,7 +3993,7 @@ export default function Map() {
             return;
           }
           const data = snap.data();
-          materializeFeatures(data, { createMarker, pathHelpersRef, updateMarkerLabel, deserializeSnappedSegments, pathsRef });
+          const result = materializeFeatures(data, { createMarker, pathHelpersRef, updateMarkerLabel, deserializeSnappedSegments, pathsRef });
           // Lock features when loaded from URL
           featuresLockedRef.current = true;
           setFeaturesLocked(true);
@@ -3998,9 +4002,15 @@ export default function Map() {
           pathsRef.current.forEach((p) => {
             p.vertices.forEach((v) => v.marker.setDraggable(false));
           });
-          setFeatListFilter((f) => ({ ...f, saved: false }));
+          syncLabelsNow();
           if (!isEmbeddedRef.current) {
-            window.history.replaceState(null, "", window.location.pathname);
+            const parts = [];
+            if (result.markerCount > 0) parts.push(`${result.markerCount} marker${result.markerCount > 1 ? "s" : ""}`);
+            if (result.pathCount > 0) parts.push(`${result.pathCount} path${result.pathCount > 1 ? "s" : ""}`);
+            let msg = parts.length ? `Imported ${parts.join(", ")}.` : "Imported 0 features.";
+            if (result.skipped > 0) msg += ` ${result.skipped} skipped.`;
+            setToastMsg(msg);
+            setTimeout(() => setToastMsg(null), 3000);
           }
         })
         .catch(() => onLinkImportFailed());
@@ -4064,7 +4074,6 @@ export default function Map() {
         const { data } = await importFromContent(name, content);
         const createMarker = createMarkerRef.current;
         const result = materializeFeatures(data, { createMarker, pathHelpersRef, updateMarkerLabel, deserializeSnappedSegments, pathsRef });
-        setFeatListFilter((f) => ({ ...f, saved: false }));
 
         // Fly to fit all imported content
         const map = mapRef.current;
@@ -4075,7 +4084,10 @@ export default function Map() {
             p.vertices.forEach(v => bounds.extend(v.lngLat));
             if (p.snappedSegments) p.snappedSegments.forEach(s => s.coords.forEach(c => bounds.extend(c)));
           });
-          if (!bounds.isEmpty()) map.fitBounds(bounds, { padding: 60, duration: 1000 });
+          if (!bounds.isEmpty()) {
+            map.fitBounds(bounds, { padding: 60, duration: 1000 });
+            map.once("moveend", syncLabelsNow);
+          }
         }
 
         const parts = [];
@@ -4454,7 +4466,7 @@ export default function Map() {
     setDescActionsOpen(false);
     if (!selectedFeature || !mapRef.current) return;
     const map = mapRef.current;
-    const pp = getPanelPadding();
+    const pp = getPanelPaddingCapped();
     const coords = [];
     if (selectedFeature.type === "marker") {
       const ll = selectedFeature.marker.getLngLat();
@@ -4875,7 +4887,7 @@ export default function Map() {
       const { data } = await importFeatures();
       const createMarker = createMarkerRef.current;
       const result = materializeFeatures(data, { createMarker, pathHelpersRef, updateMarkerLabel, deserializeSnappedSegments, pathsRef });
-      setFeatListFilter((f) => ({ ...f, saved: false }));
+      syncLabelsNow();
       const parts = [];
       if (result.markerCount > 0) parts.push(`${result.markerCount} marker${result.markerCount > 1 ? "s" : ""}`);
       if (result.pathCount > 0) parts.push(`${result.pathCount} path${result.pathCount > 1 ? "s" : ""}`);
@@ -5295,14 +5307,45 @@ export default function Map() {
 
   // === Feature panel action handlers ===
   const getPanelPadding = () => {
-    if (!selectedFeature && !showFeaturesList) return {};
+    const panel = featurePanelRef.current;
+    if (!panel) return {};
+    const isPortrait = window.matchMedia("(orientation: portrait)").matches;
+    if (isPortrait) {
+      const bottom = Math.round(window.innerHeight - panel.getBoundingClientRect().top);
+      return bottom > 0 ? { bottom } : {};
+    }
+    return { left: 332 };
+  };
+
+  // Screen-space nudge biasing a camera target toward the unobstructed area.
+  // Capped at 25% of the viewport so an expanded sheet doesn't yank the map.
+  const getPanelOffset = () => {
+    if (!selectedFeature && !showFeaturesList) return [0, 0];
+    const map = mapRef.current;
+    if (!map) return [0, 0];
+    const { clientHeight: vh } = map.getContainer();
     const isPortrait = window.matchMedia("(orientation: portrait)").matches;
     if (isPortrait) {
       const panel = featurePanelRef.current;
-      const bottom = panel ? Math.round(window.innerHeight - panel.getBoundingClientRect().top) : 140;
-      return { bottom };
+      const panelTop = panel ? panel.getBoundingClientRect().top : vh - 140;
+      return [0, panelTop / 2 - vh / 2];
     }
-    return { left: 332 };
+    return [332 / 2, 0];
+  };
+
+  // Panel padding clamped to 40% per side so fitBounds/easeTo don't collapse
+  // into a tiny unpadded strip when the sheet is expanded.
+  const getPanelPaddingCapped = () => {
+    const pp = getPanelPadding();
+    const map = mapRef.current;
+    if (!map) return pp;
+    const { clientWidth: vw, clientHeight: vh } = map.getContainer();
+    const out = {};
+    if (pp.top != null) out.top = Math.min(pp.top, vh * 0.4);
+    if (pp.bottom != null) out.bottom = Math.min(pp.bottom, vh * 0.4);
+    if (pp.left != null) out.left = Math.min(pp.left, vw * 0.4);
+    if (pp.right != null) out.right = Math.min(pp.right, vw * 0.4);
+    return out;
   };
 
   const handleFeatureFlyTo = () => {
@@ -5310,11 +5353,9 @@ export default function Map() {
     const map = mapRef.current;
     if (selectedFeature.type === "marker") {
       const marker = selectedFeature.marker;
-      const pp = getPanelPadding();
-      map.flyTo({ center: marker.getLngLat(), zoom: 18, padding: pp, duration: 1500 });
+      map.flyTo({ center: marker.getLngLat(), zoom: 18, offset: getPanelOffset(), duration: 1500 });
     } else if (selectedFeature.type === "path") {
       const path = selectedFeature.path;
-      const pp = getPanelPadding();
       if (path.vertices.length > 0) {
         const bounds = new mapboxgl.LngLatBounds();
         if (path.snappedSegments) {
@@ -5322,16 +5363,22 @@ export default function Map() {
         } else {
           path.vertices.forEach((v) => bounds.extend(v.lngLat));
         }
-        map.fitBounds(bounds, { padding: { top: 60, bottom: (pp.bottom || 0) + 60, left: (pp.left || 0) + 60, right: 60 }, bearing: map.getBearing(), pitch: map.getPitch(), duration: 1500 });
+        const pp = getPanelPaddingCapped();
+        map.fitBounds(bounds, {
+          padding: { top: 60, bottom: (pp.bottom || 0) + 60, left: (pp.left || 0) + 60, right: 60 },
+          bearing: map.getBearing(),
+          pitch: map.getPitch(),
+          duration: 1500,
+        });
       }
     }
   };
 
   const handleFeatureCenterTo = () => {
     if (!selectedFeature) return;
-    const pp = getPanelPadding();
+    const offset = getPanelOffset();
     if (selectedFeature.type === "marker") {
-      mapRef.current.easeTo({ center: selectedFeature.marker.getLngLat(), padding: pp, offset: [0, 20], duration: 500 });
+      mapRef.current.easeTo({ center: selectedFeature.marker.getLngLat(), offset, duration: 500 });
     } else if (selectedFeature.type === "path") {
       const path = selectedFeature.path;
       if (path.vertices.length === 0) return;
@@ -5342,7 +5389,7 @@ export default function Map() {
       } else {
         path.vertices.forEach((v) => bounds.extend(v.lngLat));
       }
-      map.easeTo({ center: bounds.getCenter(), padding: pp, duration: 500 });
+      map.easeTo({ center: bounds.getCenter(), offset, duration: 500 });
     }
   };
 
@@ -5786,6 +5833,7 @@ export default function Map() {
     // Close only when dragged down past the min from level 0. From levels 1/2,
     // a big down-flick just collapses to level 0.
     if (belowMin && sheetDragRef.current.startLevel === 0) {
+      preferredSheetLevel.current = 0;
       panel.style.height = "";
       panel.style.transform = "translateY(100%)";
       setTimeout(() => { dismissPanel(); cleanupPanel(); }, 300);
@@ -5800,6 +5848,7 @@ export default function Map() {
     else targetLevel = 2;
 
     setSheetLevel(targetLevel);
+    preferredSheetLevel.current = targetLevel;
     cleanupPanel();
   };
 
@@ -5854,7 +5903,7 @@ export default function Map() {
     setMapClickMenu(null);
     // Auto-open the detail panel; the selectedFeature effect handles drag enable.
     setSelectedFeature({ type: "marker", marker: m });
-    setSheetLevel(0);
+    setSheetLevel(preferredSheetLevel.current);
   };
 
   const handleAddMarkerAtCenter = () => {
@@ -5864,7 +5913,7 @@ export default function Map() {
     const m = createMarkerRef.current(center);
     setIsSideMenuOpen(false);
     setSelectedFeature({ type: "marker", marker: m });
-    setSheetLevel(0);
+    setSheetLevel(preferredSheetLevel.current);
   };
 
   const handleCreatePath = (opts) => {
@@ -7727,7 +7776,7 @@ export default function Map() {
   const handleOpenOfflineMaps = () => {
     refreshOfflineRegions();
     setSelectedFeature(null);
-    setSheetLevel(0);
+    setSheetLevel(preferredSheetLevel.current);
     setShowOfflineMapsPanel(true);
     setToastMsg("Map locked to north and flat for offline maps.");
     setTimeout(() => setToastMsg(null), 3000);
@@ -7930,14 +7979,13 @@ export default function Map() {
       clearOfflineRegionHighlight();
       return;
     }
-    const isPortrait = window.matchMedia("(orientation: portrait)").matches;
-    const panelEl = featurePanelRef.current;
-    const panelSize = panelEl
-      ? (isPortrait ? panelEl.offsetHeight : panelEl.offsetWidth)
-      : 0;
-    const padding = isPortrait
-      ? { top: 60, right: 60, bottom: 60 + panelSize, left: 60 }
-      : { top: 60, right: 60, bottom: 60, left: 60 + panelSize };
+    const pp = getPanelPaddingCapped();
+    const padding = {
+      top: 60,
+      right: 60,
+      bottom: 60 + (pp.bottom || 0),
+      left: 60 + (pp.left || 0),
+    };
     skipNextMoveBumpRef.current = true;
     map.fitBounds(
       [
@@ -8304,7 +8352,7 @@ export default function Map() {
               <button onClick={() => { setIsSideMenuOpen(false); handleRecordPath(); }}>Record path</button>
             )}
             <div className="side-menu-separator" />
-            <button onClick={() => { setIsSideMenuOpen(false); setSelectedFeature(null); setSheetLevel(0); setOpenFeaturesList(true); }}>Features list</button>
+            <button onClick={() => { setIsSideMenuOpen(false); setSelectedFeature(null); setSheetLevel(preferredSheetLevel.current); setOpenFeaturesList(true); }}>Features list</button>
             <button onClick={() => { setIsSideMenuOpen(false); handleCopyFeatures(); }}>Copy link to features</button>
             <button onClick={() => { setIsSideMenuOpen(false); handleCopyEmbeddedFeatures(); }}>Copy embedded features</button>
             <button onClick={() => { setIsSideMenuOpen(false); handleExportAll(); }}>Export features</button>
@@ -9354,7 +9402,7 @@ export default function Map() {
       <div
         ref={mapContainerRef}
         {...bind}
-        className={`map-container${idMapStyle === "rontomap_streets_dark" ? " map-style-dark" : ""}${idMapStyle === "rontomap_satellite" ? " map-style-satellite" : ""}${isPathMode ? " path-editing" : ""}${featuresLocked ? " features-locked" : ""}${isEmbeddedRef.current ? " embedded" : ""}${selectedFeature ? " panel-open" : ""}`}
+        className={`map-container${idMapStyle === "rontomap_streets_dark" ? " map-style-dark" : ""}${idMapStyle === "rontomap_satellite" ? " map-style-satellite" : ""}${isPathMode ? " path-editing" : ""}${featuresLocked ? " features-locked" : ""}${isEmbeddedRef.current ? " embedded" : ""}${selectedFeature ? " panel-open" : ""}${showMarkerLabels ? " show-marker-labels" : ""}`}
       >
         <div className="bottom-safe-area" aria-hidden="true" />
       </div>

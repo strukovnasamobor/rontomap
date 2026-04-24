@@ -172,7 +172,7 @@ FEATURE DETAIL PANEL
 FEATURES LIST PANEL
 - opening on menu option "Features list"
 - on landscape - left sidebar
-- on portrait - peeking bottom sheet (minimized lvl. 1. - height: 25dvh, half state lvl. 2. - height: 50dvh, expanded lvl. 3. - height: 75dvh)
+- on portrait - peeking bottom sheet (peek lvl. 0. - height: 25dvh, mid lvl. 1. - height: 50dvh, expanded lvl. 2. - height: 75dvh)
 - action icons
     - Sort by distance (asc/desc) - ion-icon name="radio-outline"
     - Sort by name (asc/desc) - ion-icon "text-outline"
