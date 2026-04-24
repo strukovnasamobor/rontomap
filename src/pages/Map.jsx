@@ -482,6 +482,10 @@ export default function Map() {
   // Whenever the features list opens, refresh the memoised item list so any
   // background mutations (creates, deletes, renames) are reflected immediately.
   const skipNextMoveBumpRef = useRef(false);
+  // Set by map-click handlers right before setSelectedFeature so the details-open
+  // zoom-out effect skips the next run — clicking a feature on the map should
+  // leave the camera alone (user already sees what they clicked).
+  const skipNextDetailsZoomRef = useRef(false);
   // Bridge to call saved-feature persistence/hydration from the setup effect,
   // which is declared before the callbacks are defined.
   const persistSavedFeaturesRef = useRef(null);
@@ -1073,6 +1077,7 @@ export default function Map() {
             setSkipPanelAnim(true);
             setDetailsOrigin("list");
           }
+          skipNextDetailsZoomRef.current = true;
           setSelectedFeature({ type: "marker", marker });
           if (!showFeaturesListRef.current) setSheetLevel(preferredSheetLevel.current);
         }, 300);
@@ -1937,6 +1942,7 @@ export default function Map() {
               setSkipPanelAnim(true);
               setDetailsOrigin("list");
             }
+            skipNextDetailsZoomRef.current = true;
             setSelectedFeature({ type: "path", path });
             if (!showFeaturesListRef.current) setSheetLevel(preferredSheetLevel.current);
             return;
@@ -3219,6 +3225,7 @@ export default function Map() {
               setSkipPanelAnim(true);
               setDetailsOrigin("list");
             }
+            skipNextDetailsZoomRef.current = true;
             setSelectedFeature({ type: "path", path: hitPath });
             if (!showFeaturesListRef.current) setSheetLevel(preferredSheetLevel.current);
             return;
@@ -3226,7 +3233,8 @@ export default function Map() {
           // Empty-map click:
           //  1. Details panel open → close it.
           //  2. Features list open → close it.
-          //  3. Nothing open → open the list (sorted by current map center).
+          //  3. Offline maps panel open → close it.
+          //  4. Nothing open → open the list (sorted by current map center).
           if (selectedFeatureRef.current) {
             setSelectedFeature(null);
             return;
@@ -3235,7 +3243,10 @@ export default function Map() {
             setOpenFeaturesList(false);
             return;
           }
-          setShowOfflineMapsPanel(false);
+          if (showOfflineMapsPanelRef.current) {
+            setShowOfflineMapsPanel(false);
+            return;
+          }
           setFeatListSort("dist-asc");
           setOpenFeaturesList(true);
           setSheetLevel(preferredSheetLevel.current);
@@ -4174,6 +4185,8 @@ export default function Map() {
   useEffect(() => { selectedFeatureRef.current = selectedFeature; }, [selectedFeature]);
   const showFeaturesListRef = useRef(false);
   useEffect(() => { showFeaturesListRef.current = showFeaturesList; }, [showFeaturesList]);
+  const showOfflineMapsPanelRef = useRef(false);
+  useEffect(() => { showOfflineMapsPanelRef.current = showOfflineMapsPanel; }, [showOfflineMapsPanel]);
   useEffect(() => {
     forceModeRef.current = forceMode;
   }, [forceMode]);
@@ -4459,14 +4472,19 @@ export default function Map() {
 
   // When details opens, zoom out if the feature falls outside the unobstructed
   // region (the part of the viewport not covered by the panel). Mirrors the
-  // list-click zoom-out so any entry point — map click, url param, etc. —
-  // leaves the feature centered in the visible area.
+  // list-click zoom-out so URL-param / programmatic entry points leave the
+  // feature centered in the visible area. Direct map clicks are suppressed via
+  // skipNextDetailsZoomRef — the user can already see what they tapped.
   useEffect(() => {
     setDetailsActionsOpen(false);
     setDescActionsOpen(false);
     if (!selectedFeature || !mapRef.current) return;
+    if (skipNextDetailsZoomRef.current) {
+      skipNextDetailsZoomRef.current = false;
+      return;
+    }
     const map = mapRef.current;
-    const pp = getPanelPaddingCapped();
+    const pp = getPanelPadding();
     const coords = [];
     if (selectedFeature.type === "marker") {
       const ll = selectedFeature.marker.getLngLat();
@@ -4483,8 +4501,8 @@ export default function Map() {
     if (coords.length === 0) return;
     const rect = map.getContainer().getBoundingClientRect();
     const MARGIN = 40;
-    const centerLL = map.getCenter();
-    const cPx = map.project(centerLL);
+    const aroundLL = getUnobstructedCenterLL();
+    const cPx = map.project(aroundLL);
     const availW = Math.max(20, (rect.width - (pp.left || 0) - (pp.right || 0)) / 2 - MARGIN);
     const availH = Math.max(20, (rect.height - (pp.top || 0) - (pp.bottom || 0)) / 2 - MARGIN);
     let ratio = 1;
@@ -4500,10 +4518,12 @@ export default function Map() {
       const dz = Math.log2(ratio);
       const newZoom = Math.max(map.getMinZoom(), map.getZoom() - dz - 0.1);
       skipNextMoveBumpRef.current = true;
+      // Zoom around the unobstructed-center pixel without touching center or
+      // padding — avoids the low-zoom clamping jolt that a padding change
+      // causes when the world bounds are already in view.
       map.easeTo({
         zoom: newZoom,
-        center: centerLL,
-        padding: pp,
+        around: aroundLL,
         duration: 500,
         bearing: map.getBearing(),
         pitch: map.getPitch(),
@@ -5309,43 +5329,51 @@ export default function Map() {
   const getPanelPadding = () => {
     const panel = featurePanelRef.current;
     if (!panel) return {};
+    const rect = panel.getBoundingClientRect();
     const isPortrait = window.matchMedia("(orientation: portrait)").matches;
     if (isPortrait) {
-      const bottom = Math.round(window.innerHeight - panel.getBoundingClientRect().top);
+      const bottom = Math.round(window.innerHeight - rect.top);
       return bottom > 0 ? { bottom } : {};
     }
-    return { left: 332 };
+    const left = Math.round(rect.right);
+    return left > 0 ? { left } : {};
   };
 
-  // Screen-space nudge biasing a camera target toward the unobstructed area.
-  // Capped at 25% of the viewport so an expanded sheet doesn't yank the map.
-  const getPanelOffset = () => {
-    if (!selectedFeature && !showFeaturesList) return [0, 0];
-    const map = mapRef.current;
-    if (!map) return [0, 0];
-    const { clientHeight: vh } = map.getContainer();
-    const isPortrait = window.matchMedia("(orientation: portrait)").matches;
-    if (isPortrait) {
-      const panel = featurePanelRef.current;
-      const panelTop = panel ? panel.getBoundingClientRect().top : vh - 140;
-      return [0, panelTop / 2 - vh / 2];
-    }
-    return [332 / 2, 0];
-  };
-
-  // Panel padding clamped to 40% per side so fitBounds/easeTo don't collapse
-  // into a tiny unpadded strip when the sheet is expanded.
-  const getPanelPaddingCapped = () => {
+  // Safety-clamp of the raw panel padding for fitBounds callers only: leaves at
+  // least MIN_FIT px of unpadded viewport on each axis so a 75dvh sheet on a
+  // small screen can't collapse the target rectangle to zero or negative size.
+  const getPanelPaddingForFitBounds = () => {
     const pp = getPanelPadding();
     const map = mapRef.current;
     if (!map) return pp;
     const { clientWidth: vw, clientHeight: vh } = map.getContainer();
+    const MIN_FIT = 120;
     const out = {};
-    if (pp.top != null) out.top = Math.min(pp.top, vh * 0.4);
-    if (pp.bottom != null) out.bottom = Math.min(pp.bottom, vh * 0.4);
-    if (pp.left != null) out.left = Math.min(pp.left, vw * 0.4);
-    if (pp.right != null) out.right = Math.min(pp.right, vw * 0.4);
+    if (pp.top != null) out.top = Math.min(pp.top, Math.max(0, vh - MIN_FIT));
+    if (pp.bottom != null) out.bottom = Math.min(pp.bottom, Math.max(0, vh - MIN_FIT));
+    if (pp.left != null) out.left = Math.min(pp.left, Math.max(0, vw - MIN_FIT));
+    if (pp.right != null) out.right = Math.min(pp.right, Math.max(0, vw - MIN_FIT));
     return out;
+  };
+
+  // Geo currently rendered at the center of the visible (non-panel) region.
+  // Used to anchor zoom animations so the focal pixel doesn't drift. Uses the
+  // raw panel rect — any cap would shift the target away from the true center.
+  const getUnobstructedCenterLL = () => {
+    const map = mapRef.current;
+    const pp = getPanelPadding();
+    const { clientWidth: vw, clientHeight: vh } = map.getContainer();
+    const x = ((pp.left || 0) + vw - (pp.right || 0)) / 2;
+    const y = ((pp.top || 0) + vh - (pp.bottom || 0)) / 2;
+    return map.unproject([x, y]);
+  };
+
+  // Screen-pixel offset from container center to the unobstructed-area center.
+  // Passed as easeTo/flyTo `offset` so the target lands at the visible midpoint
+  // without triggering Mapbox's padding-change world-bounds clamp at low zoom.
+  const getPanelOffset = () => {
+    const pp = getPanelPadding();
+    return [((pp.left || 0) - (pp.right || 0)) / 2, ((pp.top || 0) - (pp.bottom || 0)) / 2];
   };
 
   const handleFeatureFlyTo = () => {
@@ -5353,7 +5381,12 @@ export default function Map() {
     const map = mapRef.current;
     if (selectedFeature.type === "marker") {
       const marker = selectedFeature.marker;
-      map.flyTo({ center: marker.getLngLat(), zoom: 18, offset: getPanelOffset(), duration: 1500 });
+      map.flyTo({
+        center: marker.getLngLat(),
+        zoom: 18,
+        offset: getPanelOffset(),
+        duration: 1500,
+      });
     } else if (selectedFeature.type === "path") {
       const path = selectedFeature.path;
       if (path.vertices.length > 0) {
@@ -5363,13 +5396,27 @@ export default function Map() {
         } else {
           path.vertices.forEach((v) => bounds.extend(v.lngLat));
         }
-        const pp = getPanelPaddingCapped();
-        map.fitBounds(bounds, {
+        // Compute the target camera with cameraForBounds, then flyTo that
+        // camera with `offset` instead of `padding`. fitBounds animates the
+        // padding transition itself, which collides with the fly-arc's
+        // low-zoom apex and makes the map glitch — mirroring the marker
+        // path sidesteps that.
+        const pp = getPanelPaddingForFitBounds();
+        const cam = map.cameraForBounds(bounds, {
           padding: { top: 60, bottom: (pp.bottom || 0) + 60, left: (pp.left || 0) + 60, right: 60 },
           bearing: map.getBearing(),
           pitch: map.getPitch(),
-          duration: 1500,
         });
+        if (cam) {
+          map.flyTo({
+            center: cam.center,
+            zoom: cam.zoom,
+            bearing: cam.bearing,
+            pitch: cam.pitch,
+            offset: getPanelOffset(),
+            duration: 1500,
+          });
+        }
       }
     }
   };
@@ -5378,7 +5425,11 @@ export default function Map() {
     if (!selectedFeature) return;
     const offset = getPanelOffset();
     if (selectedFeature.type === "marker") {
-      mapRef.current.easeTo({ center: selectedFeature.marker.getLngLat(), offset, duration: 500 });
+      mapRef.current.easeTo({
+        center: selectedFeature.marker.getLngLat(),
+        offset,
+        duration: 500,
+      });
     } else if (selectedFeature.type === "path") {
       const path = selectedFeature.path;
       if (path.vertices.length === 0) return;
@@ -5640,7 +5691,6 @@ export default function Map() {
     // is preserved, and the details panel inherits the current sheet level.
     if (selectedFeatureListRef === item.ref) {
       listRestoreRef.current = {
-        sheetLevel,
         scrollTop: listScrollRef.current?.scrollTop || 0,
       };
       setSkipPanelAnim(true);
@@ -5712,15 +5762,13 @@ export default function Map() {
     }
 
     // Zoom out if the feature is off-screen or hidden under the open panel.
-    // Use the unobstructed region's symmetric half-widths so after the
-    // animation the camera is centered in the visible (non-panel) area —
-    // padding: pp tells Mapbox to place centerLL at the center of the padded
-    // (unobstructed) region.
+    // Measure pixel distances from the unobstructed-center pixel so the zoom
+    // budget reflects what actually fits in the visible strip.
     if (coords.length > 0) {
       const rect = map.getContainer().getBoundingClientRect();
       const MARGIN = 40;
-      const centerLL = map.getCenter();
-      const cPx = map.project(centerLL);
+      const aroundLL = getUnobstructedCenterLL();
+      const cPx = map.project(aroundLL);
       const availW = Math.max(20, (rect.width - (pp.left || 0) - (pp.right || 0)) / 2 - MARGIN);
       const availH = Math.max(20, (rect.height - (pp.top || 0) - (pp.bottom || 0)) / 2 - MARGIN);
 
@@ -5736,10 +5784,12 @@ export default function Map() {
         const dz = Math.log2(ratio);
         const newZoom = Math.max(map.getMinZoom(), map.getZoom() - dz - 0.1);
         skipNextMoveBumpRef.current = true;
+        // Zoom around the unobstructed-center pixel without touching center
+        // or padding — avoids the low-zoom clamping jolt that a padding
+        // change causes when the world bounds are already in view.
         map.easeTo({
           zoom: newZoom,
-          center: centerLL,
-          padding: pp,
+          around: aroundLL,
           duration: 500,
           bearing: map.getBearing(),
           pitch: map.getPitch(),
@@ -7979,7 +8029,7 @@ export default function Map() {
       clearOfflineRegionHighlight();
       return;
     }
-    const pp = getPanelPaddingCapped();
+    const pp = getPanelPaddingForFitBounds();
     const padding = {
       top: 60,
       right: 60,
@@ -9227,8 +9277,9 @@ export default function Map() {
                           setSelectedFeature(null);
                           setDetailsOrigin(null);
                           setOpenFeaturesList(true);
+                          // Keep the current sheetLevel so expanding the
+                          // details panel carries over when the list returns.
                           if (restore) {
-                            setSheetLevel(restore.sheetLevel);
                             requestAnimationFrame(() => {
                               if (listScrollRef.current && restore.scrollTop != null) {
                                 listScrollRef.current.scrollTop = restore.scrollTop;
