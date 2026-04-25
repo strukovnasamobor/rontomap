@@ -4117,9 +4117,12 @@ export default function Map() {
         const beforeP = new Set(pathsRef.current);
         const result = materializeFeatures(data, { createMarker, pathHelpersRef, updateMarkerLabel, deserializeSnappedSegments, pathsRef });
 
-        // Fly to fit all imported content
+        // Apply imported camera if present; otherwise fit bounds to all features.
         const map = mapRef.current;
-        if (map) {
+        if (data.camera) {
+          applyImportedCamera(data.camera);
+          map?.once("moveend", syncLabelsNow);
+        } else if (map) {
           const bounds = new mapboxgl.LngLatBounds();
           markersRef.current.forEach(m => bounds.extend(m.getLngLat()));
           pathsRef.current.forEach(p => {
@@ -4932,6 +4935,34 @@ export default function Map() {
 
   // --- Import/Export handlers ---
 
+  const captureCamera = () => {
+    const map = mapRef.current;
+    if (!map) return null;
+    const c = map.getCenter();
+    const out = {
+      center: [c.lng, c.lat],
+      zoom: map.getZoom(),
+    };
+    const b = map.getBearing();
+    if (b) out.bearing = b;
+    const p = map.getPitch();
+    if (p) out.pitch = p;
+    return out;
+  };
+
+  const applyImportedCamera = (camera) => {
+    if (!camera) return;
+    const map = mapRef.current;
+    if (!map) return;
+    map.flyTo({
+      center: camera.center,
+      zoom: camera.zoom,
+      bearing: camera.bearing || 0,
+      pitch: camera.pitch || 0,
+      animate: false,
+    });
+  };
+
   const handleImportFeatures = async () => {
     setMapClickMenu(null);
     try {
@@ -4940,6 +4971,7 @@ export default function Map() {
       const beforeM = new Set(markersRef.current);
       const beforeP = new Set(pathsRef.current);
       const result = materializeFeatures(data, { createMarker, pathHelpersRef, updateMarkerLabel, deserializeSnappedSegments, pathsRef });
+      if (data.camera) applyImportedCamera(data.camera);
       syncLabelsNow();
       const parts = [];
       if (result.markerCount > 0) parts.push(`${result.markerCount} marker${result.markerCount > 1 ? "s" : ""}`);
@@ -4957,7 +4989,7 @@ export default function Map() {
 
   const handleExportAll = () => {
     setMapClickMenu(null);
-    const data = collectFeatures(markersRef, pathsRef, serializeSnappedSegments);
+    const data = collectFeatures(markersRef, pathsRef, serializeSnappedSegments, captureCamera());
     if (data.markers.length === 0 && data.paths.length === 0) {
       setToastMsg("No features to export.");
       setTimeout(() => setToastMsg(null), 2000);
@@ -4970,7 +5002,7 @@ export default function Map() {
     const path = mapClickMenu?.path;
     setMapClickMenu(null);
     if (!path) return;
-    const data = collectPath(path, serializeSnappedSegments);
+    const data = collectPath(path, serializeSnappedSegments, captureCamera());
     const baseName = path.name || (path.isTrack ? "track" : "path");
     setExportAlert({ data, scope: { type: "path", path: data.paths[0] }, baseName });
   };
@@ -4979,7 +5011,7 @@ export default function Map() {
     const marker = markerMenu?.marker;
     setMarkerMenu(null);
     if (!marker) return;
-    const data = collectMarker(marker);
+    const data = collectMarker(marker, captureCamera());
     const baseName = marker._markerName || (marker._sightPath ? "sight" : "marker");
     setExportAlert({ data, scope: { type: "marker", marker: data.markers[0] }, baseName });
   };
@@ -5143,6 +5175,24 @@ export default function Map() {
     );
   };
 
+  const saveImportedFeatures = () => {
+    const pending = pendingImportRef.current;
+    if (!pending) return;
+    if (pending.timerId) clearTimeout(pending.timerId);
+    pendingImportRef.current = null;
+    for (const m of pending.markers) {
+      m._saved = true;
+      if (!m._id) m._id = generateFeatureId();
+    }
+    for (const p of pending.paths) {
+      p._saved = true;
+      if (!p._id) p._id = generateFeatureId();
+    }
+    persistSavedFeaturesRef.current?.();
+    bumpFeaturesVersion();
+    setToastMsg(null);
+  };
+
   useEffect(() => () => {
     if (pendingImportRef.current) clearTimeout(pendingImportRef.current.timerId);
   }, []);
@@ -5161,9 +5211,12 @@ export default function Map() {
       if (pendingImportRef.current?.token === token) commitPendingImport();
     }, UNDO_MS);
     pendingImportRef.current = { markers, paths, lockToggled, timerId, token };
+    const canSave = markers.length > 0 || paths.length > 0;
+    const actions = [{ label: "Undo", onClick: undoPendingImport }];
+    if (canSave) actions.push({ label: "Save", onClick: saveImportedFeatures });
     setToastMsg({
       text,
-      action: { label: "Undo", onClick: undoPendingImport },
+      actions,
       __undo: token,
     });
   };
@@ -5584,12 +5637,12 @@ export default function Map() {
     if (!selectedFeature) return;
     if (selectedFeature.type === "marker") {
       const marker = selectedFeature.marker;
-      const data = collectMarker(marker);
+      const data = collectMarker(marker, captureCamera());
       const baseName = marker._markerName || (marker._sightPath ? "sight" : "marker");
       setExportAlert({ data, scope: { type: "marker", marker: data.markers[0] }, baseName });
     } else if (selectedFeature.type === "path") {
       const path = selectedFeature.path;
-      const data = collectPath(path, serializeSnappedSegments);
+      const data = collectPath(path, serializeSnappedSegments, captureCamera());
       const baseName = path.name || (path.isTrack ? "track" : "path");
       setExportAlert({ data, scope: { type: "path", path: data.paths[0] }, baseName });
     }
@@ -9542,18 +9595,20 @@ export default function Map() {
       {toastMsg && (() => {
         const isObj = typeof toastMsg === "object";
         const text = isObj ? toastMsg.text : toastMsg;
-        const action = isObj ? toastMsg.action : null;
+        const actions = isObj
+          ? (Array.isArray(toastMsg.actions) ? toastMsg.actions : toastMsg.action ? [toastMsg.action] : [])
+          : [];
         return (
           <div
-            className={`toast-msg${idMapStyle === "rontomap_streets_dark" ? " toast-msg-dark" : ""}${action ? " toast-msg-interactive" : ""}`}
+            className={`toast-msg${idMapStyle === "rontomap_streets_dark" ? " toast-msg-dark" : ""}${actions.length > 0 ? " toast-msg-interactive" : ""}`}
             style={toastBottom != null ? { bottom: toastBottom, zIndex: 1004 } : undefined}
           >
             <span className="toast-msg-text">{text}</span>
-            {action && (
-              <button type="button" className="toast-msg-action" onClick={action.onClick}>
-                {action.label}
+            {actions.map((a, i) => (
+              <button key={i} type="button" className="toast-msg-action" onClick={a.onClick}>
+                {a.label}
               </button>
-            )}
+            ))}
           </div>
         );
       })()}

@@ -3,7 +3,7 @@
  * @typedef {import('../types').ExportScope} ExportScope
  */
 
-import { scopeData } from "./rontoJson";
+import { scopeData, buildPathExtras, parsePathExtras, applyPathExtras, isValidCamera, normalizeCamera } from "./rontoJson";
 
 /**
  * Import: convert a KML string to RontoJSON.
@@ -23,6 +23,22 @@ export function toRonto(content) {
   const pendingSights = [];
   let mIdx = 1;
   let pIdx = 1;
+
+  // Top-level camera, embedded as <Data name="rontomapCamera"> on the Document.
+  let camera = null;
+  const docEl = xmlDoc.querySelector("Document") || xmlDoc.documentElement;
+  if (docEl) {
+    const dataEls = docEl.querySelectorAll(":scope > ExtendedData > Data");
+    for (const d of dataEls) {
+      if (d.getAttribute("name") === "rontomapCamera") {
+        try {
+          const parsed = JSON.parse(d.querySelector("value")?.textContent?.trim() || "");
+          if (isValidCamera(parsed)) camera = normalizeCamera(parsed);
+        } catch { /* ignore */ }
+        break;
+      }
+    }
+  }
 
   const placemarks = xmlDoc.querySelectorAll("Placemark");
   for (const pm of placemarks) {
@@ -120,6 +136,7 @@ export function toRonto(content) {
         if (isFinite(kmlDist)) pathData.routeDistance = kmlDist;
         const kmlDur = parseFloat(parseExtData(pm, "routeDuration"));
         if (isFinite(kmlDur)) pathData.routeDuration = kmlDur;
+        applyPathExtras(pathData, parsePathExtras(parseExtData(pm, "rontomapExtras")));
         paths.push(pathData);
       }
     }
@@ -166,7 +183,9 @@ export function toRonto(content) {
     }
   }
 
-  return { markers, paths };
+  const out = { markers, paths };
+  if (camera) out.camera = camera;
+  return out;
 }
 
 /**
@@ -183,6 +202,12 @@ export function fromRonto(data, scope) {
   lines.push(`<kml xmlns="http://www.opengis.net/kml/2.2">`);
   lines.push(`<Document>`);
   lines.push(`  <name>RontoMap Export</name>`);
+
+  if (scoped.camera) {
+    lines.push(`  <ExtendedData>`);
+    lines.push(`    <Data name="rontomapCamera"><value>${escapeXml(JSON.stringify(scoped.camera))}</value></Data>`);
+    lines.push(`  </ExtendedData>`);
+  }
 
   // Styles
   lines.push(`  <Style id="marker-style">`);
@@ -246,6 +271,8 @@ export function fromRonto(data, scope) {
     if (p.roadSnap) extData.push(`      <Data name="roadSnap"><value>${escapeXml(typeof p.roadSnap === "string" ? p.roadSnap : "car")}</value></Data>`);
     if (p.routeDistance != null) extData.push(`      <Data name="routeDistance"><value>${p.routeDistance}</value></Data>`);
     if (p.routeDuration != null) extData.push(`      <Data name="routeDuration"><value>${p.routeDuration}</value></Data>`);
+    const pExtras = buildPathExtras(p);
+    if (pExtras) extData.push(`      <Data name="rontomapExtras"><value>${escapeXml(JSON.stringify(pExtras))}</value></Data>`);
     if (extData.length > 0) {
       lines.push(`    <ExtendedData>`);
       lines.push(...extData);
@@ -354,11 +381,16 @@ function getExportCoords(path) {
   let coords;
   if (path.snappedSegments && path.snappedSegments.length > 0) {
     const snapped = [];
-    for (const seg of path.snappedSegments) {
-      for (const c of seg.coords) {
+    path.snappedSegments.forEach((seg, idx) => {
+      // Each segment's first coord equals the previous segment's last coord
+      // (the seam). Skip it on every segment after the first to avoid emitting
+      // duplicate consecutive points in the LineString.
+      const start = idx === 0 ? 0 : 1;
+      for (let i = start; i < seg.coords.length; i++) {
+        const c = seg.coords[i];
         snapped.push([c.lng, c.lat]);
       }
-    }
+    });
     coords = snapped.length >= 2 ? snapped : path.coords.map((c) => [c.long, c.lat]);
   } else {
     coords = path.coords.map((c) => [c.long, c.lat]);

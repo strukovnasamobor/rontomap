@@ -2,6 +2,15 @@
  * @typedef {Object} RontoFeatureCollection
  * @property {RontoMarker[]} markers
  * @property {RontoPath[]} paths
+ * @property {RontoCamera} [camera]
+ */
+
+/**
+ * @typedef {Object} RontoCamera
+ * @property {[number, number]} center - [lng, lat]
+ * @property {number} zoom
+ * @property {number} [bearing]
+ * @property {number} [pitch]
  */
 
 /**

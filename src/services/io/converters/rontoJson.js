@@ -12,7 +12,7 @@
  * @param {Function} serializeSnappedSegments
  * @returns {RontoFeatureCollection}
  */
-export function collectFeatures(markersRef, pathsRef, serializeSnappedSegments) {
+export function collectFeatures(markersRef, pathsRef, serializeSnappedSegments, camera) {
   const freeMarkers = markersRef.current.filter((m) => !m._sightPath);
   const markers = freeMarkers.map((m, i) => {
     const ll = m.getLngLat();
@@ -51,15 +51,18 @@ export function collectFeatures(markersRef, pathsRef, serializeSnappedSegments) 
     return pathData;
   });
 
-  return { markers, paths };
+  const out = { markers, paths };
+  if (camera) out.camera = camera;
+  return out;
 }
 
 /**
  * Collect a single marker into a RontoJSON structure.
  * @param {Object} marker - Mapbox GL marker instance
+ * @param {RontoCamera} [camera]
  * @returns {RontoFeatureCollection}
  */
-export function collectMarker(marker) {
+export function collectMarker(marker, camera) {
   const ll = marker.getLngLat();
   const markerData = {
     id: "m1",
@@ -67,16 +70,19 @@ export function collectMarker(marker) {
     pos: [ll.lat, ll.lng],
   };
   if (marker._description) markerData.description = marker._description;
-  return { markers: [markerData], paths: [] };
+  const out = { markers: [markerData], paths: [] };
+  if (camera) out.camera = camera;
+  return out;
 }
 
 /**
  * Collect a single path (with its sights) into a RontoJSON structure.
  * @param {Object} path - Path object from pathsRef
  * @param {Function} serializeSnappedSegments
+ * @param {RontoCamera} [camera]
  * @returns {RontoFeatureCollection}
  */
-export function collectPath(path, serializeSnappedSegments) {
+export function collectPath(path, serializeSnappedSegments, camera) {
   const pathData = {
     id: "p1",
     coords: path.vertices.map((v) => ({ long: v.lngLat[0], lat: v.lngLat[1], ...(v.force ? { force: true } : {}) })),
@@ -99,7 +105,9 @@ export function collectPath(path, serializeSnappedSegments) {
       return am;
     });
   }
-  return { markers: [], paths: [pathData] };
+  const out = { markers: [], paths: [pathData] };
+  if (camera) out.camera = camera;
+  return out;
 }
 
 /**
@@ -251,10 +259,12 @@ export function materializePathFromShape(entry, deps) {
  */
 export function toRonto(content) {
   const obj = JSON.parse(content);
-  return {
+  const out = {
     markers: Array.isArray(obj.markers) ? obj.markers : [],
     paths: Array.isArray(obj.paths) ? obj.paths : [],
   };
+  if (isValidCamera(obj.camera)) out.camera = normalizeCamera(obj.camera);
+  return out;
 }
 
 /**
@@ -266,6 +276,70 @@ export function toRonto(content) {
 export function fromRonto(data, scope) {
   const out = scopeData(data, scope);
   return JSON.stringify(out, null, 2);
+}
+
+/**
+ * Build a JSON-serializable extras blob for embedding in KML / GPX / GeoJSON
+ * exports. Captures the rontoJSON-specific state that a flat LineString cannot
+ * represent: per-vertex `force` flags, the rendered `snappedSegments`, and the
+ * `isCircuit` / `closingForced` flags. Returns null if the path has no extras
+ * worth preserving (no force flags and no snapped segments).
+ *
+ * @param {Object} pathData - rontoJSON path entry (from collectPath / collectFeatures)
+ * @returns {Object|null}
+ */
+export function buildPathExtras(pathData) {
+  const hasForce = Array.isArray(pathData.coords) && pathData.coords.some((c) => c.force);
+  const hasSnapped = Array.isArray(pathData.snappedSegments) && pathData.snappedSegments.length > 0;
+  if (!hasForce && !hasSnapped) return null;
+  const extras = {};
+  extras.coords = pathData.coords.map((c) => {
+    const e = { long: c.long, lat: c.lat };
+    if (c.force) e.force = true;
+    return e;
+  });
+  if (hasSnapped) {
+    extras.snappedSegments = pathData.snappedSegments.map((seg) => ({
+      type: seg.type,
+      coords: seg.coords.map((c) => ({ lng: c.lng, lat: c.lat })),
+    }));
+  }
+  if (pathData.isCircuit) extras.isCircuit = true;
+  if (pathData.closingForced) extras.closingForced = true;
+  return extras;
+}
+
+/**
+ * Parse the JSON string produced by buildPathExtras. Returns null on any error.
+ * @param {string|null|undefined} json
+ * @returns {Object|null}
+ */
+export function parsePathExtras(json) {
+  if (!json || typeof json !== "string") return null;
+  try {
+    const e = JSON.parse(json);
+    return e && typeof e === "object" ? e : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Override fields on a path-data object with values from a parsed extras blob.
+ * Mutates pathData in place.
+ * @param {Object} pathData - in-progress rontoJSON path entry
+ * @param {Object|null} extras - output of parsePathExtras
+ */
+export function applyPathExtras(pathData, extras) {
+  if (!extras) return;
+  if (Array.isArray(extras.coords) && extras.coords.length >= 2) {
+    pathData.coords = extras.coords;
+    if (extras.isCircuit) pathData.isCircuit = true; else delete pathData.isCircuit;
+    if (extras.closingForced) pathData.closingForced = true; else delete pathData.closingForced;
+  }
+  if (Array.isArray(extras.snappedSegments) && extras.snappedSegments.length > 0) {
+    pathData.snappedSegments = extras.snappedSegments;
+  }
 }
 
 // --- Helpers ---
@@ -282,7 +356,42 @@ function isValidCoord(lat, lng) {
  */
 export function scopeData(data, scope) {
   if (!scope || scope.type === "all") return data;
-  if (scope.type === "marker" && scope.marker) return { markers: [scope.marker], paths: [] };
-  if (scope.type === "path" && scope.path) return { markers: [], paths: [scope.path] };
+  const camera = data?.camera;
+  if (scope.type === "marker" && scope.marker) {
+    return { markers: [scope.marker], paths: [], ...(camera ? { camera } : {}) };
+  }
+  if (scope.type === "path" && scope.path) {
+    return { markers: [], paths: [scope.path], ...(camera ? { camera } : {}) };
+  }
   return data;
+}
+
+/**
+ * Validate a camera object loosely. Accepts {center: [lng, lat], zoom, [bearing], [pitch]}.
+ * @param {*} c
+ * @returns {boolean}
+ */
+export function isValidCamera(c) {
+  if (!c || typeof c !== "object") return false;
+  const ctr = c.center;
+  if (!Array.isArray(ctr) || ctr.length < 2) return false;
+  const lng = +ctr[0], lat = +ctr[1];
+  if (!isFinite(lng) || !isFinite(lat) || lat < -90 || lat > 90 || lng < -180 || lng > 180) return false;
+  if (typeof c.zoom !== "number" || !isFinite(c.zoom)) return false;
+  return true;
+}
+
+/**
+ * Normalize a camera object into the canonical shape (numeric coords, optional bearing/pitch).
+ * @param {Object} c
+ * @returns {RontoCamera}
+ */
+export function normalizeCamera(c) {
+  const out = {
+    center: [+c.center[0], +c.center[1]],
+    zoom: +c.zoom,
+  };
+  if (typeof c.bearing === "number" && isFinite(c.bearing)) out.bearing = c.bearing;
+  if (typeof c.pitch === "number" && isFinite(c.pitch)) out.pitch = c.pitch;
+  return out;
 }

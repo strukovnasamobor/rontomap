@@ -3,7 +3,7 @@
  * @typedef {import('../types').ExportScope} ExportScope
  */
 
-import { scopeData } from "./rontoJson";
+import { scopeData, buildPathExtras, applyPathExtras, isValidCamera, normalizeCamera } from "./rontoJson";
 
 /**
  * Import: convert a GeoJSON string to RontoJSON.
@@ -69,6 +69,9 @@ export function toRonto(content) {
       if (props.roadSnap) pathData.roadSnap = props.roadSnap;
       if (props.routeDistance != null) pathData.routeDistance = props.routeDistance;
       if (props.routeDuration != null) pathData.routeDuration = props.routeDuration;
+      if (props.rontomap && typeof props.rontomap === "object") {
+        applyPathExtras(pathData, props.rontomap);
+      }
       paths.push(pathData);
     }
     // Skip Polygon, MultiPoint, etc.
@@ -95,7 +98,11 @@ export function toRonto(content) {
     }
   }
 
-  return { markers, paths };
+  const out = { markers, paths };
+  if (geo && typeof geo === "object" && geo.rontomap && isValidCamera(geo.rontomap.camera)) {
+    out.camera = normalizeCamera(geo.rontomap.camera);
+  }
+  return out;
 }
 
 /**
@@ -138,6 +145,8 @@ export function fromRonto(data, scope) {
     if (p.routeDistance != null) props.routeDistance = p.routeDistance;
     if (p.routeDuration != null) props.routeDuration = p.routeDuration;
     if (p.description) props.description = p.description;
+    const pExtras = buildPathExtras(p);
+    if (pExtras) props.rontomap = pExtras;
 
     features.push({
       type: "Feature",
@@ -176,6 +185,9 @@ export function fromRonto(data, scope) {
     type: "FeatureCollection",
     features,
   };
+  if (scoped.camera) {
+    geojson.rontomap = { camera: scoped.camera };
+  }
   return JSON.stringify(geojson, null, 2);
 }
 
@@ -199,12 +211,16 @@ function isCircuitCoords(coords) {
 function getExportCoords(path) {
   if (path.snappedSegments && path.snappedSegments.length > 0) {
     const coords = [];
-    for (const seg of path.snappedSegments) {
-      for (const c of seg.coords) {
-        // snappedSegments coords are {lng, lat} in Firestore format
+    path.snappedSegments.forEach((seg, idx) => {
+      // Each segment's first coord equals the previous segment's last coord
+      // (the seam). Skip it on every segment after the first to avoid emitting
+      // duplicate consecutive points in the LineString.
+      const start = idx === 0 ? 0 : 1;
+      for (let i = start; i < seg.coords.length; i++) {
+        const c = seg.coords[i];
         coords.push([c.lng, c.lat]);
       }
-    }
+    });
     return coords.length >= 2 ? coords : path.coords.map((c) => [c.long, c.lat]);
   }
   return path.coords.map((c) => [c.long, c.lat]);

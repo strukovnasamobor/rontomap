@@ -3,7 +3,7 @@
  * @typedef {import('../types').ExportScope} ExportScope
  */
 
-import { scopeData } from "./rontoJson";
+import { scopeData, buildPathExtras, parsePathExtras, applyPathExtras, isValidCamera, normalizeCamera } from "./rontoJson";
 
 /**
  * Import: convert a GPX string to RontoJSON.
@@ -22,6 +22,24 @@ export function toRonto(content) {
   const paths = [];
   let mIdx = 1;
   let pIdx = 1;
+
+  // Top-level camera, embedded under <metadata><extensions><rontomap:camera>
+  let camera = null;
+  const metaEl = xmlDoc.querySelector("metadata");
+  if (metaEl) {
+    const exts = metaEl.querySelector("extensions");
+    if (exts) {
+      for (const child of exts.children) {
+        if (child.localName === "camera") {
+          try {
+            const parsed = JSON.parse(child.textContent?.trim() || "");
+            if (isValidCamera(parsed)) camera = normalizeCamera(parsed);
+          } catch { /* ignore */ }
+          break;
+        }
+      }
+    }
+  }
 
   // Waypoints → markers or pending sights
   const pendingSights = [];
@@ -92,6 +110,7 @@ export function toRonto(content) {
     if (isFinite(rteDist)) pathData.routeDistance = rteDist;
     const rteDur = parseFloat(parseExtValue(rte, "routeDuration"));
     if (isFinite(rteDur)) pathData.routeDuration = rteDur;
+    applyPathExtras(pathData, parsePathExtras(parseExtValue(rte, "extras")));
     paths.push(pathData);
   }
 
@@ -149,7 +168,9 @@ export function toRonto(content) {
     }
   }
 
-  return { markers, paths };
+  const out = { markers, paths };
+  if (camera) out.camera = camera;
+  return out;
 }
 
 /**
@@ -164,6 +185,14 @@ export function fromRonto(data, scope) {
 
   lines.push(`<?xml version="1.0" encoding="UTF-8"?>`);
   lines.push(`<gpx version="1.1" creator="RontoMap" xmlns="http://www.topografix.com/GPX/1/1" xmlns:rontomap="https://rontomap.com/gpx/1">`);
+
+  if (scoped.camera) {
+    lines.push(`  <metadata>`);
+    lines.push(`    <extensions>`);
+    lines.push(`      <rontomap:camera>${escapeXml(JSON.stringify(scoped.camera))}</rontomap:camera>`);
+    lines.push(`    </extensions>`);
+    lines.push(`  </metadata>`);
+  }
 
   // Markers as waypoints
   for (const m of scoped.markers || []) {
@@ -207,6 +236,10 @@ export function fromRonto(data, scope) {
     }
     if (p.routeDuration != null) {
       rteExtensions.push(`      <rontomap:routeDuration>${p.routeDuration}</rontomap:routeDuration>`);
+    }
+    const pExtras = buildPathExtras(p);
+    if (pExtras) {
+      rteExtensions.push(`      <rontomap:extras>${escapeXml(JSON.stringify(pExtras))}</rontomap:extras>`);
     }
     if (rteExtensions.length > 0) {
       lines.push(`    <extensions>`);
@@ -272,11 +305,16 @@ function getExportCoords(path) {
   let coords;
   if (path.snappedSegments && path.snappedSegments.length > 0) {
     const snapped = [];
-    for (const seg of path.snappedSegments) {
-      for (const c of seg.coords) {
+    path.snappedSegments.forEach((seg, idx) => {
+      // Each segment's first coord equals the previous segment's last coord
+      // (the seam). Skip it on every segment after the first to avoid emitting
+      // duplicate consecutive points in the route.
+      const start = idx === 0 ? 0 : 1;
+      for (let i = start; i < seg.coords.length; i++) {
+        const c = seg.coords[i];
         snapped.push([c.lng, c.lat]);
       }
-    }
+    });
     coords = snapped.length >= 2 ? snapped : path.coords.map((c) => [c.long, c.lat]);
   } else {
     coords = path.coords.map((c) => [c.long, c.lat]);
