@@ -170,6 +170,7 @@ const deserializeSnappedSegments = (segments) =>
 function RenameModal({ isOpen, title, initialValue, onCancel, onClear, onSave, saveLabel, isDark, placeholder, multiline, maxLength }) {
   const inputRef = useRef(null);
   const [charCount, setCharCount] = useState(0);
+  const [centerY, setCenterY] = useState(null);
 
   // Focus + select-all + raise soft keyboard once the input is mounted.
   // Uncontrolled input: defaultValue is the DOM value from first paint, so
@@ -189,6 +190,23 @@ function RenameModal({ isOpen, title, initialValue, onCancel, onClear, onSave, s
     });
     return () => cancelAnimationFrame(raf);
   }, [isOpen, initialValue]);
+
+  // Track the center of the visual viewport so the modal sits in the middle
+  // of the visible band above the soft keyboard (rather than relative to the
+  // whole window, which the keyboard partially covers).
+  useEffect(() => {
+    if (!isOpen) return;
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const update = () => setCenterY(vv.offsetTop + vv.height / 2);
+    update();
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    return () => {
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
+    };
+  }, [isOpen]);
 
   // Multiline: Enter inserts a newline inside the textarea, but if the
   // textarea is not focused (e.g. the user tabbed/clicked out) Enter should
@@ -212,6 +230,10 @@ function RenameModal({ isOpen, title, initialValue, onCancel, onClear, onSave, s
   const handleKeyDown = (e) => {
     if (e.key === "Enter" && !multiline) {
       e.preventDefault();
+      inputRef.current?.blur();
+      if (Capacitor.isNativePlatform()) {
+        Keyboard.hide().catch(() => {});
+      }
       onSave(getValue());
     } else if (e.key === "Escape") {
       e.preventDefault();
@@ -224,6 +246,7 @@ function RenameModal({ isOpen, title, initialValue, onCancel, onClear, onSave, s
     className: "rename-modal-input",
     defaultValue: initialValue || "",
     placeholder: placeholder || "Enter name",
+    enterKeyHint: multiline ? "enter" : "done",
     onKeyDown: handleKeyDown,
     onInput: (e) => setCharCount(e.target.value.length),
     ...(maxLength ? { maxLength } : {}),
@@ -240,6 +263,7 @@ function RenameModal({ isOpen, title, initialValue, onCancel, onClear, onSave, s
         className={`rename-modal${multiline ? " rename-modal-wide" : ""}${isDark ? " rename-modal-dark" : ""}`}
         role="dialog"
         aria-modal="true"
+        style={centerY != null ? { top: `${centerY}px`, transform: "translate(-50%, -50%)" } : undefined}
       >
         <h2 className="rename-modal-header">{title}</h2>
         {multiline ? (
@@ -3835,6 +3859,7 @@ export default function Map() {
       const markerLat = parseFloat(parts[0]);
       const markerLng = parseFloat(parts[1]);
       if (!isNaN(markerLat) && !isNaN(markerLng)) {
+        const beforeM = new Set(markersRef.current);
         const m = createMarker([markerLng, markerLat]);
         const topName = getQueryParams("name");
         const topDesc = getQueryParams("description");
@@ -3854,8 +3879,8 @@ export default function Map() {
         mapRef.current.getContainer().classList.add("features-locked");
         syncLabelsNow();
         if (!isEmbeddedRef.current) {
-          setToastMsg("Imported 1 marker.");
-          setTimeout(() => setToastMsg(null), 3000);
+          const newMarkers = markersRef.current.filter((x) => !beforeM.has(x));
+          queueImportUndo({ markers: newMarkers, paths: [], lockToggled: true, text: "Imported 1 marker." });
         }
       } else {
         onLinkImportFailed();
@@ -3964,6 +3989,8 @@ export default function Map() {
           sights: sights.length ? sights : undefined,
         };
 
+        const beforeM = new Set(markersRef.current);
+        const beforeP = new Set(pathsRef.current);
         materializePathFromShape(entry, {
           createMarker,
           pathHelpersRef,
@@ -3981,8 +4008,8 @@ export default function Map() {
         if (!isEmbeddedRef.current) {
           const nSights = sights.length;
           const sightStr = nSights > 0 ? ` with ${nSights} sight${nSights > 1 ? "s" : ""}` : "";
-          setToastMsg(`Imported 1 path${sightStr}.`);
-          setTimeout(() => setToastMsg(null), 3000);
+          const diff = captureImportDiff(beforeM, beforeP);
+          queueImportUndo({ ...diff, lockToggled: true, text: `Imported 1 path${sightStr}.` });
         }
       } else if (pathIntent) {
         onLinkImportFailed();
@@ -4004,6 +4031,8 @@ export default function Map() {
             return;
           }
           const data = snap.data();
+          const beforeM = new Set(markersRef.current);
+          const beforeP = new Set(pathsRef.current);
           const result = materializeFeatures(data, { createMarker, pathHelpersRef, updateMarkerLabel, deserializeSnappedSegments, pathsRef });
           // Lock features when loaded from URL
           featuresLockedRef.current = true;
@@ -4020,8 +4049,8 @@ export default function Map() {
             if (result.pathCount > 0) parts.push(`${result.pathCount} path${result.pathCount > 1 ? "s" : ""}`);
             let msg = parts.length ? `Imported ${parts.join(", ")}.` : "Imported 0 features.";
             if (result.skipped > 0) msg += ` ${result.skipped} skipped.`;
-            setToastMsg(msg);
-            setTimeout(() => setToastMsg(null), 3000);
+            const diff = captureImportDiff(beforeM, beforeP);
+            queueImportUndo({ ...diff, lockToggled: true, text: msg });
           }
         })
         .catch(() => onLinkImportFailed());
@@ -4084,6 +4113,8 @@ export default function Map() {
 
         const { data } = await importFromContent(name, content);
         const createMarker = createMarkerRef.current;
+        const beforeM = new Set(markersRef.current);
+        const beforeP = new Set(pathsRef.current);
         const result = materializeFeatures(data, { createMarker, pathHelpersRef, updateMarkerLabel, deserializeSnappedSegments, pathsRef });
 
         // Fly to fit all imported content
@@ -4106,8 +4137,8 @@ export default function Map() {
         if (result.pathCount > 0) parts.push(`${result.pathCount} path${result.pathCount > 1 ? "s" : ""}`);
         let msg = `Imported ${parts.join(", ")}.`;
         if (result.skipped > 0) msg += ` ${result.skipped} feature${result.skipped > 1 ? "s" : ""} skipped.`;
-        setToastMsg(msg);
-        setTimeout(() => setToastMsg(null), 3000);
+        const diff = captureImportDiff(beforeM, beforeP);
+        queueImportUndo({ ...diff, lockToggled: false, text: msg });
       } catch (e) {
         setToastMsg(e.message);
         setTimeout(() => setToastMsg(null), 3000);
@@ -4906,6 +4937,8 @@ export default function Map() {
     try {
       const { data } = await importFeatures();
       const createMarker = createMarkerRef.current;
+      const beforeM = new Set(markersRef.current);
+      const beforeP = new Set(pathsRef.current);
       const result = materializeFeatures(data, { createMarker, pathHelpersRef, updateMarkerLabel, deserializeSnappedSegments, pathsRef });
       syncLabelsNow();
       const parts = [];
@@ -4913,8 +4946,8 @@ export default function Map() {
       if (result.pathCount > 0) parts.push(`${result.pathCount} path${result.pathCount > 1 ? "s" : ""}`);
       let msg = `Imported ${parts.join(", ")}.`;
       if (result.skipped > 0) msg += ` ${result.skipped} feature${result.skipped > 1 ? "s" : ""} skipped.`;
-      setToastMsg(msg);
-      setTimeout(() => setToastMsg(null), 3000);
+      const diff = captureImportDiff(beforeM, beforeP);
+      queueImportUndo({ ...diff, lockToggled: false, text: msg });
     } catch (e) {
       if (e.message === "No file selected.") return;
       setToastMsg(e.message);
@@ -4971,6 +5004,20 @@ export default function Map() {
     setMapClickMenu(null);
     setDeleteAllAlert(true);
   };
+
+  // IonAlert closes on Escape but does not commit on Enter — wire Enter to
+  // the destructive button so keyboard users can confirm deletion.
+  useEffect(() => {
+    if (!deleteAllAlert) return;
+    const onKey = (e) => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      setDeleteAllAlert(false);
+      confirmDeleteAllFeatures();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [deleteAllAlert]);
 
   const confirmDeleteAllFeatures = () => {
     if (pendingDeleteRef.current) {
@@ -5065,6 +5112,58 @@ export default function Map() {
     setToastMsg({
       text: `${label} deleted`,
       action: { label: "Undo", onClick: undoPendingDelete },
+      __undo: token,
+    });
+  };
+
+  const pendingImportRef = useRef(null);
+
+  const undoPendingImport = () => {
+    const pending = pendingImportRef.current;
+    if (!pending) return;
+    if (pending.timerId) clearTimeout(pending.timerId);
+    pendingImportRef.current = null;
+    pending.paths.forEach((p) => performDeletePath(p));
+    pending.markers.forEach((m) => performDeleteMarker(m));
+    if (pending.lockToggled) {
+      featuresLockedRef.current = false;
+      setFeaturesLocked(false);
+      mapRef.current?.getContainer().classList.remove("features-locked");
+    }
+    setToastMsg(null);
+  };
+
+  const commitPendingImport = () => {
+    const pending = pendingImportRef.current;
+    if (!pending) return;
+    if (pending.timerId) clearTimeout(pending.timerId);
+    pendingImportRef.current = null;
+    setToastMsg((cur) =>
+      cur && typeof cur === "object" && cur.__undo === pending.token ? null : cur
+    );
+  };
+
+  useEffect(() => () => {
+    if (pendingImportRef.current) clearTimeout(pendingImportRef.current.timerId);
+  }, []);
+
+  const captureImportDiff = (beforeM, beforeP) => {
+    const newMarkers = markersRef.current.filter((m) => !beforeM.has(m));
+    const newPaths = pathsRef.current.filter((p) => !beforeP.has(p));
+    const sightSet = new Set(newPaths.flatMap((p) => p.sights || []));
+    return { markers: newMarkers.filter((m) => !sightSet.has(m)), paths: newPaths };
+  };
+
+  const queueImportUndo = ({ markers, paths, lockToggled, text }) => {
+    if (pendingImportRef.current) commitPendingImport();
+    const token = Symbol("undoImport");
+    const timerId = setTimeout(() => {
+      if (pendingImportRef.current?.token === token) commitPendingImport();
+    }, UNDO_MS);
+    pendingImportRef.current = { markers, paths, lockToggled, timerId, token };
+    setToastMsg({
+      text,
+      action: { label: "Undo", onClick: undoPendingImport },
       __undo: token,
     });
   };
@@ -8030,20 +8129,28 @@ export default function Map() {
       return;
     }
     const pp = getPanelPaddingForFitBounds();
-    const padding = {
-      top: 60,
-      right: 60,
-      bottom: 60 + (pp.bottom || 0),
-      left: 60 + (pp.left || 0),
-    };
     skipNextMoveBumpRef.current = true;
-    map.fitBounds(
+    const cam = map.cameraForBounds(
       [
         [region.west, region.south],
         [region.east, region.north],
       ],
-      { padding, duration: 600 },
+      {
+        padding: { top: 60, bottom: (pp.bottom || 0) + 60, left: (pp.left || 0) + 60, right: 60 },
+        bearing: map.getBearing(),
+        pitch: map.getPitch(),
+      },
     );
+    if (cam) {
+      map.flyTo({
+        center: cam.center,
+        zoom: cam.zoom,
+        bearing: cam.bearing,
+        pitch: cam.pitch,
+        offset: getPanelOffset(),
+        duration: 1500,
+      });
+    }
     const data = boundsToPolygon({
       north: region.north,
       south: region.south,

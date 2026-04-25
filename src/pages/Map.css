@@ -1139,7 +1139,7 @@ textarea.rename-modal-input {
     right: 0;
     bottom: 0;
     border-radius: 16px 16px 0 0;
-    padding: 0 10px calc(20px + env(safe-area-inset-bottom, 0px));
+    padding: 0 10px calc(10px + env(safe-area-inset-bottom, 0px));
     height: 25dvh;
     transform: translateY(0);
     transition: transform 0.3s ease, height 0.3s ease;
@@ -1158,7 +1158,7 @@ textarea.rename-modal-input {
   .panel-expanded {
     height: 50dvh;
     transform: translateY(0) !important;
-    padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
     transition: transform 0.3s ease, height 0.3s ease;
   }
 
@@ -1455,6 +1455,11 @@ textarea.rename-modal-input {
   z-index: 2;
   position: relative;
   touch-action: none;
+}
+
+/* Outside edit mode, hide intermediate vertices — only start/end remain. */
+.path-vertex.path-vertex-intermediate:not(.active-path-feature) {
+  display: none;
 }
 .path-vertex.not-draggable {
   cursor: alias !important;
