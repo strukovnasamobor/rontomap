@@ -8933,13 +8933,30 @@ export default function Map() {
           return haversinePoint(mapCenter.lat, mapCenter.lng, lat, lng);
         };
         const dir = offSortDir === "asc" ? 1 : -1;
-        const sortedRegions = [...offlineRegions]
-          .filter((r) => r.id !== downloadingRegion?.id)
-          .sort((a, b) => {
+        const baseSortItem =
+          offlineShowBase && offlineBaseMap
+            ? {
+                __isBase: true,
+                name: "Base map",
+                updatedAt: offlineBaseMap.updatedAt,
+                createdAt: offlineBaseMap.createdAt,
+              }
+            : null;
+        const regionItems = offlineShowRegions
+          ? [...offlineRegions].filter((r) => r.id !== downloadingRegion?.id)
+          : [];
+        let sortedRegions;
+        if (offSortField === "dist") {
+          // Distance is undefined for the global base map — pin it below regions, regardless of asc/desc.
+          const sorted = [...regionItems].sort((a, b) => dir * (distToCenter(a) - distToCenter(b)));
+          sortedRegions = baseSortItem ? [...sorted, baseSortItem] : sorted;
+        } else {
+          const items = baseSortItem ? [...regionItems, baseSortItem] : regionItems;
+          sortedRegions = items.sort((a, b) => {
             if (offSortField === "name") return dir * (a.name || "").localeCompare(b.name || "");
-            if (offSortField === "dist") return dir * (distToCenter(a) - distToCenter(b));
             return dir * ((a.updatedAt || a.createdAt || 0) - (b.updatedAt || b.createdAt || 0));
           });
+        }
         const formatRegionDate = (r) => {
           const t = r?.updatedAt || r?.createdAt;
           return t ? new Date(t).toLocaleDateString() : null;
@@ -9041,8 +9058,7 @@ export default function Map() {
               </ActionIconButton>
             </div>
             <div className="panel-list-items">
-              {/* Base map row is structurally pinned first; routing section is pinned last. Sort state reorders the middle regions list only. */}
-              {offlineShowBase && baseMapBlock}
+              {/* Sort state interleaves the base map with regions; routing section stays pinned last. */}
               {downloadingRegion && (
                 <div
                   className={`panel-list-item panel-list-item-downloading${shownRegionId === "__downloading__" ? " panel-list-item-active" : ""}`}
@@ -9078,11 +9094,13 @@ export default function Map() {
                   </div>
                 </div>
               )}
-              {offlineShowRegions && (
-                offlineRegions.length === 0 && !offlineBaseMap && !downloadingRegion ? (
-                  <div className="panel-list-empty">No offline maps yet.</div>
-                ) : (
-                  sortedRegions.map((r) => (
+              {sortedRegions.length === 0 && !downloadingRegion ? (
+                <div className="panel-list-empty">No offline maps yet.</div>
+              ) : (
+                sortedRegions.map((r) =>
+                  r.__isBase ? (
+                    baseMapBlock
+                  ) : (
                     <div
                       key={r.id}
                       className={`panel-list-item${shownRegionId === r.id ? " panel-list-item-active" : ""}`}
@@ -9119,7 +9137,7 @@ export default function Map() {
                         </>
                       )}
                     </div>
-                  ))
+                  ),
                 )
               )}
               {isNativeAndroid() && (
@@ -9151,7 +9169,7 @@ export default function Map() {
                       return (
                         <div
                           key={subKey}
-                          style={{ display: "flex", alignItems: "center", gap: 8, paddingLeft: 28, cursor: "pointer" }}
+                          style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 4px 10px 34px", cursor: "pointer" }}
                           onClick={() => setSelectedRoutingSubId((cur) => (cur === subKey ? null : subKey))}
                         >
                           <div className="panel-list-text" style={{ flex: 1 }}>
@@ -9209,7 +9227,7 @@ export default function Map() {
                     return (
                       <div
                         key={subKey}
-                        style={{ display: "flex", alignItems: "center", gap: 8, paddingLeft: 28, cursor: "pointer" }}
+                        style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 4px 10px 34px", cursor: "pointer" }}
                         onClick={() => setSelectedRoutingSubId((cur) => (cur === subKey ? null : subKey))}
                       >
                         <div className="panel-list-text" style={{ flex: 1 }}>
