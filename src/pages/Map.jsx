@@ -627,6 +627,8 @@ export default function Map() {
   const [routingSuggestions, setRoutingSuggestions] = useState([]);
   const [routingSuggestLoading, setRoutingSuggestLoading] = useState(false);
   const [routingProgress, setRoutingProgress] = useState(null);
+  const routingProgressRef = useRef(null);
+  useEffect(() => { routingProgressRef.current = routingProgress; }, [routingProgress]);
   const [routingExpanded, setRoutingExpanded] = useState(false);
 
   const offlineRegionHighlightCleanupRef = useRef(null);
@@ -7664,7 +7666,15 @@ export default function Map() {
         ...s,
         sizeBytes: await headPbfSize(s.pbfUrl),
       })));
-      setRoutingSuggestions(withSizes);
+      setRoutingSuggestions((prev) => {
+        // Keep an in-progress download/import in the list even if it's not in
+        // the new suggestions for the current view.
+        const activeId = routingProgressRef.current?.regionId;
+        if (!activeId) return withSizes;
+        if (withSizes.some((s) => s.id === activeId)) return withSizes;
+        const carry = prev.find((s) => s.id === activeId);
+        return carry ? [...withSizes, carry] : withSizes;
+      });
       if (withSizes.length === 0) {
         setToastMsg("No Geofabrik region covers the current view.");
         setTimeout(() => setToastMsg(null), 3000);
