@@ -627,6 +627,7 @@ export default function Map() {
   const [routingSuggestions, setRoutingSuggestions] = useState([]);
   const [routingSuggestLoading, setRoutingSuggestLoading] = useState(false);
   const [routingProgress, setRoutingProgress] = useState(null);
+  const [routingExpanded, setRoutingExpanded] = useState(false);
 
   const offlineRegionHighlightCleanupRef = useRef(null);
   const offlineDownloadModeRef = useRef(false);
@@ -4631,7 +4632,11 @@ export default function Map() {
 
   // Clear routing sub-selection when the offline panel closes.
   useEffect(() => {
-    if (!showOfflineMapsPanel) setSelectedRoutingSubId(null);
+    if (!showOfflineMapsPanel) {
+      setSelectedRoutingSubId(null);
+      setRoutingExpanded(false);
+      setRoutingSuggestions([]);
+    }
   }, [showOfflineMapsPanel]);
 
   // Dynamic toast position: 10px above feature panel in portrait
@@ -5191,6 +5196,8 @@ export default function Map() {
     persistSavedFeaturesRef.current?.();
     bumpFeaturesVersion();
     setToastMsg(null);
+    // Drop import params so a reload doesn't re-import duplicates.
+    window.history.replaceState({}, "", window.location.pathname);
   };
 
   useEffect(() => () => {
@@ -7980,7 +7987,7 @@ export default function Map() {
     setSelectedFeature(null);
     setSheetLevel(preferredSheetLevel.current);
     setShowOfflineMapsPanel(true);
-    setToastMsg("Map locked to north and flat for offline maps.");
+    setToastMsg("Map view prepared for offline maps.");
     setTimeout(() => setToastMsg(null), 3000);
   };
 
@@ -8177,6 +8184,8 @@ export default function Map() {
   const handleOfflineRegionClick = (region) => {
     const map = mapRef.current;
     if (!map) return;
+    setSelectedRoutingSubId(null);
+    setRoutingExpanded(false);
     if (shownRegionId === region.id) {
       clearOfflineRegionHighlight();
       return;
@@ -8981,7 +8990,11 @@ export default function Map() {
           <div
             key="base"
             className={`panel-list-item panel-list-item-base${shownRegionId === "__base__" ? " panel-list-item-active" : ""}`}
-            onClick={() => setShownRegionId((id) => (id === "__base__" ? null : "__base__"))}
+            onClick={() => {
+              setSelectedRoutingSubId(null);
+              setRoutingExpanded(false);
+              setShownRegionId((id) => (id === "__base__" ? null : "__base__"));
+            }}
           >
             <IonIcon icon={globeOutline} className="panel-list-icon" />
             <div className="panel-list-text">
@@ -9141,8 +9154,15 @@ export default function Map() {
                 )
               )}
               {isNativeAndroid() && (
-                <div className="panel-list-item" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <>
+                  <div
+                    className={`panel-list-item${routingExpanded ? " panel-list-item-active" : ""}`}
+                    onClick={() => {
+                      if (shownRegionId) clearOfflineRegionHighlight();
+                      setRoutingSuggestions([]);
+                      setRoutingExpanded((cur) => !cur);
+                    }}
+                  >
                     <IonIcon icon={navigateOutline} className="panel-list-icon" />
                     <div className="panel-list-text">
                       <span className="panel-list-name">Routing data</span>
@@ -9152,12 +9172,19 @@ export default function Map() {
                     </div>
                     <ActionIconButton
                       label={routingSuggestLoading ? "Loading…" : "Suggest for current view"}
-                      onClick={(e) => { e.stopPropagation(); handleSuggestRoutingRegions(); }}
+                      onClick={(e) => { e.stopPropagation(); setRoutingExpanded(true); handleSuggestRoutingRegions(); }}
                     >
-                      <IonIcon icon={searchOutline} />
+                      {routingSuggestLoading ? (
+                        <svg viewBox="0 0 36 36" className="action-spinner">
+                          <circle cx="18" cy="18" r="14" className="progress-circle-track" />
+                          <circle cx="18" cy="18" r="14" className="progress-circle-fill" strokeDasharray="87.96" strokeDashoffset="65.97" />
+                        </svg>
+                      ) : (
+                        <IonIcon icon={searchOutline} />
+                      )}
                     </ActionIconButton>
                   </div>
-                  {sortedRoutingSuggestions
+                  {routingExpanded && sortedRoutingSuggestions
                     .filter((s) => !routingRegions.some((r) => r.id === s.id))
                     .map((s) => {
                       const active = routingProgress?.regionId === s.id;
@@ -9169,10 +9196,14 @@ export default function Map() {
                       return (
                         <div
                           key={subKey}
-                          style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 4px 10px 34px", cursor: "pointer" }}
-                          onClick={() => setSelectedRoutingSubId((cur) => (cur === subKey ? null : subKey))}
+                          className={`panel-list-item${expanded ? " panel-list-item-active" : ""}`}
+                          style={{ paddingLeft: 34 }}
+                          onClick={() => {
+                            if (shownRegionId) clearOfflineRegionHighlight();
+                            setSelectedRoutingSubId((cur) => (cur === subKey ? null : subKey));
+                          }}
                         >
-                          <div className="panel-list-text" style={{ flex: 1 }}>
+                          <div className="panel-list-text">
                             <span className="panel-list-name">{s.name}</span>
                             <span className="panel-list-info">
                               {formatBytesGeofabrik(s.sizeBytes)} PBF
@@ -9202,19 +9233,17 @@ export default function Map() {
                               </ActionIconButton>
                             </div>
                           ) : (
-                            expanded && (
-                              <ActionIconButton
-                                label="Download routing data"
-                                onClick={(e) => { e.stopPropagation(); handleDownloadRoutingRegion(s); }}
-                              >
-                                <IonIcon icon={downloadOutline} />
-                              </ActionIconButton>
-                            )
+                            <ActionIconButton
+                              label="Download routing data"
+                              onClick={(e) => { e.stopPropagation(); handleDownloadRoutingRegion(s); }}
+                            >
+                              <IonIcon icon={downloadOutline} />
+                            </ActionIconButton>
                           )}
                         </div>
                       );
                     })}
-                  {sortedRoutingRegions.map((r) => {
+                  {routingExpanded && sortedRoutingRegions.map((r) => {
                     const active = routingProgress?.regionId === r.id;
                     const pct = active ? routingProgress.pct : null;
                     const indeterminate = active && pct != null && pct < 0;
@@ -9227,10 +9256,14 @@ export default function Map() {
                     return (
                       <div
                         key={subKey}
-                        style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 4px 10px 34px", cursor: "pointer" }}
-                        onClick={() => setSelectedRoutingSubId((cur) => (cur === subKey ? null : subKey))}
+                        className={`panel-list-item${expanded ? " panel-list-item-active" : ""}`}
+                        style={{ paddingLeft: 34 }}
+                        onClick={() => {
+                          if (shownRegionId) clearOfflineRegionHighlight();
+                          setSelectedRoutingSubId((cur) => (cur === subKey ? null : subKey));
+                        }}
                       >
-                        <div className="panel-list-text" style={{ flex: 1 }}>
+                        <div className="panel-list-text">
                           <span className="panel-list-name">{r.name || r.id}</span>
                           <span className="panel-list-info">
                             {formatBytesGeofabrik(r.sizeBytes)}{" \u00b7 car, bike, foot"}
@@ -9279,7 +9312,7 @@ export default function Map() {
                       </div>
                     );
                   })}
-                </div>
+                </>
               )}
             </div>
           </div>

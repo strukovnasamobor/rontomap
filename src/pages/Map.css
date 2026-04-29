@@ -1245,6 +1245,16 @@ textarea.rename-modal-input {
   background: rgba(0, 0, 0, 0.03);
 }
 
+.panel-list-item-active,
+.panel-list-item-active:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.panel-dark .panel-list-item-active,
+.panel-dark .panel-list-item-active:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
 .panel-list-item .panel-list-icon {
   flex-shrink: 0;
 }
@@ -1307,6 +1317,11 @@ textarea.rename-modal-input {
 .panel-dark .progress-circle-cancel { color: #eee; }
 
 .progress-circle svg.progress-circle-indeterminate {
+  animation: progress-circle-spin 1s linear infinite;
+}
+.action-spinner {
+  width: 18px;
+  height: 18px;
   animation: progress-circle-spin 1s linear infinite;
 }
 .progress-circle svg.progress-circle-indeterminate .progress-circle-fill {
