@@ -15,6 +15,7 @@
     }
   },
   "android": {
+    "path": "android-capacitor",
     "allowMixedContent": true,
     "backgroundColor": "#00000000"
   }

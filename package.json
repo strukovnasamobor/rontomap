@@ -8,8 +8,7 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "deploy": "vite build && firebase deploy --only hosting",
-    "postinstall": "powershell -ExecutionPolicy Bypass -File scripts/setup-android-junction.ps1"
+    "deploy": "vite build && firebase deploy --only hosting"
   },
   "dependencies": {
     "@capacitor-community/background-geolocation": "^1.2.26",
