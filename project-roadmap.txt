@@ -59,14 +59,12 @@ UPGRADES
 - tracing public paths, sync traced paths
 - Firebase App Check
 
-Ver. x.y.z (n)
+NEW VERSIONS
 - change version in build gradle
-* upgrades
-- test web (Desk., And. i iOS) + landscape
-- test PWA (Desk., And. i iOS) + landscape
-- test Android
+- test web (Desk., And. i iOS) on portrait and landscape
+- test PWA (Desk., And. i iOS) on portrait and landscape
+- test Android on portrait and landscape
 - Github add tag and upload apk and zipped dist folder
-- Google Play Store new edition
 
 TERMINOLOGY
 - Features - set of markers and paths on a map
