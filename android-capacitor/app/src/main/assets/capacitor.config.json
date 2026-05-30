@@ -3,6 +3,14 @@
 	"appName": "RontoMap",
 	"webDir": "dist",
 	"backgroundColor": "#00000000",
+	"server": {
+		"url": "https://rontomap.web.app",
+		"androidScheme": "https",
+		"allowNavigation": [
+			"rontomap.web.app"
+		],
+		"errorPath": "offline.html"
+	},
 	"plugins": {
 		"ScreenOrientation": {
 			"orientations": [

@@ -23,6 +23,11 @@ dist-ssr
 *.sln
 *.sw?
 
+# env files
+.env
+.env.local
+.env.production
+
 # Firebase
 .firebase/*
 firebase.js
@@ -31,6 +36,11 @@ firebase.js
 .google_play/*
 android/app/debug/*
 android/app/release/*
+android-capacitor/app/debug/*
+android-capacitor/app/release/*
+# Optional override of release signing credentials. The build falls back
+# to .google_play/signing-key-info.txt values if this file is absent.
+keystore.properties
 
 # Local settings
-.claude/settings.local.json
+.claude

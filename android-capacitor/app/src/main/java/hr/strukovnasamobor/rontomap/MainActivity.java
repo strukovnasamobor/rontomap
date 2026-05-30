@@ -1,6 +1,7 @@
 package hr.strukovnasamobor.rontomap;
 
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
@@ -10,8 +11,13 @@ import android.util.Base64;
 import android.view.View;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
+import android.webkit.CookieManager;
+import android.webkit.WebResourceError;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebSettings;
 import android.webkit.WebView;
 import com.getcapacitor.BridgeActivity;
+import com.getcapacitor.BridgeWebViewClient;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -68,7 +74,59 @@ public class MainActivity extends BridgeActivity {
         // view tree — some MIUI ROMs reset the WebView background mid-init.
         applyWebViewTransparent();
 
+        // Mode 2 (server.url): own WebSettings directly + install offline
+        // fallback. Must run after super.onCreate() so the bridge's WebView
+        // exists.
+        configureWebViewSettings();
+        installOfflineFallbackWebViewClient();
+
         handleDeepLink(getIntent());
+    }
+
+    private void configureWebViewSettings() {
+        if (getBridge() == null || getBridge().getWebView() == null) return;
+        final WebView wv = getBridge().getWebView();
+        final WebSettings s = wv.getSettings();
+
+        // Identify the native wrapper to the deployed site without depending
+        // on Capacitor's JS globals (which the site can also sniff, but UA is
+        // more robust across SW / fetch / server-side contexts).
+        String versionName = "0.0";
+        try {
+            versionName = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+        } catch (PackageManager.NameNotFoundException ignored) {}
+        s.setUserAgentString(s.getUserAgentString() + " RontoMap-Android/" + versionName);
+
+        // Explicit so OEM defaults don't surprise us.
+        s.setCacheMode(WebSettings.LOAD_DEFAULT);
+        s.setDomStorageEnabled(true);
+
+        // capacitor.config.json sets allowMixedContent: true => ALWAYS_ALLOW.
+        // For a hosted https origin, COMPATIBILITY is safer.
+        s.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
+        s.setAllowFileAccess(false);
+        s.setAllowFileAccessFromFileURLs(false);
+        s.setAllowUniversalAccessFromFileURLs(false);
+
+        // Third-party cookies (needed if the deployed site embeds cross-origin
+        // auth/iframes).
+        CookieManager cm = CookieManager.getInstance();
+        cm.setAcceptCookie(true);
+        cm.setAcceptThirdPartyCookies(wv, true);
+    }
+
+    private void installOfflineFallbackWebViewClient() {
+        if (getBridge() == null || getBridge().getWebView() == null) return;
+        final WebView wv = getBridge().getWebView();
+        wv.setWebViewClient(new BridgeWebViewClient(getBridge()) {
+            @Override
+            public void onReceivedError(WebView view, WebResourceRequest req, WebResourceError err) {
+                if (req != null && req.isForMainFrame()) {
+                    view.loadUrl("file:///android_asset/public/offline.html");
+                }
+                super.onReceivedError(view, req, err);
+            }
+        });
     }
 
     private void applyWebViewTransparent() {

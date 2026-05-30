@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>RontoMap — Offline</title>
+  <style>
+    html, body { height: 100%; margin: 0; background: #fff; color: #000;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    main { min-height: 100%; display: flex; flex-direction: column; align-items: center;
+      justify-content: center; padding: 24px; box-sizing: border-box; text-align: center; }
+    img.header { max-width: 80%; height: auto; max-height: 240px; margin-bottom: 32px; }
+    h1 { font-size: 20px; margin: 0 0 8px; font-weight: 600; }
+    p  { font-size: 15px; margin: 0 0 24px; opacity: 0.75; max-width: 28em; line-height: 1.4; }
+    button { background: #ff6f00; color: white; border: 0; border-radius: 6px;
+      padding: 12px 24px; font-size: 15px; font-weight: 600; cursor: pointer; }
+    button:active { opacity: 0.8; }
+  </style>
+</head>
+<body>
+  <main>
+    <img class="header" src="assets/header.png" alt="RontoMap">
+    <h1>No internet connection</h1>
+    <p>RontoMap loads its map and features from the network. Connect to the internet and try again.</p>
+    <button id="retry" type="button">Retry</button>
+  </main>
+  <script>
+    document.getElementById('retry').addEventListener('click', function () {
+      location.replace('https://rontomap.web.app/');
+    });
+  </script>
+</body>
+</html>
