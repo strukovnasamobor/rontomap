@@ -19,8 +19,11 @@ import android.webkit.WebView;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.BridgeWebViewClient;
 
+import org.json.JSONObject;
+
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 
 public class MainActivity extends BridgeActivity {
 
@@ -46,6 +49,17 @@ public class MainActivity extends BridgeActivity {
                             | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
                             | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
             );
+        }
+
+        // Draw into the display cutout (camera notch / punch-hole) on the short
+        // edges so the map fills the screen edge-to-edge on devices like Samsung,
+        // instead of being letterboxed below the camera. Web UI is kept clear of
+        // the cutout via CSS env(safe-area-inset-*). API 28+.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            android.view.WindowManager.LayoutParams lp = getWindow().getAttributes();
+            lp.layoutInDisplayCutoutMode =
+                    android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+            getWindow().setAttributes(lp);
         }
 
         // Transparent system bars so the map shows through. The nav-bar color
@@ -202,22 +216,43 @@ public class MainActivity extends BridgeActivity {
             // Read file bytes
             InputStream is = getContentResolver().openInputStream(uri);
             if (is == null) return;
+            // OOM guard: an import (GPX/KML/FIT/GeoJSON track) is at most a few
+            // MB. Refuse anything larger so a malicious/huge file can't exhaust
+            // memory (bytes are held in RAM, then ~1.33x again as base64).
+            final int MAX_IMPORT_BYTES = 25 * 1024 * 1024; // 25 MB ceiling
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             byte[] buffer = new byte[8192];
             int len;
             while ((len = is.read(buffer)) != -1) {
                 baos.write(buffer, 0, len);
+                if (baos.size() > MAX_IMPORT_BYTES) {
+                    is.close();
+                    return; // oversized — refuse the import
+                }
             }
             is.close();
             byte[] bytes = baos.toByteArray();
             String base64 = Base64.encodeToString(bytes, Base64.NO_WRAP);
 
-            // Escape for JS
-            String escapedName = fileName.replace("\\", "\\\\").replace("'", "\\'");
+            // Build the payload as JSON (escapes every field correctly), then
+            // base64 the whole thing so the injected JS string literal is pure
+            // [A-Za-z0-9+/=]. The (attacker-controllable) filename can therefore
+            // never break out of the literal and inject script into the web
+            // origin — which on Android has the native Capacitor bridge wired up.
+            JSONObject payload = new JSONObject();
+            payload.put("name", fileName);
+            payload.put("base64", base64);
+            String payloadB64 = Base64.encodeToString(
+                    payload.toString().getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
 
-            // Pass to WebView
-            final String js = "javascript:window.__importFileData={name:'" + escapedName + "',base64:'" + base64 + "'};window.dispatchEvent(new Event('rontomap-file-open'));";
-            getBridge().getWebView().post(() -> getBridge().getWebView().loadUrl(js));
+            // Pass to WebView. atob() yields a binary string; escape()+
+            // decodeURIComponent() reconstitutes the original UTF-8 JSON.
+            final String js =
+                "window.__importFileData = JSON.parse(decodeURIComponent(escape(atob('"
+                + payloadB64 + "'))));"
+                + "window.dispatchEvent(new Event('rontomap-file-open'));";
+            getBridge().getWebView().post(() ->
+                getBridge().getWebView().evaluateJavascript(js, null));
         } catch (Exception e) {
             e.printStackTrace();
         }

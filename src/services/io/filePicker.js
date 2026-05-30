@@ -12,7 +12,15 @@ export function pickFile() {
   return new Promise((resolve, reject) => {
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = ACCEPT;
+    // On Android/iOS WebView, an `accept` list of extensions is resolved to MIME
+    // types via the system MimeTypeMap. Our extensions (.rontojson, .fit, .gpx,
+    // .kml, .geojson) mostly have no registered MIME type, so the document picker
+    // greys them out and nothing can be selected. Skip the filter on native and
+    // rely on detectFormat() to validate the chosen file. Desktop browsers honor
+    // the extension filter literally, so keep it there for nicer UX.
+    if (!Capacitor.isNativePlatform()) {
+      input.accept = ACCEPT;
+    }
     input.style.display = "none";
     document.body.appendChild(input);
 
