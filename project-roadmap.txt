@@ -63,7 +63,6 @@ NEW VERSIONS
 - test web (Desk., And. i iOS) on portrait and landscape
 - test PWA (Desk., And. i iOS) on portrait and landscape
 - test Android on portrait and landscape
-- Github add tag and upload apk and zipped dist folder
 
 TERMINOLOGY
 - Features - set of markers and paths on a map

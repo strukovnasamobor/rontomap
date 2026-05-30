@@ -456,6 +456,11 @@ ion-icon.mapboxgl-ctrl-geocoder--icon-search {
   margin-right: 0 !important;
 }
 
+/* Never show the geocoder's built-in loading spinner. */
+.mapboxgl-ctrl-geocoder--icon-loading {
+  display: none !important;
+}
+
 .mapboxgl-user-location-dot:after {
   border: 3px solid var(--ion-color-tertiary) !important;
 }

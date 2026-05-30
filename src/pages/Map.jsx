@@ -3514,6 +3514,37 @@ export default function Map() {
           input?.focus();
         });
 
+        // Make the clear/"X" button deterministically close (collapse) the
+        // search on a single tap — including when the input is empty. The
+        // library's own clear() re-focuses the input right after clearing,
+        // which re-expands it; on touch devices that wins the race against the
+        // on("clear") setTimeout collapse below. Owning the tap in the capture
+        // phase (and stopping propagation) prevents that re-focus entirely.
+        const clearBtn = geocoderEl.querySelector(".mapboxgl-ctrl-geocoder--button");
+        const collapseGeocoder = () => {
+          const input = geocoderEl.querySelector("input");
+          input?.blur();
+          document.activeElement?.blur();
+          geocoderEl.classList.add("mapboxgl-ctrl-geocoder--collapsed");
+          geocoderOpenRef.current = false;
+        };
+        if (clearBtn) {
+          clearBtn.addEventListener(
+            "click",
+            (e) => {
+              const input = geocoderEl.querySelector("input");
+              const hadText = !!input?.value;
+              e.preventDefault();
+              e.stopImmediatePropagation();
+              // Reset the library's typeahead/selected state when there was a
+              // query; nothing to reset when empty.
+              if (hadText && geocoderRef.current) geocoderRef.current.clear();
+              collapseGeocoder();
+            },
+            true,
+          );
+        }
+
         // Replace Mapbox search SVG with Ionic icon
         const searchSvg = geocoderEl.querySelector(".mapboxgl-ctrl-geocoder--icon-search");
         if (searchSvg) {
