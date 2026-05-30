@@ -57,7 +57,6 @@ UPGRADES
 - login - sync offline regions, sync feature collections
 - finding and collaboration editing public paths
 - tracing public paths, sync traced paths
-- Firebase App Check
 
 NEW VERSIONS
 - change version in build gradle
