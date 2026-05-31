@@ -804,9 +804,9 @@ export default function Map() {
     return urlParams.get(param);
   };
 
-  // Add an "About" link to the attribution that opens the about alert
-  const addAboutLink = () => {
-    console.log("addAboutLink");
+  // Keep the attribution minimal by removing the default "Improve this map" link
+  const cleanupAttribution = () => {
+    console.log("cleanupAttribution");
     const tryAdd = () => {
       const el = mapRef.current?.getContainer()?.querySelector(".mapboxgl-ctrl-attrib-inner");
 
@@ -816,19 +816,7 @@ export default function Map() {
         return;
       }
 
-      // Prevent duplicates
-      if (el.querySelector(".rontomap-about-link")) return;
       el.innerHTML = el.innerHTML.replace("Improve this map", "");
-      el.appendChild(document.createTextNode(" | "));
-      const link = document.createElement("a");
-      link.className = "rontomap-about-link";
-      link.href = "#";
-      link.textContent = "About";
-      link.addEventListener("click", (e) => {
-        e.preventDefault();
-        setShowAbout(true);
-      });
-      el.appendChild(link);
     };
 
     tryAdd();
@@ -2225,7 +2213,7 @@ export default function Map() {
     // Listen for styledata changes
     mapRef.current.on("styledata", () => {
       console.log("Event > map > styledata");
-      addAboutLink();
+      cleanupAttribution();
     });
 
     // Custom location control
@@ -3515,35 +3503,64 @@ export default function Map() {
         });
 
         // Make the clear/"X" button deterministically close (collapse) the
-        // search on a single tap — including when the input is empty. The
-        // library's own clear() re-focuses the input right after clearing,
-        // which re-expands it; on touch devices that wins the race against the
-        // on("clear") setTimeout collapse below. Owning the tap in the capture
-        // phase (and stopping propagation) prevents that re-focus entirely.
-        const clearBtn = geocoderEl.querySelector(".mapboxgl-ctrl-geocoder--button");
+        // search on a single tap — including when the input is empty.
+        //
+        // Two library behaviors fight a simple collapse: its clear button runs
+        // clear() (which re-focuses the input), and it auto-EXPANDS on the
+        // input's "focus" and the container's "mouseenter" (both -> _unCollapse,
+        // lib/index.js). On touch devices, tapping X collapses the box but the
+        // synthesized mouse events and the soft-keyboard-dismiss refocus fire
+        // right after and re-trigger _unCollapse → the box "closes and reopens".
+        //
+        // We defend on three fronts: (1) own the X gesture in the CAPTURE phase
+        // and stop it so the library's click-clear never runs; (2) handle it on
+        // touchend with preventDefault so the compatibility mouse events (and
+        // thus the synthesized click/refocus) are never generated; (3) briefly
+        // re-assert the collapsed state to swallow any focus/enter that still
+        // slips through (e.g. keyboard-dismiss refocus).
+        let suppressReopenUntil = 0;
         const collapseGeocoder = () => {
           const input = geocoderEl.querySelector("input");
           input?.blur();
           document.activeElement?.blur();
           geocoderEl.classList.add("mapboxgl-ctrl-geocoder--collapsed");
           geocoderOpenRef.current = false;
+          suppressReopenUntil = Date.now() + 400;
         };
-        if (clearBtn) {
-          clearBtn.addEventListener(
-            "click",
-            (e) => {
-              const input = geocoderEl.querySelector("input");
-              const hadText = !!input?.value;
-              e.preventDefault();
-              e.stopImmediatePropagation();
-              // Reset the library's typeahead/selected state when there was a
-              // query; nothing to reset when empty.
-              if (hadText && geocoderRef.current) geocoderRef.current.clear();
-              collapseGeocoder();
-            },
-            true,
-          );
-        }
+        const onClearGesture = (e) => {
+          const btn = e.target.closest?.(".mapboxgl-ctrl-geocoder--button");
+          if (!btn || !geocoderEl.contains(btn)) return; // not the X button
+          const input = geocoderEl.querySelector("input");
+          const hadText = !!input?.value;
+          e.preventDefault();
+          e.stopImmediatePropagation(); // preempt the library's clear()+re-focus
+          // Reset the library's typeahead/selected state when there was a
+          // query; nothing to reset when empty.
+          if (hadText && geocoderRef.current) geocoderRef.current.clear();
+          collapseGeocoder();
+        };
+        // touchend fires before the synthesized click; preventDefault there
+        // stops the click/mousedown/refocus that would otherwise reopen it.
+        geocoderEl.addEventListener("touchend", onClearGesture, {
+          capture: true,
+          passive: false,
+        });
+        geocoderEl.addEventListener("click", onClearGesture, true);
+
+        // Re-assert collapse if the library tries to auto-expand within the
+        // short window right after an explicit close (touch refocus /
+        // synthesized mouseenter). Outside the window these are no-ops, so
+        // normal open-on-tap is unaffected.
+        const keepClosed = () => {
+          if (Date.now() >= suppressReopenUntil) return;
+          const input = geocoderEl.querySelector("input");
+          input?.blur();
+          geocoderEl.classList.add("mapboxgl-ctrl-geocoder--collapsed");
+        };
+        const geocoderInputEl = geocoderEl.querySelector("input");
+        geocoderInputEl?.addEventListener("focus", keepClosed);
+        geocoderEl.addEventListener("mouseenter", keepClosed);
+        geocoderEl.addEventListener("pointerenter", keepClosed);
 
         // Replace Mapbox search SVG with Ionic icon
         const searchSvg = geocoderEl.querySelector(".mapboxgl-ctrl-geocoder--icon-search");
@@ -3605,19 +3622,11 @@ export default function Map() {
       }
     });
 
-    geocoder.on("clear", () => {
-      // geocoder.clear() calls _inputEl.focus() after emitting "clear",
-      // which re-expands the input. Use setTimeout to collapse after focus.
-      setTimeout(() => {
-        const geocoderEl = document.querySelector(".mapboxgl-ctrl-geocoder");
-        if (geocoderEl) {
-          const input = geocoderEl.querySelector("input");
-          input?.blur();
-          document.activeElement?.blur();
-          geocoderEl.classList.add("mapboxgl-ctrl-geocoder--collapsed");
-        }
-      }, 10);
-    });
+    // NOTE: intentionally no geocoder.on("clear") auto-collapse. The library
+    // fires "clear" whenever the input becomes empty — including when the user
+    // backspaces the text away by hand — so collapsing here would close the box
+    // mid-edit. Closing is driven explicitly instead: by the X-button capture
+    // handler above (clear + collapse), the on("result") handler, and Esc.
 
     // Initialize custom location control
     locationControlRef.current = new LocationControl(geolocateRef.current, mapRef.current);
@@ -3702,7 +3711,24 @@ export default function Map() {
       const onAnyPointerDown = (e) => {
         // Any click/tap outside the expanded attribution collapses it —
         // including the map canvas, nav controls, map-style, menu, etc.
-        if (!attribEl.contains(e.target)) closeAttrib();
+        if (attribEl.contains(e.target)) return;
+        closeAttrib();
+        // If the dismiss tap lands on the bare map surface (not another
+        // control), swallow the click that follows so it only collapses the
+        // attribution — without opening the features list or being counted as
+        // a double-tap (which would toggle fullscreen).
+        const mapContainer = mapRef.current?.getContainer();
+        const onMapSurface =
+          mapContainer?.contains(e.target) && !e.target.closest(".mapboxgl-control-container");
+        if (!onMapSurface) return;
+        const swallowClick = (ev) => {
+          ev.stopPropagation();
+          ev.preventDefault();
+          document.removeEventListener("click", swallowClick, true);
+        };
+        document.addEventListener("click", swallowClick, true);
+        // Safety net: stop listening if no click follows (e.g. a drag).
+        setTimeout(() => document.removeEventListener("click", swallowClick, true), 400);
       };
       const observer = new MutationObserver(() => {
         const open = attribEl.classList.contains("mapboxgl-compact-show");
@@ -8620,6 +8646,8 @@ export default function Map() {
             <button onClick={() => { setIsSideMenuOpen(false); handleDeleteAllFeatures(); }}>Delete all features</button>
             <div className="side-menu-separator" />
             <button onClick={() => { setIsSideMenuOpen(false); handleOpenOfflineMaps(); }}>Offline maps</button>
+            <div className="side-menu-separator" />
+            <button onClick={() => { setIsSideMenuOpen(false); setShowAbout(true); }}>About</button>
           </div>
         </>
       )}
