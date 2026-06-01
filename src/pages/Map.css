@@ -632,6 +632,7 @@ ion-icon.mapboxgl-ctrl-geocoder--icon-search {
 }
 
 .side-menu-close {
+  position: relative; /* anchor the "Close Menu" tooltip to the button */
   width: 36px;
   height: 36px;
   border-radius: 4px;

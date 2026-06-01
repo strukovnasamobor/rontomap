@@ -8622,7 +8622,20 @@ export default function Map() {
             <div className="side-menu-header">
               <img src="/logo192.png" alt="" className="side-menu-logo" />
               <span className="side-menu-title">RontoMap</span>
-              <button className="side-menu-close" onClick={() => setIsSideMenuOpen(false)}>
+              <button
+                className="side-menu-close"
+                aria-label="Close Menu"
+                ref={(el) => {
+                  // Reuse the shared map-control tooltip (hover + mobile
+                  // long-press, dark-mode aware). The dataset guard prevents
+                  // re-adding if the ref callback runs more than once.
+                  if (el && !el.dataset.tipReady) {
+                    el.dataset.tipReady = "1";
+                    addMapControlTooltip(el, "Close Menu", "left");
+                  }
+                }}
+                onClick={() => setIsSideMenuOpen(false)}
+              >
                 <IonIcon icon={closeOutline} />
               </button>
             </div>
