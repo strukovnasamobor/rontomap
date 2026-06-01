@@ -350,6 +350,43 @@ function addMapControlTooltip(button, label, position = "left") {
 
 // Icon button used in the feature panel: shows a tooltip with the action name on
 // desktop hover and on touch long-press (long-press also suppresses the click).
+// Resolve the active service worker WITHOUT navigator.serviceWorker.ready.
+// In the Capacitor Android WebView the SW still intercepts fetches (so offline
+// viewing works) but `.ready` frequently never resolves — which hung every
+// offline operation (download / regions list / delete / rename) forever.
+// getRegistration() resolves in that environment; we also wait briefly for an
+// installing/waiting worker to activate, then time out instead of hanging.
+async function getActiveServiceWorker(timeoutMs = 6000) {
+  if (!("serviceWorker" in navigator)) return null;
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    if (!reg) return navigator.serviceWorker.controller || null;
+    if (reg.active) return reg.active;
+    const pending = reg.installing || reg.waiting;
+    if (!pending) return navigator.serviceWorker.controller || null;
+    return await new Promise((resolve) => {
+      let settled = false;
+      const done = (sw) => {
+        if (settled) return;
+        settled = true;
+        resolve(sw);
+      };
+      const timer = setTimeout(
+        () => done(reg.active || navigator.serviceWorker.controller || null),
+        timeoutMs,
+      );
+      pending.addEventListener("statechange", () => {
+        if (pending.state === "activated") {
+          clearTimeout(timer);
+          done(reg.active || pending);
+        }
+      });
+    });
+  } catch {
+    return navigator.serviceWorker.controller || null;
+  }
+}
+
 function ActionIconButton({ label, onClick, children, className = "action-icon-btn", ariaLabel }) {
   const [tooltipVisible, setTooltipVisible] = useState(false);
   const [tooltipStyle, setTooltipStyle] = useState(null);
@@ -7553,8 +7590,8 @@ export default function Map() {
   const refreshOfflineRegions = useCallback(async () => {
     if (!("serviceWorker" in navigator)) return [];
     try {
-      const reg = await navigator.serviceWorker.ready;
-      if (!reg.active) return [];
+      const sw = await getActiveServiceWorker();
+      if (!sw) return [];
       return await new Promise((resolve) => {
         const ch = new MessageChannel();
         const t = setTimeout(() => resolve([]), 3000);
@@ -7585,7 +7622,7 @@ export default function Map() {
           setOfflineRegions(userRegions);
           resolve(userRegions);
         };
-        reg.active.postMessage({ type: "GET_REGIONS" }, [ch.port2]);
+        sw.postMessage({ type: "GET_REGIONS" }, [ch.port2]);
       });
     } catch {
       return [];
@@ -8069,8 +8106,7 @@ export default function Map() {
   };
 
   const startRegionDownload = async (region, tileUrls, opts = {}) => {
-    const reg = await navigator.serviceWorker?.ready;
-    const sw = reg?.active;
+    const sw = await getActiveServiceWorker();
     if (!sw) {
       setIsDownloading(false);
       setDownloadProgress(null);
@@ -8101,8 +8137,8 @@ export default function Map() {
     } else {
       console.info(`[offline base] not present, downloading v${BASE_MAP_VERSION}`);
     }
-    const reg = await navigator.serviceWorker?.ready;
-    const sw = reg?.active;
+    const sw = await getActiveServiceWorker();
+    console.info(`[offline base] active service worker resolved: ${!!sw}`);
     if (!sw) {
       console.warn("[offline base] no active service worker");
       return false;
@@ -8377,8 +8413,7 @@ export default function Map() {
       setOfflineDeleteAlert(null);
       return;
     }
-    const reg = await navigator.serviceWorker?.ready;
-    const sw = reg?.active;
+    const sw = await getActiveServiceWorker();
     if (sw) sw.postMessage({ type: "DELETE_REGION", regionId: region.id });
     if (isNativeAndroid()) {
       try { await OfflineRouting.deleteRoutingData({ regionId: region.id }); } catch {}
@@ -8389,8 +8424,7 @@ export default function Map() {
   };
 
   const handleCancelDownload = async () => {
-    const reg = await navigator.serviceWorker?.ready;
-    const sw = reg?.active;
+    const sw = await getActiveServiceWorker();
     const regionId = currentDownloadRegionId;
     if (sw && regionId != null) {
       sw.postMessage({ type: "CANCEL_DOWNLOAD", regionId });
@@ -9473,8 +9507,7 @@ export default function Map() {
             text: "Delete all",
             role: "destructive",
             handler: async () => {
-              const reg = await navigator.serviceWorker?.ready;
-              const sw = reg?.active;
+              const sw = await getActiveServiceWorker();
               if (sw) sw.postMessage({ type: "DELETE_BASE_MAP" });
               if (isNativeAndroid()) {
                 for (const r of offlineRegions) {
@@ -9500,8 +9533,7 @@ export default function Map() {
             setRenameRegionTarget(null);
             return;
           }
-          const reg = await navigator.serviceWorker?.ready;
-          const sw = reg?.active;
+          const sw = await getActiveServiceWorker();
           if (sw) sw.postMessage({ type: "RENAME_REGION", regionId: target.id, name });
           setRenameRegionTarget(null);
         }}
