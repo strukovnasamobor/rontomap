@@ -25,13 +25,22 @@ setupIonicReact({
   mode: "md", // forces Material Design everywhere
 });
 
+// registerType is "autoUpdate" (vite.config.js): a newly-detected service
+// worker is activated and the page reloaded automatically. But the browser
+// only *checks* for a new SW on navigation, and the Android WebView keeps the
+// old SW alive across relaunches — so deploys weren't picked up without
+// clearing app data. Trigger an update check whenever the app returns to the
+// foreground so new deploys are detected and auto-applied on the next resume.
 registerSW({
-  onNeedRefresh() {
-    // Silent update: just reload the app
-    window.location.reload();
+  immediate: true,
+  onRegisteredSW(swUrl, registration) {
+    if (!registration) return;
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") registration.update().catch(() => {});
+    });
   },
   onOfflineReady() {
-    // App is ready to work offline, no action needed
+    // App is ready to work offline, no action needed.
   },
 });
 

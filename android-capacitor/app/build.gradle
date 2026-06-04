@@ -95,6 +95,11 @@ dependencies {
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'
 
     implementation 'androidx.core:core:1.17.0'
+
+    // ServiceWorkerControllerCompat / ServiceWorkerClientCompat / WebViewFeature —
+    // used to serve natively-downloaded offline map tiles back to the WebView's
+    // Mapbox GL JS by intercepting the service worker's tile fetches.
+    implementation "androidx.webkit:webkit:$androidxWebkitVersion"
 }
 
 apply from: 'capacitor.build.gradle'

@@ -8,6 +8,22 @@ const DB_NAME = "rontomap_offline";
 const DB_VERSION = 1;
 const REGIONS_STORE = "regions";
 
+// On the native Android wrapper, map tiles are downloaded and served by a
+// native foreground service + a ServiceWorker request interceptor (so they
+// survive backgrounding). The SW must NOT cache or store Mapbox tiles there,
+// or it would double-store.
+//
+// NOTE: the "RontoMap-Android/" UA suffix MainActivity sets is only visible to
+// the PAGE, not to this service-worker context (confirmed by spike S0). But the
+// Android System WebView token "; wv)" IS present in the SW's UA, and regular
+// mobile Chrome / installed PWAs don't include it — so we detect the native
+// wrapper by that. (The suffix is kept as a secondary signal in case the page
+// also runs this code path.)
+const SW_UA = (self.navigator && self.navigator.userAgent) || "";
+const IS_NATIVE = /;\s?wv\b/i.test(SW_UA) || SW_UA.includes("RontoMap-Android/");
+// Spike S0: confirm the SW resolves native correctly. Safe to remove later.
+console.info(`[sw] native=${IS_NATIVE} ua=${SW_UA}`);
+
 const PRECACHE_URLS = (self.__WB_MANIFEST || []).map((e) =>
   typeof e === "string" ? e : e.url,
 );
@@ -75,6 +91,11 @@ function normalizeCacheKey(url) {
     u.searchParams.delete("fresh");
     u.searchParams.delete("secure");
     u.searchParams.delete("events");
+    // Mapbox GL appends sdk=js-3.x (and sometimes optimize=) to style/sprite/
+    // glyph/TileJSON requests at runtime; download URLs don't carry these, so
+    // strip them or the cached entry won't match the runtime request.
+    u.searchParams.delete("sdk");
+    u.searchParams.delete("optimize");
     // Collapse retina variants (@2x, @3x) onto the non-retina path so a
     // runtime @2x request hits the cached @1x tile and vice versa.
     u.pathname = u.pathname.replace(/@[23]x(?=\.|$)/, "");
@@ -137,9 +158,12 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
       const keys = await caches.keys();
+      // On native, tiles live in the native store (filesDir), not Cache
+      // Storage — so reclaim the SW tile cache (orphaned on existing installs
+      // after the switch to native downloads). On web, keep it.
       await Promise.all(
         keys
-          .filter((k) => k !== APP_CACHE && k !== TILES_CACHE)
+          .filter((k) => k !== APP_CACHE && (IS_NATIVE || k !== TILES_CACHE))
           .map((k) => caches.delete(k)),
       );
 
@@ -204,6 +228,17 @@ self.addEventListener("fetch", (event) => {
 });
 
 async function handleMapboxRequest(request) {
+  if (IS_NATIVE) {
+    // Native owns tile storage + offline serving (the ServiceWorker request
+    // interceptor returns stored tiles from filesDir). Don't touch Cache
+    // Storage here; just fetch — the interceptor answers stored tiles, and a
+    // genuine miss while offline falls through to the 504 below.
+    try {
+      return await fetch(request);
+    } catch {
+      return new Response("", { status: 504, statusText: "Offline" });
+    }
+  }
   const cache = await caches.open(TILES_CACHE);
   const key = normalizeCacheKey(request.url);
   const cached = await cache.match(key);

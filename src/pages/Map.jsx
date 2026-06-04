@@ -2,6 +2,7 @@ import "./Map.css";
 import PageFixedLayout from "../components/PageFixedLayout";
 import Fullscreen from "../plugins/Fullscreen";
 import OfflineRouting from "../plugins/OfflineRouting";
+import TileDownload from "../plugins/TileDownload";
 import { calculateTileUrls, estimateOfflineDownload, recordActualDownload } from "../utils/offlineTiles";
 import { suggestRegions as suggestGeofabrikRegions, headPbfSize, formatBytes as formatBytesGeofabrik, pbfUrlForRegion } from "../utils/geofabrikIndex";
 import { useIonViewWillEnter, IonAlert, IonIcon } from "@ionic/react";
@@ -646,6 +647,10 @@ export default function Map() {
   const [currentDownloadRegionId, setCurrentDownloadRegionId] = useState(null);
   const [downloadingRegion, setDownloadingRegion] = useState(null);
   const downloadingRegionRef = useRef(null);
+  // Resolver for the in-flight base-map download promise (ensureBaseMap). Both
+  // the SW message path and the native tileProgress path resolve it via the
+  // unified offline-event handler, so base completion works on either backend.
+  const baseDownloadResolveRef = useRef(null);
   const [offlineDeleteAlert, setOfflineDeleteAlert] = useState(null);
   const [offlineBaseMap, setOfflineBaseMap] = useState(null);
   const [offlineBaseDeleteAlert, setOfflineBaseDeleteAlert] = useState(false);
@@ -7588,8 +7593,38 @@ export default function Map() {
   // ---- Offline maps ----
 
   const refreshOfflineRegions = useCallback(async () => {
-    if (!("serviceWorker" in navigator)) return [];
+    const processList = (list) => {
+      const base = list.find((r) => r.type === "base") || null;
+      const userRegions = list.filter((r) => r.type !== "base");
+      userRegions.forEach((r) => {
+        const maxByStyle = {};
+        if (Array.isArray(r.styleConfigs)) {
+          for (const c of r.styleConfigs) {
+            maxByStyle[c.styleId] = Math.max(maxByStyle[c.styleId] ?? 0, c.maxZoom);
+          }
+        }
+        const outdated =
+          !r.styleConfigs ||
+          buildOfflineStyleConfigs().some(
+            (c) => (maxByStyle[c.styleId] ?? 0) < c.maxZoom,
+          );
+        if (outdated) {
+          console.warn(
+            `[offline] region '${r.name}' is outdated \u2014 delete and re-download for full coverage`,
+          );
+        }
+      });
+      setOfflineBaseMap(base);
+      setOfflineRegions(userRegions);
+      return userRegions;
+    };
     try {
+      // Native Android: regions come from the TileDownload plugin (no SW).
+      if (isNativeAndroid()) {
+        const res = await TileDownload.getRegions();
+        return processList(res?.regions || []);
+      }
+      if (!("serviceWorker" in navigator)) return [];
       const sw = await getActiveServiceWorker();
       if (!sw) return [];
       return await new Promise((resolve) => {
@@ -7597,30 +7632,7 @@ export default function Map() {
         const t = setTimeout(() => resolve([]), 3000);
         ch.port1.onmessage = (e) => {
           clearTimeout(t);
-          const list = e.data?.regions || [];
-          const base = list.find((r) => r.type === "base") || null;
-          const userRegions = list.filter((r) => r.type !== "base");
-          userRegions.forEach((r) => {
-            const maxByStyle = {};
-            if (Array.isArray(r.styleConfigs)) {
-              for (const c of r.styleConfigs) {
-                maxByStyle[c.styleId] = Math.max(maxByStyle[c.styleId] ?? 0, c.maxZoom);
-              }
-            }
-            const outdated =
-              !r.styleConfigs ||
-              buildOfflineStyleConfigs().some(
-                (c) => (maxByStyle[c.styleId] ?? 0) < c.maxZoom,
-              );
-            if (outdated) {
-              console.warn(
-                `[offline] region '${r.name}' is outdated \u2014 delete and re-download for full coverage`,
-              );
-            }
-          });
-          setOfflineBaseMap(base);
-          setOfflineRegions(userRegions);
-          resolve(userRegions);
+          resolve(processList(e.data?.regions || []));
         };
         sw.postMessage({ type: "GET_REGIONS" }, [ch.port2]);
       });
@@ -7641,9 +7653,16 @@ export default function Map() {
   }, [showOfflineMapsPanel]);
 
   useEffect(() => {
-    if (!("serviceWorker" in navigator)) return;
-    const handler = (event) => {
-      const data = event.data;
+    // Unified offline-download event handler, fed by BOTH the service worker
+    // (web) and the native TileDownload plugin's "tileProgress" events
+    // (Android). Both backends emit the same message shapes.
+    const resolveBase = (ok) => {
+      if (baseDownloadResolveRef.current) {
+        baseDownloadResolveRef.current(ok);
+        baseDownloadResolveRef.current = null;
+      }
+    };
+    const handleOfflineEvent = (data) => {
       if (!data || !data.type) return;
       if (data.type === "DOWNLOAD_PROGRESS") {
         if (data.complete || data.done === 0 || (data.done % 100 === 0)) {
@@ -7653,17 +7672,25 @@ export default function Map() {
         }
         setDownloadProgress(data);
         if (data.regionId != null && !data.isBase) setCurrentDownloadRegionId(data.regionId);
-        if (data.complete && !data.isBase) {
-          const r = downloadingRegionRef.current;
-          recordActualDownload(data.done, data.sizeBytes, r?.styleConfigs);
-          downloadingRegionRef.current = null;
-          setIsDownloading(false);
-          setDownloadProgress(null);
-          setCurrentDownloadRegionId(null);
-          setDownloadingRegion(null);
-          setToastMsg("Offline map ready.");
-          setTimeout(() => setToastMsg(null), 3000);
-          refreshOfflineRegions().then(() => setShowOfflineMapsPanel(true));
+        if (data.complete) {
+          if (data.isBase) {
+            // Base map finished — let ensureBaseMap's promise proceed.
+            setDownloadingRegion(null);
+            setDownloadProgress(null);
+            refreshOfflineRegions();
+            resolveBase(true);
+          } else {
+            const r = downloadingRegionRef.current;
+            recordActualDownload(data.done, data.sizeBytes, r?.styleConfigs);
+            downloadingRegionRef.current = null;
+            setIsDownloading(false);
+            setDownloadProgress(null);
+            setCurrentDownloadRegionId(null);
+            setDownloadingRegion(null);
+            setToastMsg("Offline map ready.");
+            setTimeout(() => setToastMsg(null), 3000);
+            refreshOfflineRegions().then(() => setShowOfflineMapsPanel(true));
+          }
         }
       } else if (data.type === "DOWNLOAD_CANCELLED") {
         console.info(`[offline] download cancelled id=${data.regionId}`);
@@ -7672,6 +7699,7 @@ export default function Map() {
         setDownloadProgress(null);
         setCurrentDownloadRegionId(null);
         setDownloadingRegion(null);
+        resolveBase(false);
         refreshOfflineRegions();
       } else if (data.type === "DOWNLOAD_ERROR") {
         console.warn(
@@ -7682,6 +7710,7 @@ export default function Map() {
         setDownloadProgress(null);
         setCurrentDownloadRegionId(null);
         setDownloadingRegion(null);
+        resolveBase(false);
         setToastMsg("Download failed.");
         setTimeout(() => setToastMsg(null), 3000);
       } else if (data.type === "REGION_DELETED") {
@@ -7698,8 +7727,21 @@ export default function Map() {
         setTimeout(() => setToastMsg(null), 3000);
       }
     };
-    navigator.serviceWorker.addEventListener("message", handler);
-    return () => navigator.serviceWorker.removeEventListener("message", handler);
+
+    const swHandler = (event) => handleOfflineEvent(event.data);
+    const hasSW = "serviceWorker" in navigator;
+    if (hasSW) navigator.serviceWorker.addEventListener("message", swHandler);
+
+    let nativeListener = null;
+    if (isNativeAndroid()) {
+      TileDownload.addListener("tileProgress", (ev) => handleOfflineEvent(ev)).then(
+        (h) => { nativeListener = h; },
+      );
+    }
+    return () => {
+      if (hasSW) navigator.serviceWorker.removeEventListener("message", swHandler);
+      if (nativeListener) nativeListener.remove();
+    };
   }, [refreshOfflineRegions]);
 
   // ---- Offline routing (Android-only) ----
@@ -8106,6 +8148,19 @@ export default function Map() {
   };
 
   const startRegionDownload = async (region, tileUrls, opts = {}) => {
+    if (isNativeAndroid()) {
+      try {
+        await TileDownload.downloadRegion({ region, tileUrls, isUpdate: !!opts.isUpdate });
+        return true;
+      } catch (e) {
+        console.warn("[offline region] native start failed", e);
+        setIsDownloading(false);
+        setDownloadProgress(null);
+        setToastMsg("Download failed to start.");
+        setTimeout(() => setToastMsg(null), 2500);
+        return false;
+      }
+    }
     const sw = await getActiveServiceWorker();
     if (!sw) {
       setIsDownloading(false);
@@ -8137,11 +8192,13 @@ export default function Map() {
     } else {
       console.info(`[offline base] not present, downloading v${BASE_MAP_VERSION}`);
     }
-    const sw = await getActiveServiceWorker();
-    console.info(`[offline base] active service worker resolved: ${!!sw}`);
-    if (!sw) {
-      console.warn("[offline base] no active service worker");
-      return false;
+    // Backend readiness (web only — native uses the TileDownload plugin).
+    if (!isNativeAndroid()) {
+      const swReady = await getActiveServiceWorker();
+      if (!swReady) {
+        console.warn("[offline base] no active service worker");
+        return false;
+      }
     }
     let urls;
     try {
@@ -8176,29 +8233,27 @@ export default function Map() {
     };
     setDownloadingRegion(baseRegion);
     setShowOfflineMapsPanel(true);
+    // Resolution is driven by the unified offline-event handler (which calls
+    // baseDownloadResolveRef on base complete/error), so this works for both
+    // the SW and the native backend.
     return new Promise((resolve) => {
-      const handler = (event) => {
-        const d = event.data;
-        if (!d || !d.isBase) return;
-        if (d.type === "DOWNLOAD_PROGRESS" && d.complete) {
-          navigator.serviceWorker.removeEventListener("message", handler);
-          setDownloadingRegion(null);
-          setDownloadProgress(null);
-          refreshOfflineRegions();
-          resolve(true);
-        } else if (d.type === "DOWNLOAD_ERROR") {
-          navigator.serviceWorker.removeEventListener("message", handler);
-          setDownloadingRegion(null);
-          setDownloadProgress(null);
+      baseDownloadResolveRef.current = resolve;
+      if (isNativeAndroid()) {
+        TileDownload.downloadBaseMap({ region: baseRegion, tileUrls: urls }).catch((e) => {
+          console.warn("[offline base] native start failed", e);
+          baseDownloadResolveRef.current = null;
           resolve(false);
-        }
-      };
-      navigator.serviceWorker.addEventListener("message", handler);
-      sw.postMessage({
-        type: "DOWNLOAD_BASE_MAP",
-        region: baseRegion,
-        tileUrls: urls,
-      });
+        });
+      } else {
+        getActiveServiceWorker().then((sw) => {
+          if (!sw) {
+            baseDownloadResolveRef.current = null;
+            resolve(false);
+            return;
+          }
+          sw.postMessage({ type: "DOWNLOAD_BASE_MAP", region: baseRegion, tileUrls: urls });
+        });
+      }
     });
   }, [offlineBaseMap, refreshOfflineRegions]);
 
@@ -8413,10 +8468,12 @@ export default function Map() {
       setOfflineDeleteAlert(null);
       return;
     }
-    const sw = await getActiveServiceWorker();
-    if (sw) sw.postMessage({ type: "DELETE_REGION", regionId: region.id });
     if (isNativeAndroid()) {
+      try { await TileDownload.deleteRegion({ regionId: region.id }); } catch {}
       try { await OfflineRouting.deleteRoutingData({ regionId: region.id }); } catch {}
+    } else {
+      const sw = await getActiveServiceWorker();
+      if (sw) sw.postMessage({ type: "DELETE_REGION", regionId: region.id });
     }
     if (shownRegionId === region.id) clearOfflineRegionHighlight();
     setOfflineDeleteAlert(null);
@@ -8424,13 +8481,17 @@ export default function Map() {
   };
 
   const handleCancelDownload = async () => {
-    const sw = await getActiveServiceWorker();
     const regionId = currentDownloadRegionId;
-    if (sw && regionId != null) {
-      sw.postMessage({ type: "CANCEL_DOWNLOAD", regionId });
-    }
-    if (isNativeAndroid() && regionId != null) {
-      try { await OfflineRouting.deleteRoutingData({ regionId }); } catch {}
+    if (isNativeAndroid()) {
+      try { await TileDownload.cancel({ regionId }); } catch {}
+      if (regionId != null) {
+        try { await OfflineRouting.deleteRoutingData({ regionId }); } catch {}
+      }
+    } else {
+      const sw = await getActiveServiceWorker();
+      if (sw && regionId != null) {
+        sw.postMessage({ type: "CANCEL_DOWNLOAD", regionId });
+      }
     }
     setIsDownloading(false);
     setDownloadProgress(null);
@@ -9507,12 +9568,14 @@ export default function Map() {
             text: "Delete all",
             role: "destructive",
             handler: async () => {
-              const sw = await getActiveServiceWorker();
-              if (sw) sw.postMessage({ type: "DELETE_BASE_MAP" });
               if (isNativeAndroid()) {
+                try { await TileDownload.deleteBase(); } catch {}
                 for (const r of offlineRegions) {
                   try { await OfflineRouting.deleteRoutingData({ regionId: r.id }); } catch {}
                 }
+              } else {
+                const sw = await getActiveServiceWorker();
+                if (sw) sw.postMessage({ type: "DELETE_BASE_MAP" });
               }
               setOfflineBaseDeleteAlert(false);
               setTimeout(() => refreshOfflineRegions(), 500);
@@ -9533,8 +9596,13 @@ export default function Map() {
             setRenameRegionTarget(null);
             return;
           }
-          const sw = await getActiveServiceWorker();
-          if (sw) sw.postMessage({ type: "RENAME_REGION", regionId: target.id, name });
+          if (isNativeAndroid()) {
+            try { await TileDownload.renameRegion({ regionId: target.id, name }); } catch {}
+            refreshOfflineRegions();
+          } else {
+            const sw = await getActiveServiceWorker();
+            if (sw) sw.postMessage({ type: "RENAME_REGION", regionId: target.id, name });
+          }
           setRenameRegionTarget(null);
         }}
       />

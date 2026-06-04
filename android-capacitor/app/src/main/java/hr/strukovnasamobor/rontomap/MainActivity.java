@@ -11,11 +11,16 @@ import android.util.Base64;
 import android.view.View;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
+import android.util.Log;
 import android.webkit.CookieManager;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
+import androidx.webkit.ServiceWorkerClientCompat;
+import androidx.webkit.ServiceWorkerControllerCompat;
+import androidx.webkit.WebViewFeature;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.BridgeWebViewClient;
 
@@ -25,6 +30,11 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
+import okhttp3.ResponseBody;
+
 public class MainActivity extends BridgeActivity {
 
     @Override
@@ -33,6 +43,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(FullscreenPlugin.class);
         registerPlugin(DownloadPlugin.class);
         registerPlugin(OfflineRoutingPlugin.class);
+        registerPlugin(TileDownloadPlugin.class);
 
         super.onCreate(savedInstanceState);
 
@@ -93,8 +104,101 @@ public class MainActivity extends BridgeActivity {
         // exists.
         configureWebViewSettings();
         installOfflineFallbackWebViewClient();
+        installTileServiceWorkerInterceptor();
 
         handleDeepLink(getIntent());
+    }
+
+    // Map tiles for hosts Mapbox GL JS requests from.
+    private static boolean isMapboxTileHost(android.net.Uri uri) {
+        return uri != null && TileStore.isMapboxHost(uri.getHost());
+    }
+
+    // ---- Offline tile serving ------------------------------------------------
+    //
+    // Native-downloaded tiles live in filesDir/tiles (TileStore). They are
+    // served back to the WebView's Mapbox GL JS by intercepting the service
+    // worker's own tile fetches via ServiceWorkerControllerCompat (the primary
+    // path; WebViewClient.shouldInterceptRequest does NOT see SW traffic). The
+    // WebViewClient override below is a fallback for the rare case the SW isn't
+    // controlling the request / the feature is unsupported.
+    //
+    // The interceptor only SERVES tiles from the store; TileDownloadService is
+    // what populates it. (During the Phase 0 spike this was true to validate
+    // serving by browsing online — now off so we don't cache while just viewing.)
+    private static final boolean DEBUG_TILE_AUTOSTORE = false;
+
+    private static volatile OkHttpClient tileHttp;
+
+    private static OkHttpClient tileHttp() {
+        OkHttpClient c = tileHttp;
+        if (c == null) {
+            synchronized (MainActivity.class) {
+                c = tileHttp;
+                if (c == null) {
+                    c = new OkHttpClient.Builder()
+                            .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                            .readTimeout(25, java.util.concurrent.TimeUnit.SECONDS)
+                            .build();
+                    tileHttp = c;
+                }
+            }
+        }
+        return c;
+    }
+
+    /**
+     * Shared tile responder. Returns a stored tile, or (debug) fetches+stores
+     * and returns it, or null to let the request proceed normally.
+     * Runs off the UI thread (both ServiceWorkerClient and WebViewClient call
+     * shouldInterceptRequest on a background thread), so blocking I/O is fine.
+     */
+    private WebResourceResponse serveTile(WebResourceRequest req, String source) {
+        if (req == null) return null;
+        if (!"GET".equalsIgnoreCase(req.getMethod())) return null;
+        if (!isMapboxTileHost(req.getUrl())) return null;
+        final String url = req.getUrl().toString();
+        TileStore store = TileStore.get(this);
+
+        WebResourceResponse stored = store.responseForUrl(url);
+        if (stored != null) return stored;
+
+        if (!DEBUG_TILE_AUTOSTORE) return null;
+        try {
+            Request r = new Request.Builder().url(url).build();
+            try (Response resp = tileHttp().newCall(r).execute()) {
+                ResponseBody body = resp.body();
+                if (!resp.isSuccessful() || body == null) return null;
+                String contentType = resp.header("Content-Type", "application/octet-stream");
+                byte[] bytes = body.bytes();
+                store.put(TileStore.normalizeCacheKey(url), bytes, contentType);
+                return store.responseForUrl(url);
+            }
+        } catch (Exception e) {
+            Log.w("TileSpike", "auto-store fetch failed " + url + ": " + e.getMessage());
+            return null; // let the SW proceed to the network
+        }
+    }
+
+    private void installTileServiceWorkerInterceptor() {
+        boolean basic = WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_BASIC_USAGE);
+        boolean intercept = WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_SHOULD_INTERCEPT_REQUEST);
+        Log.i("TileSpike", "SW features basic=" + basic + " intercept=" + intercept);
+        if (!basic || !intercept) {
+            Log.w("TileSpike", "ServiceWorker intercept feature unsupported — relying on WebViewClient fallback");
+            return;
+        }
+        try {
+            ServiceWorkerControllerCompat.getInstance().setServiceWorkerClient(new ServiceWorkerClientCompat() {
+                @Override
+                public WebResourceResponse shouldInterceptRequest(WebResourceRequest request) {
+                    return serveTile(request, "sw");
+                }
+            });
+            Log.i("TileSpike", "ServiceWorkerClient installed");
+        } catch (Exception e) {
+            Log.w("TileSpike", "setServiceWorkerClient failed: " + e.getMessage());
+        }
     }
 
     private void configureWebViewSettings() {
@@ -133,6 +237,16 @@ public class MainActivity extends BridgeActivity {
         if (getBridge() == null || getBridge().getWebView() == null) return;
         final WebView wv = getBridge().getWebView();
         wv.setWebViewClient(new BridgeWebViewClient(getBridge()) {
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest req) {
+                // Fallback tile serving for requests not handled by the SW
+                // interceptor (e.g. feature unsupported). null → Capacitor's
+                // normal handling.
+                WebResourceResponse tile = serveTile(req, "wv");
+                if (tile != null) return tile;
+                return super.shouldInterceptRequest(view, req);
+            }
+
             @Override
             public void onReceivedError(WebView view, WebResourceRequest req, WebResourceError err) {
                 if (req != null && req.isForMainFrame()) {
