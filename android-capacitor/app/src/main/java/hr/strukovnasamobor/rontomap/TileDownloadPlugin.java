@@ -1,13 +1,8 @@
 package hr.strukovnasamobor.rontomap;
 
-import android.Manifest;
-import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
-import android.content.pm.PackageManager;
-import android.os.Build;
 
-import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import com.getcapacitor.JSArray;
@@ -64,7 +59,7 @@ public class TileDownloadPlugin extends Plugin {
             return;
         }
         Context ctx = getContext();
-        ensureNotificationPermission(); // so the foreground-service progress shows (Android 13+)
+        // POST_NOTIFICATIONS is requested app-wide in MainActivity.onCreate.
         try {
             long regionId = region.has("id") ? region.getLong("id") : 0;
             if (regionId <= 0) regionId = TileRegionStore.get(ctx).nextId();
@@ -93,17 +88,6 @@ public class TileDownloadPlugin extends Plugin {
             call.resolve(res);
         } catch (Exception e) {
             call.reject(e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage(), e);
-        }
-    }
-
-    private void ensureNotificationPermission() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return; // API 33+
-        Activity act = getActivity();
-        if (act == null) return;
-        if (ContextCompat.checkSelfPermission(act, Manifest.permission.POST_NOTIFICATIONS)
-                != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(
-                    act, new String[]{ Manifest.permission.POST_NOTIFICATIONS }, 4712);
         }
     }
 

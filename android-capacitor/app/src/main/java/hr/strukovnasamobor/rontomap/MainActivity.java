@@ -1,5 +1,6 @@
 package hr.strukovnasamobor.rontomap;
 
+import android.Manifest;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
@@ -18,6 +19,8 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 import androidx.webkit.ServiceWorkerClientCompat;
 import androidx.webkit.ServiceWorkerControllerCompat;
 import androidx.webkit.WebViewFeature;
@@ -44,8 +47,19 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(DownloadPlugin.class);
         registerPlugin(OfflineRoutingPlugin.class);
         registerPlugin(TileDownloadPlugin.class);
+        registerPlugin(RecordingNotificationPlugin.class);
 
         super.onCreate(savedInstanceState);
+
+        // Request notification permission app-wide (Android 13+) so the
+        // foreground-service notifications (tile download, routing import, and
+        // the background-location "recording" notification) can actually show.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                   != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this,
+                    new String[]{ Manifest.permission.POST_NOTIFICATIONS }, 4713);
+        }
 
         // Edge-to-edge: draw content behind the system bars so a transparent
         // nav/status bar actually reveals the map underneath (instead of the

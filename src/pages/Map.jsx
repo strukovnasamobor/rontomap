@@ -3,6 +3,7 @@ import PageFixedLayout from "../components/PageFixedLayout";
 import Fullscreen from "../plugins/Fullscreen";
 import OfflineRouting from "../plugins/OfflineRouting";
 import TileDownload from "../plugins/TileDownload";
+import RecordingNotification from "../plugins/RecordingNotification";
 import { calculateTileUrls, estimateOfflineDownload, recordActualDownload } from "../utils/offlineTiles";
 import { suggestRegions as suggestGeofabrikRegions, headPbfSize, formatBytes as formatBytesGeofabrik, pbfUrlForRegion } from "../utils/geofabrikIndex";
 import { useIonViewWillEnter, IonAlert, IonIcon } from "@ionic/react";
@@ -6456,6 +6457,8 @@ export default function Map() {
     recordingStartTimeRef.current = Date.now();
     recordingPauseAccumulatedRef.current = 0;
     recordingPauseStartRef.current = null;
+    // On-screen elapsed timer (the notification's elapsed is ticked natively by
+    // RecordingNotification so it keeps counting per-second while backgrounded).
     recordingTimerRef.current = setInterval(() => {
       const now = Date.now();
       const totalPaused = recordingPauseAccumulatedRef.current +
@@ -6480,6 +6483,10 @@ export default function Map() {
           const coord = [location.longitude, location.latitude];
           trackCoordsRef.current.push(coord);
           setRecordingDistance(haversineDistance(trackCoordsRef.current));
+          // Feed the live distance to the native notification (it ticks the time itself).
+          RecordingNotification.setStats({
+            distanceText: formatDistance(haversineDistance(trackCoordsRef.current)),
+          }).catch(() => {});
           const path = trackPathRef.current;
           const source = mapRef.current?.getSource(path.sourceId);
           if (source && trackCoordsRef.current.length >= 2) {
@@ -6505,6 +6512,11 @@ export default function Map() {
         },
       );
       bgWatcherIdRef.current = watcherId;
+      // Start the native per-second elapsed ticker on the recording notification.
+      RecordingNotification.start({
+        title: "Recording track",
+        distanceText: formatDistance(recordingDistance),
+      }).catch(() => {});
     }
 
     setToastMsg("Click stop tracking to pause recording.");
@@ -6515,6 +6527,7 @@ export default function Map() {
     setIsRecordingPaused(true);
     isRecordingPausedRef.current = true;
     recordingPauseStartRef.current = Date.now();
+    RecordingNotification.pause().catch(() => {});
     // Push undo snapshot on pause
     if (trackPathRef.current) {
       pathUndoStackRef.current.push({ trackCoords: trackCoordsRef.current.map((c) => [...c]) });
@@ -6532,6 +6545,7 @@ export default function Map() {
     }
     setIsRecordingPaused(false);
     isRecordingPausedRef.current = false;
+    RecordingNotification.resume().catch(() => {});
     // Mirror the click-handler flow: hide existing tracking icons first.
     locationControlRef.current?.hideTrackingIcons();
     locationControlRef.current?._handleTrackBearing();
@@ -6643,6 +6657,7 @@ export default function Map() {
     if (bgWatcherIdRef.current != null) {
       BackgroundGeolocation.removeWatcher({ id: bgWatcherIdRef.current });
       bgWatcherIdRef.current = null;
+      RecordingNotification.stop().catch(() => {});
     }
 
     // If bearing tracking is still active (e.g. user stopped from side menu while tracking),
@@ -8001,15 +8016,21 @@ export default function Map() {
       const b = getOfflineRectBounds();
       if (!b) return;
       const data = boundsToPolygon(b);
-      const dark = idMapStyleRef.current === "rontomap_streets_dark";
-      const rectColor = dark ? "#ff9933" : "#ff6f00";
+      // The Mapbox Standard dark style uses lightPreset "night", which darkens
+      // developer-added fill/line layers. Set emissive-strength: 1 so the
+      // overlay is self-lit and renders the literal orange in every style.
+      const rectColor = "#ff6f00";
       if (!map.getSource("offline-region-preview")) {
         map.addSource("offline-region-preview", { type: "geojson", data });
         map.addLayer({
           id: "offline-region-preview-fill",
           type: "fill",
           source: "offline-region-preview",
-          paint: { "fill-color": rectColor, "fill-opacity": 0.12 },
+          paint: {
+            "fill-color": rectColor,
+            "fill-emissive-strength": 1,
+            "fill-opacity": 0.12,
+          },
         });
         map.addLayer({
           id: "offline-region-preview-line",
@@ -8017,6 +8038,7 @@ export default function Map() {
           source: "offline-region-preview",
           paint: {
             "line-color": rectColor,
+            "line-emissive-strength": 1,
             "line-width": 2,
             "line-dasharray": [2, 2],
           },
@@ -8384,7 +8406,7 @@ export default function Map() {
           id: "offline-region-highlight-line",
           type: "line",
           source: "offline-region-highlight",
-          paint: { "line-color": "#ff6f00", "line-width": 3, "line-opacity": 0.9 },
+          paint: { "line-color": "#ff6f00", "line-emissive-strength": 1, "line-width": 3, "line-opacity": 0.9 },
         });
       } else {
         map.getSource("offline-region-highlight").setData(data);

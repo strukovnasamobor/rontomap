@@ -3,6 +3,7 @@ package hr.strukovnasamobor.rontomap;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
@@ -106,31 +107,38 @@ public class RoutingImportService extends Service {
 
     private void runImport(String regionId, String pbfUrl) {
         File pbfFile = null;
+        // Terminal notification state, resolved in finally (after stopForeground
+        // so the notification can be dismissible / show a non-download icon).
+        String terminalText = null;
+        boolean terminalIsError = false;
+        boolean removeNotification = false;
         try {
             File cacheDir = new File(getCacheDir(), "pbf");
             if (!cacheDir.exists()) cacheDir.mkdirs();
             pbfFile = new File(cacheDir, regionId + ".osm.pbf");
 
             downloadPbf(regionId, pbfUrl, pbfFile);
-            if (cancelled) { emitCancelled(regionId); cleanup(pbfFile); return; }
+            if (cancelled) { emitCancelled(regionId); removeNotification = true; cleanup(pbfFile); return; }
 
             importGraph(regionId, pbfFile);
-            if (cancelled) { emitCancelled(regionId); cleanup(pbfFile); return; }
+            if (cancelled) { emitCancelled(regionId); removeNotification = true; cleanup(pbfFile); return; }
 
             cleanup(pbfFile);
             ProgressBus.emit(regionId, "done", 0, 0, 100, "Routing data ready");
-            updateNotification("Routing data ready: " + regionId, 0, 0, false);
+            terminalText = "Routing data ready: " + regionId;
         } catch (OutOfMemoryError oom) {
             Log.e(TAG, "OOM during import for " + regionId, oom);
             ProgressBus.emit(regionId, "error", 0, 0, 0,
                 "Out of memory — region too large for this device. Try a smaller PBF.");
-            updateNotification("Routing import failed (OOM): " + regionId, 0, 0, false);
+            terminalText = "Routing import failed (OOM): " + regionId;
+            terminalIsError = true;
         } catch (Throwable t) {
             // If we were cancelled, the download loop throws "Cancelled" — emit
             // a distinct "cancelled" phase so the UI can say so rather than show
             // a generic error.
             if (cancelled) {
                 emitCancelled(regionId);
+                removeNotification = true;
                 cleanup(pbfFile);
             } else {
                 // Catch Throwable (not just Exception) so Errors like NoClassDefFoundError /
@@ -142,17 +150,26 @@ public class RoutingImportService extends Service {
                 StackTraceElement[] st = t.getStackTrace();
                 if (st != null && st.length > 0) msg = msg + " @ " + st[0].toString();
                 ProgressBus.emit(regionId, "error", 0, 0, 0, msg);
-                updateNotification("Routing import failed: " + regionId, 0, 0, false);
+                terminalText = "Routing import failed: " + regionId;
+                terminalIsError = true;
             }
         } finally {
-            try { stopForeground(STOP_FOREGROUND_DETACH); } catch (Throwable ignored) {}
+            if (removeNotification) {
+                try { stopForeground(STOP_FOREGROUND_REMOVE); } catch (Throwable ignored) {}
+            } else {
+                try { stopForeground(STOP_FOREGROUND_DETACH); } catch (Throwable ignored) {}
+                if (terminalText != null) {
+                    NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                    if (nm != null) nm.notify(NOTIFICATION_ID, buildDoneNotification(terminalText, terminalIsError));
+                }
+            }
             stopSelf();
         }
     }
 
     private void emitCancelled(String regionId) {
+        // Notification is cleared by the caller's finally (STOP_FOREGROUND_REMOVE).
         ProgressBus.emit(regionId, "cancelled", 0, 0, 0, "Download cancelled");
-        updateNotification("Routing download cancelled: " + regionId, 0, 0, false);
     }
 
     private void downloadPbf(String regionId, String url, File target) throws Exception {
@@ -283,13 +300,36 @@ public class RoutingImportService extends Service {
         nm.createNotificationChannel(ch);
     }
 
+    private PendingIntent contentIntent() {
+        Intent i = new Intent(this, MainActivity.class)
+            .setAction(Intent.ACTION_MAIN)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        return PendingIntent.getActivity(this, 0, i,
+            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+    }
+
+    /** Terminal (finished/failed) notification: non-download icon, dismissible. */
+    private Notification buildDoneNotification(String text, boolean isError) {
+        return new NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("RontoMap offline routing")
+            .setContentText(text)
+            .setSmallIcon(isError
+                ? android.R.drawable.stat_notify_error
+                : android.R.drawable.stat_sys_download_done)
+            .setOngoing(false)
+            .setAutoCancel(true)
+            .setContentIntent(contentIntent())
+            .build();
+    }
+
     private Notification buildNotification(String text, long done, long total, boolean indeterminate) {
         NotificationCompat.Builder b = new NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("RontoMap offline routing")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setOngoing(true)
-            .setOnlyAlertOnce(true);
+            .setOnlyAlertOnce(true)
+            .setContentIntent(contentIntent());
         if (total > 0) {
             int pct = (int) Math.min(100, (done * 100) / total);
             b.setProgress(100, pct, indeterminate);

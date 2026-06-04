@@ -3,6 +3,7 @@ package hr.strukovnasamobor.rontomap;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
@@ -136,6 +137,11 @@ public class TileDownloadService extends Service {
         final TileStore tiles = TileStore.get(this);
         final TileRegionStore regions = TileRegionStore.get(this);
         File urlsTmp = new File(urlsFile);
+        // Terminal notification state, resolved in finally (after stopForeground
+        // so the notification can be dismissible).
+        String terminalText = null;        // success/error → dismissible notification
+        boolean terminalIsError = false;
+        boolean removeNotification = false; // cancel → just clear it
         try {
             JSONObject region = new JSONObject(regionJson);
             region.put("id", regionId);
@@ -226,7 +232,7 @@ public class TileDownloadService extends Service {
                     regions.delete(regionId);
                 }
                 ProgressBus.emit(progressEvent("DOWNLOAD_CANCELLED", regionId, isBase));
-                updateNotification("Offline map download cancelled", 0, 0, false);
+                removeNotification = true;
                 return;
             }
 
@@ -237,21 +243,32 @@ public class TileDownloadService extends Service {
             regions.upsert(region);
 
             ProgressBus.emit(progress(regionId, total, total, failed.get(), true, isBase, finalSize));
-            updateNotification("Offline map ready", 0, 0, false);
+            terminalText = "Offline map ready";
         } catch (Throwable t) {
             if (cancelled) {
                 ProgressBus.emit(progressEvent("DOWNLOAD_CANCELLED", regionId, isBase));
+                removeNotification = true;
             } else {
                 Log.e(TAG, "tile download failed", t);
                 String msg = t.getMessage() != null ? t.getMessage() : t.getClass().getName();
                 JSONObject ev = progressEvent("DOWNLOAD_ERROR", regionId, isBase);
                 tryPut(ev, "message", msg);
                 ProgressBus.emit(ev);
+                terminalText = "Offline map download failed";
+                terminalIsError = true;
             }
         } finally {
             //noinspection ResultOfMethodCallIgnored
             urlsTmp.delete();
-            try { stopForeground(STOP_FOREGROUND_DETACH); } catch (Throwable ignored) {}
+            if (removeNotification) {
+                try { stopForeground(STOP_FOREGROUND_REMOVE); } catch (Throwable ignored) {}
+            } else {
+                try { stopForeground(STOP_FOREGROUND_DETACH); } catch (Throwable ignored) {}
+                if (terminalText != null) {
+                    NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                    if (nm != null) nm.notify(NOTIFICATION_ID, buildDoneNotification(terminalText, terminalIsError));
+                }
+            }
             stopSelf();
         }
     }
@@ -351,16 +368,39 @@ public class TileDownloadService extends Service {
         nm.createNotificationChannel(ch);
     }
 
+    private PendingIntent contentIntent() {
+        Intent i = new Intent(this, MainActivity.class)
+                .setAction(Intent.ACTION_MAIN)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        return PendingIntent.getActivity(this, 0, i,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+    }
+
     private Notification buildNotification(String text, long done, long total, boolean indeterminate) {
         NotificationCompat.Builder b = new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentTitle("RontoMap offline maps")
                 .setContentText(text)
                 .setSmallIcon(android.R.drawable.stat_sys_download)
                 .setOngoing(true)
-                .setOnlyAlertOnce(true);
+                .setOnlyAlertOnce(true)
+                .setContentIntent(contentIntent());
         if (total > 0) b.setProgress(100, (int) Math.min(100, (done * 100) / total), indeterminate);
         else b.setProgress(0, 0, indeterminate);
         return b.build();
+    }
+
+    /** Terminal (finished/failed) notification: non-download icon, dismissible. */
+    private Notification buildDoneNotification(String text, boolean isError) {
+        return new NotificationCompat.Builder(this, CHANNEL_ID)
+                .setContentTitle("RontoMap offline maps")
+                .setContentText(text)
+                .setSmallIcon(isError
+                        ? android.R.drawable.stat_notify_error
+                        : android.R.drawable.stat_sys_download_done)
+                .setOngoing(false)
+                .setAutoCancel(true)
+                .setContentIntent(contentIntent())
+                .build();
     }
 
     private void updateNotification(String text, long done, long total, boolean indeterminate) {
