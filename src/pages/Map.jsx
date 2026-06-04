@@ -1041,10 +1041,11 @@ export default function Map() {
   };
 
   const formatRecordingDuration = (seconds) => {
-    const total = Math.max(0, Math.floor((seconds ?? 0) / 60));
-    const hrs = Math.floor(total / 60);
-    const mins = total % 60;
-    return `${String(hrs).padStart(2, "0")}:${String(mins).padStart(2, "0")}`;
+    const total = Math.max(0, Math.floor(seconds ?? 0));
+    const hrs = Math.floor(total / 3600);
+    const mins = Math.floor((total % 3600) / 60);
+    const secs = total % 60;
+    return `${String(hrs).padStart(2, "0")}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
   };
 
   const formatETA = (seconds) => {
@@ -8957,9 +8958,9 @@ export default function Map() {
           )}
           {isRecordingStarted && (
             <div className="route-info">
-              <span>{formatDistance(recordingDistance)}</span>
-              <span className="route-info-separator">&middot;</span>
               <span>{formatRecordingDuration(recordingElapsed)}</span>
+              <span className="route-info-separator">&middot;</span>
+              <span>{formatDistance(recordingDistance)}</span>
             </div>
           )}
         </div>
