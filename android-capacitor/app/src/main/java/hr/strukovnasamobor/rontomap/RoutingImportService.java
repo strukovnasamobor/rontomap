@@ -40,7 +40,8 @@ public class RoutingImportService extends Service {
 
     private static final String TAG = "RoutingImportService";
     private static final String CHANNEL_ID = "rontomap_routing_import";
-    private static final int NOTIFICATION_ID = 4711;
+    private static final int NOTIFICATION_ID = 4711;       // ongoing progress (foreground)
+    private static final int DONE_NOTIFICATION_ID = 4716;  // standalone "finished" notification
 
     public static final String EXTRA_REGION_ID = "regionId";
     public static final String EXTRA_PBF_URL = "pbfUrl";
@@ -90,11 +91,16 @@ public class RoutingImportService extends Service {
             startForeground(NOTIFICATION_ID, initial);
         }
 
+        // Clear any prior "finished" notification from a previous import.
+        NotificationManager nmStart = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nmStart != null) nmStart.cancel(DONE_NOTIFICATION_ID);
+
         if (worker != null && worker.isAlive()) {
             Log.w(TAG, "import already running — ignoring new request for " + regionId);
             return START_NOT_STICKY;
         }
-        worker = new Thread(() -> runImport(regionId, pbfUrl), "RoutingImport-" + regionId);
+        final int sid = startId;
+        worker = new Thread(() -> runImport(regionId, pbfUrl, sid), "RoutingImport-" + regionId);
         worker.start();
         return START_NOT_STICKY;
     }
@@ -105,7 +111,7 @@ public class RoutingImportService extends Service {
         super.onDestroy();
     }
 
-    private void runImport(String regionId, String pbfUrl) {
+    private void runImport(String regionId, String pbfUrl, int startId) {
         File pbfFile = null;
         // Terminal notification state, resolved in finally (after stopForeground
         // so the notification can be dismissible / show a non-download icon).
@@ -154,16 +160,18 @@ public class RoutingImportService extends Service {
                 terminalIsError = true;
             }
         } finally {
-            if (removeNotification) {
-                try { stopForeground(STOP_FOREGROUND_REMOVE); } catch (Throwable ignored) {}
-            } else {
-                try { stopForeground(STOP_FOREGROUND_DETACH); } catch (Throwable ignored) {}
-                if (terminalText != null) {
-                    NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-                    if (nm != null) nm.notify(NOTIFICATION_ID, buildDoneNotification(terminalText, terminalIsError));
-                }
+            // Remove the ongoing/foreground progress notification, then (on
+            // success/error) post the "finished" state as a SEPARATE standalone
+            // notification id — decoupled from the foreground-service lifecycle
+            // so the finished status reliably appears.
+            try { stopForeground(STOP_FOREGROUND_REMOVE); } catch (Throwable ignored) {}
+            if (!removeNotification && terminalText != null) {
+                NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                if (nm != null) nm.notify(DONE_NOTIFICATION_ID, buildDoneNotification(terminalText, terminalIsError));
             }
-            stopSelf();
+            Log.i(TAG, "routing import terminal: text=" + terminalText
+                    + " error=" + terminalIsError + " removed=" + removeNotification);
+            stopSelf(startId);
         }
     }
 

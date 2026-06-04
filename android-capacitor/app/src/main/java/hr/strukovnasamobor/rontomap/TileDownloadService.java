@@ -49,7 +49,8 @@ public class TileDownloadService extends Service {
 
     private static final String TAG = "TileDownloadService";
     private static final String CHANNEL_ID = "rontomap_tile_download";
-    private static final int NOTIFICATION_ID = 4712;
+    private static final int NOTIFICATION_ID = 4712;       // ongoing progress (foreground)
+    private static final int DONE_NOTIFICATION_ID = 4715;  // standalone "finished" notification
 
     private static final int CONCURRENCY = 6;
     private static final int FETCH_RETRIES = 5;        // => 6 attempts
@@ -99,6 +100,9 @@ public class TileDownloadService extends Service {
         }
 
         ensureChannel();
+        // Clear any prior "finished" notification from a previous download.
+        NotificationManager nmStart = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nmStart != null) nmStart.cancel(DONE_NOTIFICATION_ID);
         Notification initial = buildNotification("Preparing offline map…", 0, 0, true);
         if (Build.VERSION.SDK_INT >= 29) startForeground(NOTIFICATION_ID, initial, 1 /* DATA_SYNC */);
         else startForeground(NOTIFICATION_ID, initial);
@@ -111,7 +115,8 @@ public class TileDownloadService extends Service {
             return START_NOT_STICKY;
         }
         cancelled = false;
-        worker = new Thread(() -> run(op, regionId, regionJson, urlsFile, isUpdate), "TileDownload-" + regionId);
+        final int sid = startId;
+        worker = new Thread(() -> run(op, regionId, regionJson, urlsFile, isUpdate, sid), "TileDownload-" + regionId);
         worker.start();
         return START_NOT_STICKY;
     }
@@ -132,7 +137,7 @@ public class TileDownloadService extends Service {
         return http;
     }
 
-    private void run(String op, long regionId, String regionJson, String urlsFile, boolean isUpdate) {
+    private void run(String op, long regionId, String regionJson, String urlsFile, boolean isUpdate, int startId) {
         final boolean isBase = "base".equals(op);
         final TileStore tiles = TileStore.get(this);
         final TileRegionStore regions = TileRegionStore.get(this);
@@ -260,16 +265,22 @@ public class TileDownloadService extends Service {
         } finally {
             //noinspection ResultOfMethodCallIgnored
             urlsTmp.delete();
-            if (removeNotification) {
-                try { stopForeground(STOP_FOREGROUND_REMOVE); } catch (Throwable ignored) {}
-            } else {
-                try { stopForeground(STOP_FOREGROUND_DETACH); } catch (Throwable ignored) {}
-                if (terminalText != null) {
-                    NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-                    if (nm != null) nm.notify(NOTIFICATION_ID, buildDoneNotification(terminalText, terminalIsError));
-                }
+            // Always remove the ongoing/foreground progress notification, then
+            // (on success/error) post the "finished" state as a SEPARATE,
+            // standalone notification id. This decouples "done" from the
+            // foreground-service lifecycle (STOP_FOREGROUND_DETACH + same-id
+            // re-notify is dropped by some OEMs / raced by the base→region
+            // teardown), so the finished status reliably appears.
+            try { stopForeground(STOP_FOREGROUND_REMOVE); } catch (Throwable ignored) {}
+            if (!removeNotification && terminalText != null) {
+                NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                if (nm != null) nm.notify(DONE_NOTIFICATION_ID, buildDoneNotification(terminalText, terminalIsError));
             }
-            stopSelf();
+            Log.i(TAG, "tile download terminal: text=" + terminalText
+                    + " error=" + terminalIsError + " removed=" + removeNotification);
+            // stopSelf(startId): don't tear down if a newer start (e.g. the
+            // region download after the base) has already arrived.
+            stopSelf(startId);
         }
     }
 
