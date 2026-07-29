@@ -28,12 +28,11 @@ id | action                         | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10| 11
 24 | add marker here (context menu) | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | 
 25 | add sight here (context menu)  | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
 26 | create path here (context menu)| - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
- - | in offline mode                | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
- - | back button                    | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
 =============================================================================================================================================
- * | panels have multiple actions and side actions for panel items
- - | action is not allowed
- + | action is allowed
+ * | panels have multiple actions and side actions
+ - | to be determinated
+ n | action is not allowed
+ y | action is allowed
  S | previous action is stopped with no alert
  A | previous action is stopped with with alert
 ==========================================================================================================
