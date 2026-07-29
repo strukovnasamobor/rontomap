@@ -1,0 +1,44 @@
+  {
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:22",
+  "waitFor": "onCreateCommand",
+  "updateContentCommand": "npm install",
+  "postCreateCommand": "",
+  "postAttachCommand": {
+    "server": "npm start"
+  },
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "workbench.colorTheme": "Tomorrow Night Blue",
+        "workbench.iconTheme": "monospace-icons",
+        "cmake.showOptionsMovedNotification": false,
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "editor.formatOnSave": true,
+        "editor.formatOnType": true,
+        "editor.formatOnPaste": true,
+        "git.enableSmartCommit": true,
+        "git.confirmSync": false,
+        "window.menuBarVisibility": "visible",
+        "terminal.integrated.focusAfterRun": "terminal",
+        "files.autoSave": "afterDelay"
+      },
+      "extensions": [
+        "esbenp.prettier-vscode",
+        "NuclleaR.vscode-extension-auto-import",
+        "github.copilot-chat",
+        "ms-vsliveshare.vsliveshare",
+        "keksiqc.idx-monospace-theme"
+      ]
+    },
+    "codespaces": {
+      "openFiles": ["README.md"]
+    }
+  },
+  "portsAttributes": {
+    "3000": {
+      "label": "Application",
+      "onAutoForward": "openPreview"
+    }
+  },
+  "forwardPorts": [3000]
+}

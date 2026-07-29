@@ -1,0 +1,9 @@
+{
+  "recommendations": [
+    "esbenp.prettier-vscode",
+    "NuclleaR.vscode-extension-auto-import",
+    "github.copilot-chat",
+    "ms-vsliveshare.vsliveshare",
+    "keksiqc.idx-monospace-theme"
+  ]
+}

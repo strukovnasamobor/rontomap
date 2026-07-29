@@ -3532,7 +3532,7 @@ export default function Map() {
         const logoSpan = document.createElement("span");
         logoSpan.className = "mapboxgl-ctrl-icon";
         logoSpan.style.cssText =
-          "background-image: url('/logo512_nobg.png') !important; background-size: 29px 29px !important;";
+          "background-image: url('/icons/icon-512-nobg.png') !important; background-size: 29px 29px !important;";
 
         logoBtn.appendChild(logoSpan);
         addMapControlTooltip(logoBtn, "Open in RontoMap", "right");
@@ -8738,7 +8738,7 @@ export default function Map() {
             className={`side-menu${idMapStyle === "rontomap_streets_dark" ? " side-menu-dark" : ""}`}
           >
             <div className="side-menu-header">
-              <img src="/logo192.png" alt="" className="side-menu-logo" />
+              <img src="/icons/icon-192.png" alt="" className="side-menu-logo" />
               <span className="side-menu-title">RontoMap</span>
               <button
                 className="side-menu-close"
