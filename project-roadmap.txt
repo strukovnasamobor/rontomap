@@ -1,3 +1,4 @@
+- fix import path by link
 PARALLEL ACTIONS
 - https://docs.google.com/spreadsheets/d/1no5W-1mDotm4eKghzjjsqetgft5C3l7uLmeSO7iH2jw/edit?gid=1762517575#gid=1762517575
 id | action                         | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10| 11| 12| 13| 14| 15| 16| 17| 18| 19| 20| 21| 22| 23| 24| 25| 26|
@@ -39,7 +40,6 @@ id | action                         | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10| 11
 - in recording path start tracking user bearing same as clicking start/resume, on start show toast msg "Click stop tracking to pause recording". 
   elapsed time in format hh:mm (do not count time in pause ?), on geolocate remove tost msg "recording paused",
   tracking info at bottom
-- back button on mobile actions (one action undo and second time whole panels closes)
 - vite.config.js - Set to true in production for logs
 
 ==============================================================================================================================================================
