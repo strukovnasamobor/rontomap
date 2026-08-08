@@ -1,6 +1,6 @@
 - fix import path by link
 - fix features stays hidden on layout change
-- on start/resume recording path remove toast msg "Click ...", remove undo/redo buttons, when recording add to the right pause button, clicking start/stop tracking bearing do nothing, postion icon in front of blue recorded line (remove blue square)
+- on start/resume recording path remove toast msg "Click ...", time in format hh:mm, remove undo/redo buttons, when recording add to the right pause button, clicking start/stop tracking bearing do nothing, position location icon in front of blue recorded line (remove blue square), when stopped recording path save it and show toast msg with undo option
 
 PARALLEL ACTIONS
 - https://docs.google.com/spreadsheets/d/1no5W-1mDotm4eKghzjjsqetgft5C3l7uLmeSO7iH2jw/edit?gid=1762517575#gid=1762517575
@@ -52,7 +52,7 @@ Free (no ads) and simple 3D map for orientation (online and offline), for naviga
 UPGRADES
 - add features pictures (indexDB <=> Firestore, export/import)
 - show icon of path for foot, bike, car, add filter
-- organize feature collections in maps (show imported in one map date-time, actions on maps)
+- organize feature collections as maps (show imported in one map date-time, add actions on f.c. = maps, remove options from side menu)
 - public collection - allow rating, comments, report, traced data, show public features depending of zoom, ratings and traced dsta
 - login - sync offline regions, route data, feature collections, traced paths
 
