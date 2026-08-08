@@ -1,6 +1,6 @@
 - fix import path by link
 - fix features stays hidden on layout change
-- on start/resume recording path remove toast msg "Click ...", remove undo/redo buttons, when recording add to the right pause button, clicking start/stop tracking bearing do nothing
+- on start/resume recording path remove toast msg "Click ...", remove undo/redo buttons, when recording add to the right pause button, clicking start/stop tracking bearing do nothing, postion icon in front of blue recorded line (remove blue square)
 
 PARALLEL ACTIONS
 - https://docs.google.com/spreadsheets/d/1no5W-1mDotm4eKghzjjsqetgft5C3l7uLmeSO7iH2jw/edit?gid=1762517575#gid=1762517575
