@@ -5459,24 +5459,13 @@ export default function Map() {
     setMapClickMenu(null);
   };
 
+  // Same operation as the panel's "Detach sight", just reached from the marker
+  // menu — defined below in this component, so it is bound by the time a click
+  // can run this handler.
   const handleDetachSight = () => {
-    const marker = markerMenu.marker;
-    const path = marker._sightPath;
-    if (path && path.sights) {
-      path.sights = path.sights.filter((m) => m !== marker);
-    }
-    // Replace blue sight with orange marker
-    const pos = marker.getLngLat();
-    const name = marker._markerName;
-    const draggable = marker.isDraggable();
-    marker.remove();
-    markersRef.current = markersRef.current.filter((m) => m !== marker);
-    const newMarker = createMarkerRef.current(pos, "#ff6f00");
-    if (name) {
-      newMarker._markerName = name;
-      updateMarkerLabel(newMarker);
-    }
-    if (!draggable) newMarker.setDraggable(false);
+    const marker = markerMenu?.marker;
+    if (!marker) return;
+    handleFeatureDetachSight(marker);
     setMarkerMenu(null);
   };
 
@@ -5492,6 +5481,11 @@ export default function Map() {
     // Replace marker with sight
     const name = marker._markerName;
     const draggable = marker.isDraggable();
+    const description = marker._description;
+    const hidden = !!marker._hidden;
+    // A sight has no bookmark of its own — it is persisted inside its path — so
+    // a bookmarked marker keeps its bookmark by bookmarking the path it joins.
+    const wasSaved = !!marker._saved;
     marker.remove();
     markersRef.current = markersRef.current.filter((m) => m !== marker);
     const newMarker = createMarkerRef.current(sightPos, "#0091ff");
@@ -5499,6 +5493,8 @@ export default function Map() {
     newMarker._sightPath = path;
     newMarker._segmentIndex = snap.segmentIndex;
     newMarker._t = snap.t;
+    if (description) newMarker._description = description;
+    if (hidden) newMarker._hidden = true;
     if (name) {
       newMarker._markerName = name;
       updateMarkerLabel(newMarker);
@@ -5516,11 +5512,21 @@ export default function Map() {
     if (!draggable) newMarker.setDraggable(false);
     if (!path.sights) path.sights = [];
     path.sights.push(newMarker);
+    let promotedPath = false;
+    if (wasSaved && !path._saved) {
+      path._saved = true;
+      if (!path._id) path._id = generateFeatureId();
+      promotedPath = true;
+    }
+    // Persist whenever storage is affected: the path gained a sight, and/or the
+    // marker's own saved entry has to go (it lives in the path now).
+    if (path._saved || wasSaved) persistSavedFeaturesRef.current?.();
     if (selectedFeatureRef.current?.type === "marker" && selectedFeatureRef.current.marker === marker) {
       setSelectedFeature({ type: "marker", marker: newMarker });
     }
     if (selectedFeatureListRef === marker) setSelectedFeatureListRef(newMarker);
     bumpFeaturesVersion();
+    if (promotedPath) queueSaveUndo(path, path.isTrack ? "Track" : "Path");
   };
 
   const handleSetNameMarker = (target) => {
@@ -5548,6 +5554,10 @@ export default function Map() {
 
   // === Saved-feature persistence (localStorage) ===
   const SAVED_FEATURES_KEY = "rontomap_saved_features";
+
+  // A sight carries no bookmark of its own — it is persisted inside its path —
+  // so editing one has to re-persist whenever that parent path is saved.
+  const isFeaturePersisted = (target) => !!(target?._saved || target?._sightPath?._saved);
 
   const generateFeatureId = () =>
     typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
@@ -5892,7 +5902,7 @@ export default function Map() {
     if (!target) return;
     target._hidden = !target._hidden;
     bumpFeaturesVersion();
-    if (target._saved) persistSavedFeatures();
+    if (isFeaturePersisted(target)) persistSavedFeatures();
   };
 
   const handleFeatureDelete = () => {
@@ -5914,21 +5924,34 @@ export default function Map() {
     if (!marker) return;
     const path = marker._sightPath;
     if (!path) return;
+    // The sight was persisted through its path, so leaving it means the free
+    // marker has to carry its own bookmark or it would vanish on reload.
+    const wasSaved = !!path._saved;
     if (path.sights) path.sights = path.sights.filter((m) => m !== marker);
     const pos = marker.getLngLat();
     const name = marker._markerName;
     const draggable = marker.isDraggable();
+    const description = marker._description;
+    const hidden = !!marker._hidden;
     marker.remove();
     markersRef.current = markersRef.current.filter((m) => m !== marker);
     const newMarker = createMarkerRef.current(pos, "#ff6f00");
+    if (description) newMarker._description = description;
+    if (hidden) newMarker._hidden = true;
     if (name) {
       newMarker._markerName = name;
       updateMarkerLabel(newMarker);
     }
     if (!draggable) newMarker.setDraggable(false);
+    if (wasSaved) {
+      newMarker._saved = true;
+      if (!newMarker._id) newMarker._id = generateFeatureId();
+      persistSavedFeaturesRef.current?.();
+    }
     if (!markerArg) {
       setSelectedFeature({ type: "marker", marker: newMarker });
     }
+    bumpFeaturesVersion();
   };
 
   const handleFeatureTrace = (pathArg) => {
@@ -7706,6 +7729,10 @@ export default function Map() {
     if (featuresLockedRef.current) marker.setDraggable(false);
     if (!path.sights) path.sights = [];
     path.sights.push(marker);
+    // Sights live inside their path's saved entry, so a bookmarked path has to
+    // be re-persisted or the new sight is gone on reload.
+    if (path._saved) persistSavedFeaturesRef.current?.();
+    bumpFeaturesVersion();
   };
 
   const handleSetPathName = (pathArg) => {
@@ -8697,7 +8724,7 @@ export default function Map() {
         onCancel={() => {
           setNameAlert(false);
           const t = namingTargetRef.current;
-          if (t?.target?._saved) persistSavedFeaturesRef.current?.();
+          if (isFeaturePersisted(t?.target)) persistSavedFeaturesRef.current?.();
           bumpFeaturesVersion();
         }}
         onClear={() => {
@@ -8711,7 +8738,7 @@ export default function Map() {
             }
           }
           setNameAlert(false);
-          if (t?.target?._saved) persistSavedFeaturesRef.current?.();
+          if (isFeaturePersisted(t?.target)) persistSavedFeaturesRef.current?.();
           bumpFeaturesVersion();
         }}
         onSave={(name) => {
@@ -8725,7 +8752,7 @@ export default function Map() {
             }
           }
           setNameAlert(false);
-          if (t?.target?._saved) persistSavedFeaturesRef.current?.();
+          if (isFeaturePersisted(t?.target)) persistSavedFeaturesRef.current?.();
           bumpFeaturesVersion();
         }}
       />
@@ -8747,7 +8774,7 @@ export default function Map() {
           const target = t?.type === "path" ? t.path : t?.marker;
           if (target) target._description = "";
           setDescAlert(false);
-          if (target?._saved) persistSavedFeaturesRef.current?.();
+          if (isFeaturePersisted(target)) persistSavedFeaturesRef.current?.();
           bumpFeaturesVersion();
         }}
         onSave={(val) => {
@@ -8755,7 +8782,7 @@ export default function Map() {
           const target = t?.type === "path" ? t.path : t?.marker;
           if (target) target._description = val;
           setDescAlert(false);
-          if (target?._saved) persistSavedFeaturesRef.current?.();
+          if (isFeaturePersisted(target)) persistSavedFeaturesRef.current?.();
           bumpFeaturesVersion();
         }}
       />
