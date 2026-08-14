@@ -347,7 +347,35 @@ public class MainActivity extends BridgeActivity {
         if (hasQuery) sb.append("?").append(query);
         if (hasFragment) sb.append("#").append(fragment);
         final String url = sb.toString();
-        getBridge().getWebView().post(() -> getBridge().getWebView().loadUrl(url));
+        getBridge().getWebView().post(() -> {
+            WebView wv = getBridge().getWebView();
+            if (wv == null) return;
+            if (isSameDocument(wv.getUrl(), url)) {
+                // loadUrl() here would be a *same-document* navigation — the page
+                // keeps running and never re-reads the URL, so the web app's
+                // boot-time import never fires and the link silently imports
+                // nothing. Happens whenever the incoming link matches what's
+                // already displayed: re-opening the same link, or a second path
+                // shared from the same camera position (identical query, only the
+                // fragment differs). Assigning location.href updates the URL
+                // synchronously for a fragment-only change, so the following
+                // reload() re-runs the page against the NEW url.
+                wv.evaluateJavascript(
+                    "location.href = " + JSONObject.quote(url) + "; location.reload();", null);
+            } else {
+                wv.loadUrl(url);
+            }
+        });
+    }
+
+    /** True when both URLs address the same document, i.e. differ only by fragment. */
+    private static boolean isSameDocument(String current, String target) {
+        if (current == null || target == null) return false;
+        int ci = current.indexOf('#');
+        int ti = target.indexOf('#');
+        String cDoc = ci >= 0 ? current.substring(0, ci) : current;
+        String tDoc = ti >= 0 ? target.substring(0, ti) : target;
+        return cDoc.equals(tDoc);
     }
 
     private void handleFileOpen(Uri uri) {
