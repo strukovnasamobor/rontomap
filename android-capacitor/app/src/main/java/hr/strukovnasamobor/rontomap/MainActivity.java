@@ -8,6 +8,7 @@ import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.SystemClock;
 import android.util.Base64;
 import android.view.View;
 import android.view.WindowInsets;
@@ -41,8 +42,13 @@ import okhttp3.ResponseBody;
 public class MainActivity extends BridgeActivity {
 
     // A file-open intent can arrive before the WebView has a loaded page (cold
-    // start). Park the injection here and flush it from onPageFinished.
+    // start), and the page can reload right after a successful injection. Keep
+    // the payload armed briefly and re-inject it on every page load in that
+    // window; the snippet itself is idempotent (see buildFileOpenJs).
+    private static final long FILE_OPEN_REDELIVER_MS = 60_000L;
     private String pendingFileOpenJs = null;
+    private long pendingFileOpenUntilMs = 0L;
+    private int fileOpenSeq = 0;
     private boolean webViewPageLoaded = false;
 
     @Override
@@ -260,7 +266,7 @@ public class MainActivity extends BridgeActivity {
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
                 webViewPageLoaded = true;
-                flushPendingFileOpen();
+                injectFileOpen();
             }
 
             @Override
@@ -428,35 +434,54 @@ public class MainActivity extends BridgeActivity {
             String payloadB64 = Base64.encodeToString(
                     payload.toString().getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
 
-            // Pass to WebView. atob() yields a binary string; escape()+
-            // decodeURIComponent() reconstitutes the original UTF-8 JSON.
-            final String js =
-                "window.__importFileData = JSON.parse(decodeURIComponent(escape(atob('"
-                + payloadB64 + "'))));"
-                + "window.dispatchEvent(new Event('rontomap-file-open'));";
-
             // Cold start: onCreate() calls handleDeepLink() while the WebView is
-            // still loading the app, so evaluateJavascript() would run against a
-            // document that the real page load then throws away — the app opened
-            // and imported nothing. Hold the payload and inject it once the page
-            // is up. (UI thread only: both this and onPageFinished run there, so
-            // the fields need no synchronization.)
-            if (webViewPageLoaded) {
-                getBridge().getWebView().post(() ->
-                    getBridge().getWebView().evaluateJavascript(js, null));
-            } else {
-                pendingFileOpenJs = js;
-            }
+            // still loading the app, so injecting now would target a document the
+            // real page load then throws away. Worse, the page can reload *after*
+            // a successful injection (the service worker does this on activation),
+            // which wipes window.__importFileData before the web app consumes it —
+            // in both cases the app opens and imports nothing.
+            //
+            // So: keep the payload armed for a short window and re-inject on every
+            // page load in it. The snippet is idempotent — once the web app has
+            // taken the payload (it deletes __importFileData when it does), it
+            // records the token in sessionStorage, which survives a reload, so a
+            // later re-injection is a no-op instead of a duplicate import.
+            pendingFileOpenJs = buildFileOpenJs(
+                    payloadB64, "fo-" + System.currentTimeMillis() + "-" + (++fileOpenSeq));
+            pendingFileOpenUntilMs = SystemClock.elapsedRealtime() + FILE_OPEN_REDELIVER_MS;
+            if (webViewPageLoaded) injectFileOpen();
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
 
-    private void flushPendingFileOpen() {
+    /**
+     * Arms window.__importFileData and fires the event the web app listens for.
+     * Guarded by a sessionStorage token so re-injecting after a page reload can't
+     * import the same file twice: the web app deletes __importFileData as soon as
+     * it takes the payload, and the poll below records the token when it sees that.
+     * atob() yields a binary string; escape()+decodeURIComponent() reconstitutes
+     * the original UTF-8 JSON.
+     */
+    private static String buildFileOpenJs(String payloadB64, String token) {
+        return "(function(){var t=" + JSONObject.quote(token) + ";"
+             + "try{if(sessionStorage.getItem('__rontoImport')===t)return;}catch(e){}"
+             + "window.__importFileData=JSON.parse(decodeURIComponent(escape(atob('" + payloadB64 + "'))));"
+             + "window.dispatchEvent(new Event('rontomap-file-open'));"
+             + "var n=0,iv=setInterval(function(){"
+             + "if(typeof window.__importFileData==='undefined'){"
+             + "try{sessionStorage.setItem('__rontoImport',t);}catch(e){}clearInterval(iv);}"
+             + "else if(++n>300){clearInterval(iv);}},100);})();";
+    }
+
+    private void injectFileOpen() {
         if (pendingFileOpenJs == null) return;
+        if (SystemClock.elapsedRealtime() > pendingFileOpenUntilMs) {
+            pendingFileOpenJs = null; // window closed — stop re-delivering
+            return;
+        }
         if (getBridge() == null || getBridge().getWebView() == null) return;
         final String js = pendingFileOpenJs;
-        pendingFileOpenJs = null;
         getBridge().getWebView().post(() ->
             getBridge().getWebView().evaluateJavascript(js, null));
     }
