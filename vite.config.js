@@ -8,6 +8,12 @@ export default defineConfig({
     VitePWA({
       registerType: "autoUpdate",
       injectRegister: "auto",
+      injectManifest: {
+        // The app bundle crossed workbox's 2 MiB default, which silently drops it
+        // from __WB_MANIFEST (offline launch then 404s the JS index.html points
+        // at) AND fails the build — aborting `firebase deploy` at predeploy.
+        maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
+      },
       includeAssets: ["icons/icon-192.png", "icons/icon-512.png", "icons/icon-512-maskable.png"],
       manifest: {
         id: "hr.strukovnasamobor.rontomap",

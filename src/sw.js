@@ -188,12 +188,13 @@ self.addEventListener("activate", (event) => {
 
       await self.clients.claim();
 
-      // If an existing client was rendered by the previous SW with a
-      // stale shell, reload it so it picks up the current index.html.
-      const windowClients = await self.clients.matchAll({ type: "window" });
-      windowClients.forEach((c) => {
-        if (typeof c.navigate === "function") c.navigate(c.url);
-      });
+      // NOTE: do NOT reload clients from here. registerType "autoUpdate" makes
+      // vite-plugin-pwa's registerSW already do it, correctly:
+      //   wb.addEventListener("activated", e => { if (e.isUpdate) location.reload() })
+      // That fires only for a genuine update and uses location.reload(), which
+      // preserves the full URL. The previous `client.navigate(client.url)` here
+      // fired on first install too (a spurious extra page load on every first
+      // visit) and re-navigated to a URL string rather than reloading.
 
       // Fire-and-forget: fill the rest of the precache without blocking
       // activation. Failures here only degrade offline-readiness.

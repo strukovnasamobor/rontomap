@@ -40,6 +40,11 @@ import okhttp3.ResponseBody;
 
 public class MainActivity extends BridgeActivity {
 
+    // A file-open intent can arrive before the WebView has a loaded page (cold
+    // start). Park the injection here and flush it from onPageFinished.
+    private String pendingFileOpenJs = null;
+    private boolean webViewPageLoaded = false;
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         // Register plugins BEFORE super.onCreate() so the bridge picks them up
@@ -252,6 +257,13 @@ public class MainActivity extends BridgeActivity {
         final WebView wv = getBridge().getWebView();
         wv.setWebViewClient(new BridgeWebViewClient(getBridge()) {
             @Override
+            public void onPageFinished(WebView view, String url) {
+                super.onPageFinished(view, url);
+                webViewPageLoaded = true;
+                flushPendingFileOpen();
+            }
+
+            @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest req) {
                 // Fallback tile serving for requests not handled by the SW
                 // interceptor (e.g. feature unsupported). null → Capacitor's
@@ -314,12 +326,27 @@ public class MainActivity extends BridgeActivity {
             return;
         }
 
-        // Deep link (https://rontomap.web.app?...)
-        String query = data.getQuery();
-        if (query == null || query.isEmpty()) return;
+        // Deep link (https://rontomap.web.app/?...#...)
+        //
+        // Carry over BOTH the query and the fragment: shared path links keep the
+        // vertex polyline (plus the base64 extras blob) in the fragment, so
+        // dropping it leaves `?path` with nothing to import and the web side
+        // reports "Failed to import from link".
+        //
+        // Use the *encoded* forms — getQuery()/getFragment() percent-decode, and
+        // splicing decoded values back into a URL corrupts any name or
+        // description containing & # + or %.
+        String query = data.getEncodedQuery();
+        String fragment = data.getEncodedFragment();
+        boolean hasQuery = query != null && !query.isEmpty();
+        boolean hasFragment = fragment != null && !fragment.isEmpty();
+        if (!hasQuery && !hasFragment) return;
         String serverUrl = getBridge().getServerUrl();
         if (serverUrl == null) serverUrl = "http://localhost";
-        final String url = serverUrl + "/?" + query;
+        StringBuilder sb = new StringBuilder(serverUrl).append("/");
+        if (hasQuery) sb.append("?").append(query);
+        if (hasFragment) sb.append("#").append(fragment);
+        final String url = sb.toString();
         getBridge().getWebView().post(() -> getBridge().getWebView().loadUrl(url));
     }
 
@@ -379,11 +406,31 @@ public class MainActivity extends BridgeActivity {
                 "window.__importFileData = JSON.parse(decodeURIComponent(escape(atob('"
                 + payloadB64 + "'))));"
                 + "window.dispatchEvent(new Event('rontomap-file-open'));";
-            getBridge().getWebView().post(() ->
-                getBridge().getWebView().evaluateJavascript(js, null));
+
+            // Cold start: onCreate() calls handleDeepLink() while the WebView is
+            // still loading the app, so evaluateJavascript() would run against a
+            // document that the real page load then throws away — the app opened
+            // and imported nothing. Hold the payload and inject it once the page
+            // is up. (UI thread only: both this and onPageFinished run there, so
+            // the fields need no synchronization.)
+            if (webViewPageLoaded) {
+                getBridge().getWebView().post(() ->
+                    getBridge().getWebView().evaluateJavascript(js, null));
+            } else {
+                pendingFileOpenJs = js;
+            }
         } catch (Exception e) {
             e.printStackTrace();
         }
+    }
+
+    private void flushPendingFileOpen() {
+        if (pendingFileOpenJs == null) return;
+        if (getBridge() == null || getBridge().getWebView() == null) return;
+        final String js = pendingFileOpenJs;
+        pendingFileOpenJs = null;
+        getBridge().getWebView().post(() ->
+            getBridge().getWebView().evaluateJavascript(js, null));
     }
 
     public void enterFullscreen() {

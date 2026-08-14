@@ -70,6 +70,31 @@ const b64uEncode = (s) =>
 const b64uDecode = (s) =>
   decodeURIComponent(escape(atob(s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4))));
 
+// decodeURIComponent throws URIError on a stray "%" (e.g. a name like "50% uspon"
+// that has already been decoded once). Never let one bad value abort an import.
+const safeDecode = (s) => {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+};
+
+// Raw (still percent-encoded) values for a repeated query param. URLSearchParams
+// decodes eagerly, which is wrong for `sight=<seg>-<t>-<name>-<desc>`: hyphens
+// inside the name/description are escaped as %2D precisely so they survive the
+// split("-"), and eager decoding turns them back into separators.
+const getRawQueryValues = (name) => {
+  const query = window.location.search.slice(1);
+  if (!query) return [];
+  const out = [];
+  for (const pair of query.split("&")) {
+    const eq = pair.indexOf("=");
+    if ((eq >= 0 ? pair.slice(0, eq) : pair) === name) out.push(eq >= 0 ? pair.slice(eq + 1) : "");
+  }
+  return out;
+};
+
 // Snapped-segment type code mapping (used in path URL extras blob)
 const SEG_TYPE_TO_CODE = { snapped: "s", offset: "o", fallback: "f", direct: "d" };
 const CODE_TO_SEG_TYPE = { s: "snapped", o: "offset", f: "fallback", d: "direct" };
@@ -3969,9 +3994,11 @@ export default function Map() {
         const topDesc = getQueryParams("description");
         // New spec: name / description in top-level params.
         // Legacy: name embedded as 3rd+ hyphen-joined segment of `marker=`.
+        // No decode here — getQueryParams goes through URLSearchParams, which has
+        // already percent-decoded the whole value.
         const markerName = topName != null
           ? topName
-          : parts.length > 2 ? decodeURIComponent(parts.slice(2).join("-")) : "";
+          : parts.length > 2 ? parts.slice(2).join("-") : "";
         if (markerName) {
           m._markerName = markerName;
           updateMarkerLabel(m);
@@ -4031,7 +4058,7 @@ export default function Map() {
           ...(forceSet.has(i) ? { force: true } : {}),
         }));
 
-        const sightParams = new URLSearchParams(window.location.search).getAll("sight");
+        const sightParams = getRawQueryValues("sight");
         const sights = sightParams
           .map((s) => {
             const parts = s.split("-");
@@ -4047,12 +4074,12 @@ export default function Map() {
             if (parts.length <= 2) {
               // no extra slots
             } else if (parts.length === 3) {
-              name = decodeURIComponent(parts[2]) || undefined;
+              name = safeDecode(parts[2]) || undefined;
             } else if (parts.length === 4) {
-              name = decodeURIComponent(parts[2]) || undefined;
-              description = decodeURIComponent(parts[3]) || undefined;
+              name = safeDecode(parts[2]) || undefined;
+              description = safeDecode(parts[3]) || undefined;
             } else {
-              name = decodeURIComponent(parts.slice(2).join("-")) || undefined;
+              name = safeDecode(parts.slice(2).join("-")) || undefined;
             }
             return {
               segmentIndex: segIdx,
@@ -4202,6 +4229,25 @@ export default function Map() {
       if (!fileData) return;
       delete window.__importFileData;
 
+      // A cold-start file open is delivered as soon as the page finishes loading,
+      // which can be well before the map style is ready — materializeFeatures →
+      // ensurePathLayer → addSource/addLayer would throw "Style is not done
+      // loading". "style.load" rather than "load" because the app calls setStyle
+      // during startup, and "load" only ever fires once.
+      const readyMap = mapRef.current;
+      if (readyMap && !readyMap.isStyleLoaded()) {
+        await new Promise((resolve) => {
+          // Time-boxed: if the style never loads (offline with nothing cached),
+          // fall through and let the import fail loudly in the catch below rather
+          // than hanging with no feedback.
+          const timer = setTimeout(resolve, 10000);
+          readyMap.once("style.load", () => {
+            clearTimeout(timer);
+            resolve();
+          });
+        });
+      }
+
       try {
         const { name, base64 } = fileData;
         const isBinary = name.toLowerCase().endsWith(".fit");
@@ -4259,6 +4305,50 @@ export default function Map() {
     return () => window.removeEventListener("rontomap-file-open", handleFileOpen);
   }, []);
 
+  // Apply the feature-list filter to the map itself: hidden types disappear
+  // from the map, not just the list. Sights also hide when their parent path
+  // is filtered out. Per-feature `_hidden` overrides add an independent layer.
+  // The filter is read from a ref so this can also run outside React's data
+  // flow — notably after a style change, which wipes every custom path layer
+  // and re-adds it with the default (visible) layout.
+  const featListFilterRef = useRef(featListFilter);
+  const applyFeatureVisibility = useCallback(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const filter = featListFilterRef.current;
+    for (const m of markersRef.current) {
+      const isSight = !!m._sightPath;
+      const typeAllowed = isSight ? (filter.sights && filter.paths) : filter.markers;
+      const savedHidden = !filter.saved && (isSight ? !!m._sightPath._saved : !!m._saved);
+      const hidden = !typeAllowed
+        || savedHidden
+        || !!m._hidden
+        || !!m._pendingDelete
+        || (isSight && (!!m._sightPath._hidden || !!m._sightPath._pendingDelete));
+      const el = m.getElement();
+      if (el) el.style.display = hidden ? "none" : "";
+    }
+    for (const p of pathsRef.current) {
+      const hidden = !filter.paths || (!filter.saved && !!p._saved) || !!p._hidden || !!p._pendingDelete;
+      const vis = hidden ? "none" : "visible";
+      if (map.getLayer(p.layerId)) map.setLayoutProperty(p.layerId, "visibility", vis);
+      if (map.getLayer(`${p.layerId}-hit`)) map.setLayoutProperty(`${p.layerId}-hit`, "visibility", vis);
+      if (map.getLayer(`${p.layerId}-arrows`)) map.setLayoutProperty(`${p.layerId}-arrows`, "visibility", vis);
+      if (p.vertices) {
+        for (const v of p.vertices) {
+          const el = v.marker?.getElement();
+          if (el) el.style.display = hidden ? "none" : "";
+        }
+      }
+      if (p.midpoints) {
+        for (const mp of p.midpoints) {
+          const el = mp.marker?.getElement();
+          if (el) el.style.display = hidden ? "none" : "";
+        }
+      }
+    }
+  }, []);
+
   // When changing map style preserve the current camera state
   useEffect(() => {
     console.log("useEffect > Change map style:", mapStyle);
@@ -4307,8 +4397,11 @@ export default function Map() {
           rectMethodsRef.current.addHandles(bounds);
         }
       }
+      // The new style dropped every custom layer and the re-added ones default
+      // to visible, so re-apply the filter / per-feature hidden state.
+      applyFeatureVisibility();
     });
-  }, [mapStyle]);
+  }, [mapStyle, applyFeatureVisibility]);
 
   // Keep refs in sync with state
   useEffect(() => {
@@ -4700,38 +4793,12 @@ export default function Map() {
     if (showFeaturesList) bumpFeaturesVersion();
   }, [showFeaturesList, bumpFeaturesVersion]);
 
-  // Apply the feature-list filter to the map itself: hidden types disappear
-  // from the map, not just the list. Sights also hide when their parent path
-  // is filtered out. Per-feature `_hidden` overrides add an independent layer.
+  // Push the current filter / hidden state onto the map. Mirrors the filter
+  // into a ref first so the style-change handler sees the latest value.
   useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-    for (const m of markersRef.current) {
-      const isSight = !!m._sightPath;
-      const typeAllowed = isSight ? (featListFilter.sights && featListFilter.paths) : featListFilter.markers;
-      const savedHidden = !featListFilter.saved && (isSight ? !!m._sightPath._saved : !!m._saved);
-      const hidden = !typeAllowed
-        || savedHidden
-        || !!m._hidden
-        || !!m._pendingDelete
-        || (isSight && (!!m._sightPath._hidden || !!m._sightPath._pendingDelete));
-      const el = m.getElement();
-      if (el) el.style.display = hidden ? "none" : "";
-    }
-    for (const p of pathsRef.current) {
-      const hidden = !featListFilter.paths || (!featListFilter.saved && !!p._saved) || !!p._hidden || !!p._pendingDelete;
-      const vis = hidden ? "none" : "visible";
-      if (map.getLayer(p.layerId)) map.setLayoutProperty(p.layerId, "visibility", vis);
-      if (map.getLayer(`${p.layerId}-hit`)) map.setLayoutProperty(`${p.layerId}-hit`, "visibility", vis);
-      if (map.getLayer(`${p.layerId}-arrows`)) map.setLayoutProperty(`${p.layerId}-arrows`, "visibility", vis);
-      if (p.vertices) {
-        for (const v of p.vertices) {
-          const el = v.marker?.getElement();
-          if (el) el.style.display = hidden ? "none" : "";
-        }
-      }
-    }
-  }, [featListFilter, featuresVersion]);
+    featListFilterRef.current = featListFilter;
+    applyFeatureVisibility();
+  }, [featListFilter, featuresVersion, applyFeatureVisibility]);
 
   // Clear routing sub-selection when the offline panel closes.
   useEffect(() => {
@@ -6695,6 +6762,18 @@ export default function Map() {
     setCanUndo(false);
     setCanRedo(false);
 
+    // Stopping a recording saves the track, which also bookmarks it — same as
+    // the Save button on a hand-drawn path. Skip degenerate one-point tracks:
+    // they have no geometry to restore on reload.
+    if (path.vertices.length > 1) {
+      if (!path._saved) {
+        path._saved = true;
+        if (!path._id) path._id = generateFeatureId();
+      }
+      persistSavedFeatures();
+      bumpFeaturesVersion();
+    }
+
     setToastMsg("Track recorded.");
     setTimeout(() => setToastMsg(null), 3000);
   };
@@ -6726,6 +6805,15 @@ export default function Map() {
       setCanRedo(false);
       setNavRouteDistance(null);
       setNavRouteDuration(null);
+      // Saving a path also bookmarks it, so it survives a reload. Re-persist
+      // unconditionally: finishing an edit of an already-saved path has to
+      // write the new geometry back to storage.
+      if (!path._saved) {
+        path._saved = true;
+        if (!path._id) path._id = generateFeatureId();
+      }
+      persistSavedFeatures();
+      bumpFeaturesVersion();
     }
   };
 
