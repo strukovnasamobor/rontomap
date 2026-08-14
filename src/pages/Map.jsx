@@ -84,8 +84,9 @@ const safeDecode = (s) => {
 // decodes eagerly, which is wrong for `sight=<seg>-<t>-<name>-<desc>`: hyphens
 // inside the name/description are escaped as %2D precisely so they survive the
 // split("-"), and eager decoding turns them back into separators.
-const getRawQueryValues = (name) => {
-  const query = window.location.search.slice(1);
+// `query` defaults to the live URL so existing callers are unaffected; the link
+// importer passes the query it was handed instead.
+const getRawQueryValues = (name, query = window.location.search.slice(1)) => {
   if (!query) return [];
   const out = [];
   for (const pair of query.split("&")) {
@@ -93,6 +94,23 @@ const getRawQueryValues = (name) => {
     if ((eq >= 0 ? pair.slice(0, eq) : pair) === name) out.push(eq >= 0 ? pair.slice(eq + 1) : "");
   }
   return out;
+};
+
+/**
+ * One share link's worth of URL, decoupled from window.location so the same
+ * import code can run for the boot URL and for a deep link handed to a live
+ * page. `search` / `hash` are the RAW, still percent-encoded forms — exactly
+ * what window.location.search / window.location.hash would return.
+ */
+const makeLinkSource = (search, hash) => {
+  const rawQuery = (search || "").replace(/^\?/, "");
+  const params = new URLSearchParams(rawQuery);
+  return {
+    get: (name) => params.get(name),
+    has: (name) => params.has(name),
+    raw: (name) => getRawQueryValues(name, rawQuery),
+    rawHash: (hash || "").replace(/^#/, ""),
+  };
 };
 
 // Snapped-segment type code mapping (used in path URL extras blob)
@@ -578,6 +596,9 @@ export default function Map() {
   // which is declared before the callbacks are defined.
   const persistSavedFeaturesRef = useRef(null);
   const hydrateSavedFeaturesRef = useRef(null);
+  // Same bridge for the share-link importer: the setup effect has [] deps and
+  // would otherwise capture the first render's closure.
+  const importFromLinkRef = useRef(null);
   const featListGlowCleanupRef = useRef(null);
   const sheetDragRef = useRef({ startY: 0, dragging: false, startLevel: 0 });
   const featurePanelRef = useRef(null);
@@ -3973,219 +3994,16 @@ export default function Map() {
       }
     }
 
-    // Shared failure handler for import-from-link: toast only, URL is preserved.
-    // Suppressed in embedded mode.
-    const onLinkImportFailed = () => {
-      if (isEmbeddedRef.current) return;
-      setToastMsg("Failed to import from link.");
-      setTimeout(() => setToastMsg(null), 3000);
-    };
-
-    // Recreate single marker from URL params
-    const markerParam = getQueryParams("marker");
-    if (markerParam) {
-      const parts = markerParam.split("-");
-      const markerLat = parseFloat(parts[0]);
-      const markerLng = parseFloat(parts[1]);
-      if (!isNaN(markerLat) && !isNaN(markerLng)) {
-        const beforeM = new Set(markersRef.current);
-        const m = createMarker([markerLng, markerLat]);
-        const topName = getQueryParams("name");
-        const topDesc = getQueryParams("description");
-        // New spec: name / description in top-level params.
-        // Legacy: name embedded as 3rd+ hyphen-joined segment of `marker=`.
-        // No decode here — getQueryParams goes through URLSearchParams, which has
-        // already percent-decoded the whole value.
-        const markerName = topName != null
-          ? topName
-          : parts.length > 2 ? parts.slice(2).join("-") : "";
-        if (markerName) {
-          m._markerName = markerName;
-          updateMarkerLabel(m);
-        }
-        if (topDesc) m._description = topDesc;
-        featuresLockedRef.current = true;
-        setFeaturesLocked(true);
-        m.setDraggable(false);
-        mapRef.current.getContainer().classList.add("features-locked");
-        syncLabelsNow();
-        if (!isEmbeddedRef.current) {
-          const newMarkers = markersRef.current.filter((x) => !beforeM.has(x));
-          queueImportUndo({ markers: newMarkers, paths: [], lockToggled: true, text: "Imported 1 marker." });
-        }
-      } else {
-        onLinkImportFailed();
-      }
-    }
-
-    // Recreate path from URL hash (vertex polyline + optional extras blob).
-    // Deferred until the map style is loaded — materializePathFromShape calls
-    // ensurePathLayer → map.addSource/addLayer, which throw "Style is not done loading"
-    // if invoked before the style is ready.
-    const runPathFromHash = () => {
-      const rawHash = window.location.hash ? decodeURIComponent(window.location.hash.slice(1)) : "";
-      // Path intent is signaled by the `path` query param; hash carries the polyline.
-      const pathIntent = new URLSearchParams(window.location.search).has("path");
-      if (!rawHash) {
-        if (pathIntent) onLinkImportFailed();
-        return;
-      }
-      const sepIdx = rawHash.indexOf("!");
-      const vertexPolyStr = sepIdx >= 0 ? rawHash.slice(0, sepIdx) : rawHash;
-      const extrasStr = sepIdx >= 0 ? rawHash.slice(sepIdx + 1) : "";
-
-      let decodedVerts = null;
-      try {
-        decodedVerts = polyline.decode(vertexPolyStr);
-      } catch {
-        decodedVerts = null;
-      }
-
-      let extras = {};
-      if (extrasStr) {
-        try {
-          extras = JSON.parse(b64uDecode(extrasStr));
-        } catch {
-          extras = {};
-        }
-      }
-
-      if (decodedVerts && decodedVerts.length >= 2) {
-        const forceSet = new Set(extras.fi || []);
-        const coords = decodedVerts.map(([lat, lng], i) => ({
-          long: lng,
-          lat,
-          ...(forceSet.has(i) ? { force: true } : {}),
-        }));
-
-        const sightParams = getRawQueryValues("sight");
-        const sights = sightParams
-          .map((s) => {
-            const parts = s.split("-");
-            const segIdx = parseInt(parts[0]);
-            const t = parseFloat(parts[1]);
-            if (Number.isNaN(segIdx) || Number.isNaN(t)) return null;
-            // New spec: segIdx-t-<encName>-<encDesc>, with hyphens inside name/desc
-            // escaped as %2D so split("-") gives at most 4 parts.
-            // Legacy: segIdx-t-<encName> where encName may contain literal hyphens →
-            // parts.length > 4 means legacy; join everything from index 2.
-            let name;
-            let description;
-            if (parts.length <= 2) {
-              // no extra slots
-            } else if (parts.length === 3) {
-              name = safeDecode(parts[2]) || undefined;
-            } else if (parts.length === 4) {
-              name = safeDecode(parts[2]) || undefined;
-              description = safeDecode(parts[3]) || undefined;
-            } else {
-              name = safeDecode(parts.slice(2).join("-")) || undefined;
-            }
-            return {
-              segmentIndex: segIdx,
-              t,
-              ...(name ? { name } : {}),
-              ...(description ? { description } : {}),
-            };
-          })
-          .filter(Boolean);
-
-        let snappedSegments;
-        if (Array.isArray(extras.sn)) {
-          snappedSegments = extras.sn.map(([code, poly]) => ({
-            type: CODE_TO_SEG_TYPE[code] || code,
-            coords: polyline.decode(poly).map(([lat, lng]) => [lng, lat]),
-          }));
-        }
-
-        const roadSnapParam = getQueryParams("road_snap");
-        // New spec: name / description in top-level params.
-        // Legacy: name was emitted as `path=<encName>`.
-        const topName = getQueryParams("name");
-        const legacyPathName = getQueryParams("path");
-        const pathName = topName != null && topName !== ""
-          ? topName
-          : legacyPathName ? legacyPathName : undefined;
-        const pathDesc = getQueryParams("description") || undefined;
-        const entry = {
-          coords,
-          name: pathName,
-          description: pathDesc,
-          roadSnap: roadSnapParam && roadSnapParam !== "free" ? roadSnapParam : undefined,
-          isCircuit: getQueryParams("is_circuit") === "true",
-          closingForced: extras.cf === true,
-          snappedSegments,
-          routeDistance: extras.rd ?? undefined,
-          routeDuration: extras.rt ?? undefined,
-          sights: sights.length ? sights : undefined,
-        };
-
-        const beforeM = new Set(markersRef.current);
-        const beforeP = new Set(pathsRef.current);
-        materializePathFromShape(entry, {
-          createMarker,
-          pathHelpersRef,
-          updateMarkerLabel,
-          deserializeSnappedSegments,
-          pathsRef,
-        });
-
-        featuresLockedRef.current = true;
-        setFeaturesLocked(true);
-        mapRef.current.getContainer().classList.add("features-locked");
-        pathsRef.current.forEach((p) => p.vertices.forEach((v) => v.marker.setDraggable(false)));
-        pathsRef.current.forEach((p) => p.sights?.forEach((m) => m.setDraggable(false)));
-        syncLabelsNow();
-        if (!isEmbeddedRef.current) {
-          const nSights = sights.length;
-          const sightStr = nSights > 0 ? ` with ${nSights} sight${nSights > 1 ? "s" : ""}` : "";
-          const diff = captureImportDiff(beforeM, beforeP);
-          queueImportUndo({ ...diff, lockToggled: true, text: `Imported 1 path${sightStr}.` });
-        }
-      } else if (pathIntent) {
-        onLinkImportFailed();
-      }
-    };
-    if (mapRef.current.isStyleLoaded()) {
-      runPathFromHash();
-    } else {
-      mapRef.current.once("load", runPathFromHash);
-    }
-
-    // Recreate markers from a Firebase features collection
-    const featuresCollectionId = getQueryParams("features_collection");
-    if (featuresCollectionId) {
-      getDoc(doc(db, "featuresCollections", featuresCollectionId))
-        .then((snap) => {
-          if (!snap.exists()) {
-            onLinkImportFailed();
-            return;
-          }
-          const data = snap.data();
-          const beforeM = new Set(markersRef.current);
-          const beforeP = new Set(pathsRef.current);
-          const result = materializeFeatures(data, { createMarker, pathHelpersRef, updateMarkerLabel, deserializeSnappedSegments, pathsRef });
-          // Lock features when loaded from URL
-          featuresLockedRef.current = true;
-          setFeaturesLocked(true);
-          mapRef.current.getContainer().classList.add("features-locked");
-          markersRef.current.forEach((m) => m.setDraggable(false));
-          pathsRef.current.forEach((p) => {
-            p.vertices.forEach((v) => v.marker.setDraggable(false));
-          });
-          syncLabelsNow();
-          if (!isEmbeddedRef.current) {
-            const parts = [];
-            if (result.markerCount > 0) parts.push(`${result.markerCount} marker${result.markerCount > 1 ? "s" : ""}`);
-            if (result.pathCount > 0) parts.push(`${result.pathCount} path${result.pathCount > 1 ? "s" : ""}`);
-            let msg = parts.length ? `Imported ${parts.join(", ")}.` : "Imported 0 features.";
-            if (result.skipped > 0) msg += ` ${result.skipped} skipped.`;
-            const diff = captureImportDiff(beforeM, beforeP);
-            queueImportUndo({ ...diff, lockToggled: true, text: msg });
-          }
-        })
-        .catch(() => onLinkImportFailed());
-    }
+    // Import whatever the boot URL carries. The body lives in importFromLink
+    // (component scope) so a deep link arriving while the app is already running
+    // can re-run it without a page reload — see the rontomap-link-open effect.
+    // Note hydration below stays OUT of that function on purpose: re-running it
+    // would duplicate every bookmarked feature.
+    importFromLinkRef.current?.({
+      search: window.location.search,
+      hash: window.location.hash,
+      mode: "boot",
+    });
 
     // Rehydrate user-saved features from localStorage (after URL imports so
     // shared-link payloads win any id collision). Wait for style load so
@@ -4303,6 +4121,45 @@ export default function Map() {
     if (window.__importFileData) handleFileOpen();
 
     return () => window.removeEventListener("rontomap-file-open", handleFileOpen);
+  }, []);
+
+  // Share link delivered into an already-running app (Android onNewIntent →
+  // MainActivity.injectLinkOpen). The page is NOT reloaded, so a path being
+  // drawn, unsaved markers, the undo stacks and an active recording all survive
+  // — which is the whole point of this path.
+  useEffect(() => {
+    const handleLinkOpen = () => {
+      const payload = window.__rontoLinkOpen;
+      if (!payload) return;
+      delete window.__rontoLinkOpen;
+      // Ack synchronously rather than waiting for the native poll to notice the
+      // global disappear — that closes a ~100ms window in which a page reload
+      // could make the native side re-deliver a link we already handled.
+      try {
+        if (payload.token) sessionStorage.setItem("__rontoLinkOpen", payload.token);
+      } catch {
+        // sessionStorage can be unavailable in some embedded contexts.
+      }
+      // Importing mid-action would fight the user: the lock sweep would freeze
+      // the path being drawn, and a camera fly would yank them off a recording
+      // or an active navigation. Refuse and say so instead.
+      if (isPathModeRef.current || isRecordingTrackRef.current || isNavigationModeRef.current) {
+        setToastMsg("Finish what you're doing first, then open the link again.");
+        setTimeout(() => setToastMsg(null), 3000);
+        return;
+      }
+      importFromLinkRef.current?.({
+        search: payload.search || "",
+        hash: payload.hash || "",
+        mode: "runtime",
+      });
+    };
+
+    window.addEventListener("rontomap-link-open", handleLinkOpen);
+    // Also take a payload armed before the listener existed.
+    if (window.__rontoLinkOpen) handleLinkOpen();
+
+    return () => window.removeEventListener("rontomap-link-open", handleLinkOpen);
   }, []);
 
   // Apply the feature-list filter to the map itself: hidden types disappear
@@ -5138,6 +4995,43 @@ export default function Map() {
     });
   };
 
+  // Lock every feature on the map — the semantics a share-link import has always
+  // had. Replaces three inline sweeps that each iterated a different subset and
+  // all omitted midpoints.
+  const lockAllFeatures = () => {
+    featuresLockedRef.current = true;
+    setFeaturesLocked(true);
+    mapRef.current?.getContainer().classList.add("features-locked");
+    markersRef.current.forEach((m) => m.setDraggable(false));
+    pathsRef.current.forEach((p) => {
+      p.vertices.forEach((v) => v.marker.setDraggable(false));
+      p.midpoints.forEach((mp) => mp.marker.setDraggable(false));
+      p.sights?.forEach((m) => m.setDraggable(false));
+    });
+  };
+
+  // Fly to the camera baked into a share link. Mirrors the "map already
+  // initialized" branch of the setup effect so a link arriving at runtime frames
+  // the same view a cold start would. Partial links keep the current
+  // bearing/pitch rather than snapping to 0.
+  const flyToLinkCamera = (link) => {
+    const map = mapRef.current;
+    if (!map) return;
+    const lat = parseFloat(link.get("lat"));
+    const long = parseFloat(link.get("long"));
+    if (isNaN(lat) || isNaN(long)) return;
+    const z = parseFloat(link.get("zoom"));
+    const b = parseFloat(link.get("bearing"));
+    const p = parseFloat(link.get("pitch"));
+    map.flyTo({
+      center: [long, lat],
+      zoom: !isNaN(z) ? z : defaultZoomOnQueryParams,
+      bearing: !isNaN(b) ? b : map.getBearing(),
+      pitch: !isNaN(p) ? p : map.getPitch(),
+      duration: 1000,
+    });
+  };
+
   const handleImportFeatures = async () => {
     setMapClickMenu(null);
     try {
@@ -5420,6 +5314,9 @@ export default function Map() {
   };
 
   const queueImportUndo = ({ markers, paths, lockToggled, text }) => {
+    // Single-slot by design: a new import forfeits the previous one's Undo
+    // affordance (the pending features are committed, not lost). Matches the
+    // menu and file imports, and the toast only has room for one.
     if (pendingImportRef.current) commitPendingImport();
     const token = Symbol("undoImport");
     const timerId = setTimeout(() => {
@@ -5435,6 +5332,248 @@ export default function Map() {
       __undo: token,
     });
   };
+
+  /**
+   * Import the features encoded in a RontoMap share link.
+   *
+   * mode "boot":    the document was loaded WITH the link. The camera is already
+   *                 baked into the mapboxgl.Map constructor, and
+   *                 hydrateSavedFeatures runs right after us.
+   * mode "runtime": a deep link was handed to an already-running page (Android
+   *                 onNewIntent -> MainActivity.injectLinkOpen). Nothing else
+   *                 runs, so we own the camera — and we must NOT hydrate, which
+   *                 would duplicate every bookmarked feature. Hydration stays in
+   *                 the setup effect precisely so this can't reach it.
+   *
+   * @param {string} search  raw, still percent-encoded query ("?a=b" or "a=b")
+   * @param {string} hash    raw, still percent-encoded fragment ("#x" or "x")
+   * @param {"boot"|"runtime"} mode
+   */
+  const importFromLink = ({ search = "", hash = "", mode = "boot" }) => {
+    const link = makeLinkSource(search, hash);
+    const createMarker = createMarkerRef.current;
+    if (!createMarker || !mapRef.current) return;
+
+    // Shared failure handler for import-from-link: toast only, URL is preserved.
+    // Suppressed in embedded mode.
+    const onLinkImportFailed = () => {
+      if (isEmbeddedRef.current) return;
+      setToastMsg("Failed to import from link.");
+      setTimeout(() => setToastMsg(null), 3000);
+    };
+
+    // "style.load" rather than "load": the app calls setStyle during startup and
+    // on every style switch, and "load" only ever fires once — a runtime link
+    // arriving after a switch would wait on it forever. Time-boxed like the
+    // file-open handler so a style that never loads fails loudly instead.
+    const whenStyleReady = (fn) => {
+      const map = mapRef.current;
+      if (!map) return;
+      if (map.isStyleLoaded()) {
+        fn();
+        return;
+      }
+      const timer = setTimeout(fn, 10000);
+      map.once("style.load", () => {
+        clearTimeout(timer);
+        fn();
+      });
+    };
+
+    // Shared tail for all three branches.
+    const finishLinkImport = (beforeM, beforeP, text) => {
+      // Captured BEFORE locking: lockToggled must describe whether THIS import
+      // flipped the lock, so undoing a second import can't globally unlock what
+      // the first one legitimately locked.
+      const wasLocked = featuresLockedRef.current;
+      lockAllFeatures();
+      syncLabelsNow();
+      if (isEmbeddedRef.current) return;
+      const diff = captureImportDiff(beforeM, beforeP);
+      queueImportUndo({ ...diff, lockToggled: !wasLocked, text });
+    };
+
+    if (mode === "runtime") flyToLinkCamera(link);
+
+    // Recreate single marker from URL params
+    const markerParam = link.get("marker");
+    if (markerParam) {
+      const parts = markerParam.split("-");
+      const markerLat = parseFloat(parts[0]);
+      const markerLng = parseFloat(parts[1]);
+      if (!isNaN(markerLat) && !isNaN(markerLng)) {
+        const beforeM = new Set(markersRef.current);
+        const beforeP = new Set(pathsRef.current);
+        const m = createMarker([markerLng, markerLat]);
+        const topName = link.get("name");
+        const topDesc = link.get("description");
+        // New spec: name / description in top-level params.
+        // Legacy: name embedded as 3rd+ hyphen-joined segment of `marker=`.
+        // No decode here — link.get goes through URLSearchParams, which has
+        // already percent-decoded the whole value.
+        const markerName = topName != null
+          ? topName
+          : parts.length > 2 ? parts.slice(2).join("-") : "";
+        if (markerName) {
+          m._markerName = markerName;
+          updateMarkerLabel(m);
+        }
+        if (topDesc) m._description = topDesc;
+        finishLinkImport(beforeM, beforeP, "Imported 1 marker.");
+      } else {
+        onLinkImportFailed();
+      }
+    }
+
+    // Recreate path from URL hash (vertex polyline + optional extras blob).
+    // Deferred until the map style is loaded — materializePathFromShape calls
+    // ensurePathLayer → map.addSource/addLayer, which throw "Style is not done
+    // loading" if invoked before the style is ready.
+    const runPathFromHash = () => {
+      const rawHash = link.rawHash ? decodeURIComponent(link.rawHash) : "";
+      // Path intent is signaled by the `path` query param; hash carries the polyline.
+      const pathIntent = link.has("path");
+      if (!rawHash) {
+        if (pathIntent) onLinkImportFailed();
+        return;
+      }
+      const sepIdx = rawHash.indexOf("!");
+      const vertexPolyStr = sepIdx >= 0 ? rawHash.slice(0, sepIdx) : rawHash;
+      const extrasStr = sepIdx >= 0 ? rawHash.slice(sepIdx + 1) : "";
+
+      let decodedVerts = null;
+      try {
+        decodedVerts = polyline.decode(vertexPolyStr);
+      } catch {
+        decodedVerts = null;
+      }
+
+      let extras = {};
+      if (extrasStr) {
+        try {
+          extras = JSON.parse(b64uDecode(extrasStr));
+        } catch {
+          extras = {};
+        }
+      }
+
+      if (decodedVerts && decodedVerts.length >= 2) {
+        const forceSet = new Set(extras.fi || []);
+        const coords = decodedVerts.map(([lat, lng], i) => ({
+          long: lng,
+          lat,
+          ...(forceSet.has(i) ? { force: true } : {}),
+        }));
+
+        const sightParams = link.raw("sight");
+        const sights = sightParams
+          .map((s) => {
+            const parts = s.split("-");
+            const segIdx = parseInt(parts[0]);
+            const t = parseFloat(parts[1]);
+            if (Number.isNaN(segIdx) || Number.isNaN(t)) return null;
+            // New spec: segIdx-t-<encName>-<encDesc>, with hyphens inside name/desc
+            // escaped as %2D so split("-") gives at most 4 parts.
+            // Legacy: segIdx-t-<encName> where encName may contain literal hyphens →
+            // parts.length > 4 means legacy; join everything from index 2.
+            let name;
+            let description;
+            if (parts.length <= 2) {
+              // no extra slots
+            } else if (parts.length === 3) {
+              name = safeDecode(parts[2]) || undefined;
+            } else if (parts.length === 4) {
+              name = safeDecode(parts[2]) || undefined;
+              description = safeDecode(parts[3]) || undefined;
+            } else {
+              name = safeDecode(parts.slice(2).join("-")) || undefined;
+            }
+            return {
+              segmentIndex: segIdx,
+              t,
+              ...(name ? { name } : {}),
+              ...(description ? { description } : {}),
+            };
+          })
+          .filter(Boolean);
+
+        let snappedSegments;
+        if (Array.isArray(extras.sn)) {
+          snappedSegments = extras.sn.map(([code, poly]) => ({
+            type: CODE_TO_SEG_TYPE[code] || code,
+            coords: polyline.decode(poly).map(([lat, lng]) => [lng, lat]),
+          }));
+        }
+
+        const roadSnapParam = link.get("road_snap");
+        // New spec: name / description in top-level params.
+        // Legacy: name was emitted as `path=<encName>`.
+        const topName = link.get("name");
+        const legacyPathName = link.get("path");
+        const pathName = topName != null && topName !== ""
+          ? topName
+          : legacyPathName ? legacyPathName : undefined;
+        const pathDesc = link.get("description") || undefined;
+        const entry = {
+          coords,
+          name: pathName,
+          description: pathDesc,
+          roadSnap: roadSnapParam && roadSnapParam !== "free" ? roadSnapParam : undefined,
+          isCircuit: link.get("is_circuit") === "true",
+          closingForced: extras.cf === true,
+          snappedSegments,
+          routeDistance: extras.rd ?? undefined,
+          routeDuration: extras.rt ?? undefined,
+          sights: sights.length ? sights : undefined,
+        };
+
+        const beforeM = new Set(markersRef.current);
+        const beforeP = new Set(pathsRef.current);
+        materializePathFromShape(entry, {
+          createMarker,
+          pathHelpersRef,
+          updateMarkerLabel,
+          deserializeSnappedSegments,
+          pathsRef,
+        });
+
+        const nSights = sights.length;
+        const sightStr = nSights > 0 ? ` with ${nSights} sight${nSights > 1 ? "s" : ""}` : "";
+        finishLinkImport(beforeM, beforeP, `Imported 1 path${sightStr}.`);
+      } else if (pathIntent) {
+        onLinkImportFailed();
+      }
+    };
+    whenStyleReady(runPathFromHash);
+
+    // Recreate markers from a Firebase features collection
+    const featuresCollectionId = link.get("features_collection");
+    if (featuresCollectionId) {
+      getDoc(doc(db, "featuresCollections", featuresCollectionId))
+        .then((snap) => {
+          if (!snap.exists()) {
+            onLinkImportFailed();
+            return;
+          }
+          const data = snap.data();
+          // The fetch can outrun the style; materializing before it is ready
+          // throws "Style is not done loading" out of ensurePathLayer.
+          whenStyleReady(() => {
+            const beforeM = new Set(markersRef.current);
+            const beforeP = new Set(pathsRef.current);
+            const result = materializeFeatures(data, { createMarker, pathHelpersRef, updateMarkerLabel, deserializeSnappedSegments, pathsRef });
+            const parts = [];
+            if (result.markerCount > 0) parts.push(`${result.markerCount} marker${result.markerCount > 1 ? "s" : ""}`);
+            if (result.pathCount > 0) parts.push(`${result.pathCount} path${result.pathCount > 1 ? "s" : ""}`);
+            let msg = parts.length ? `Imported ${parts.join(", ")}.` : "Imported 0 features.";
+            if (result.skipped > 0) msg += ` ${result.skipped} skipped.`;
+            finishLinkImport(beforeM, beforeP, msg);
+          });
+        })
+        .catch(() => onLinkImportFailed());
+    }
+  };
+  importFromLinkRef.current = importFromLink;
 
   const handleDeleteMarker = (target) => {
     const marker = target || markerMenu?.marker;

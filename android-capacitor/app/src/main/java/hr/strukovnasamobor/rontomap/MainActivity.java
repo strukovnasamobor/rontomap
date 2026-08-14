@@ -51,6 +51,12 @@ public class MainActivity extends BridgeActivity {
     private int fileOpenSeq = 0;
     private boolean webViewPageLoaded = false;
 
+    // Same arrangement for share links handed to an already-running page.
+    private static final long LINK_OPEN_REDELIVER_MS = 60_000L;
+    private String pendingLinkOpenJs = null;
+    private long pendingLinkOpenUntilMs = 0L;
+    private int linkOpenSeq = 0;
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         // Register plugins BEFORE super.onCreate() so the bridge picks them up
@@ -267,6 +273,7 @@ public class MainActivity extends BridgeActivity {
                 super.onPageFinished(view, url);
                 webViewPageLoaded = true;
                 injectFileOpen();
+                injectLinkOpen();
             }
 
             @Override
@@ -353,35 +360,85 @@ public class MainActivity extends BridgeActivity {
         if (hasQuery) sb.append("?").append(query);
         if (hasFragment) sb.append("#").append(fragment);
         final String url = sb.toString();
+        final String appOrigin = serverUrl;
         getBridge().getWebView().post(() -> {
             WebView wv = getBridge().getWebView();
             if (wv == null) return;
-            if (isSameDocument(wv.getUrl(), url)) {
-                // loadUrl() here would be a *same-document* navigation — the page
-                // keeps running and never re-reads the URL, so the web app's
-                // boot-time import never fires and the link silently imports
-                // nothing. Happens whenever the incoming link matches what's
-                // already displayed: re-opening the same link, or a second path
-                // shared from the same camera position (identical query, only the
-                // fragment differs). Assigning location.href updates the URL
-                // synchronously for a fragment-only change, so the following
-                // reload() re-runs the page against the NEW url.
-                wv.evaluateJavascript(
-                    "location.href = " + JSONObject.quote(url) + "; location.reload();", null);
+            if (webViewPageLoaded && isAppDocument(wv.getUrl(), appOrigin)) {
+                // The app is already running on its own document: hand the link to
+                // the live page instead of navigating. Any navigation here —
+                // loadUrl, or the location.reload() this used to do for a
+                // same-document link — throws away everything unsaved: the path
+                // being drawn, unsaved markers, undo stacks, an active recording.
+                try {
+                    JSONObject payload = new JSONObject();
+                    payload.put("search", hasQuery ? "?" + query : "");
+                    payload.put("hash", hasFragment ? "#" + fragment : "");
+                    String token = "ln-" + System.currentTimeMillis() + "-" + (++linkOpenSeq);
+                    payload.put("token", token);
+                    // Same base64-the-whole-JSON discipline as the file payload: the
+                    // query carries user-authored names and descriptions and must
+                    // never break out of the JS literal into an origin that has the
+                    // Capacitor bridge attached.
+                    String payloadB64 = Base64.encodeToString(
+                            payload.toString().getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
+                    pendingLinkOpenJs = buildLinkOpenJs(payloadB64, token, url);
+                    pendingLinkOpenUntilMs =
+                            SystemClock.elapsedRealtime() + LINK_OPEN_REDELIVER_MS;
+                    injectLinkOpen();
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    wv.loadUrl(url); // fall back to the old behaviour rather than drop the link
+                }
             } else {
+                // Cold start, offline.html, or a WebView the system recreated: load
+                // the URL and let the web app's boot-time import handle it.
                 wv.loadUrl(url);
             }
         });
     }
 
-    /** True when both URLs address the same document, i.e. differ only by fragment. */
-    private static boolean isSameDocument(String current, String target) {
-        if (current == null || target == null) return false;
-        int ci = current.indexOf('#');
-        int ti = target.indexOf('#');
-        String cDoc = ci >= 0 ? current.substring(0, ci) : current;
-        String tDoc = ti >= 0 ? target.substring(0, ti) : target;
-        return cDoc.equals(tDoc);
+    /** True when the WebView currently shows the web app (not offline.html / about:blank / null). */
+    private static boolean isAppDocument(String current, String serverUrl) {
+        return current != null && serverUrl != null && current.startsWith(serverUrl);
+    }
+
+    /**
+     * Hands a share link to the already-running page. Mirrors buildFileOpenJs:
+     * arm a global, dispatch a bare event, then poll for the web app to take it
+     * and record the token in sessionStorage so a re-injection after a reload is
+     * a no-op rather than a duplicate import. (The web side also writes the token
+     * itself the moment it consumes the payload, closing the poll's ~100ms gap.)
+     */
+    private static String buildLinkOpenJs(String payloadB64, String token, String url) {
+        return "(function(){var t=" + JSONObject.quote(token) + ",u=" + JSONObject.quote(url) + ";"
+             + "try{if(sessionStorage.getItem('__rontoLinkOpen')===t)return;}catch(e){}"
+             + "window.__rontoLinkOpen=JSON.parse(decodeURIComponent(escape(atob('" + payloadB64 + "'))));"
+             + "window.dispatchEvent(new Event('rontomap-link-open'));"
+             + "var n=0,iv=setInterval(function(){"
+             + "if(typeof window.__rontoLinkOpen==='undefined'){"
+             + "try{sessionStorage.setItem('__rontoLinkOpen',t);}catch(e){}clearInterval(iv);return;}"
+             // Nobody took the payload within ~2s, so this page has no runtime
+             // import listener — an older deployed build. Fall back to navigating
+             // (the previous behaviour) rather than swallowing the link. The web
+             // side deletes the global before it even decides to refuse a busy
+             // import, so a refusal never reaches this branch.
+             + "if(++n>20){clearInterval(iv);"
+             + "var same=location.href.split('#')[0]===u.split('#')[0];"
+             + "location.href=u;if(same)location.reload();}"
+             + "},100);})();";
+    }
+
+    private void injectLinkOpen() {
+        if (pendingLinkOpenJs == null) return;
+        if (SystemClock.elapsedRealtime() > pendingLinkOpenUntilMs) {
+            pendingLinkOpenJs = null; // window closed — stop re-delivering
+            return;
+        }
+        if (getBridge() == null || getBridge().getWebView() == null) return;
+        final String js = pendingLinkOpenJs;
+        getBridge().getWebView().post(() ->
+            getBridge().getWebView().evaluateJavascript(js, null));
     }
 
     private void handleFileOpen(Uri uri) {
