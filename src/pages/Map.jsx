@@ -5374,6 +5374,44 @@ export default function Map() {
     if (pendingImportRef.current) clearTimeout(pendingImportRef.current.timerId);
   }, []);
 
+  // "Path saved" toast with a grace period to undo the auto-bookmark that
+  // finishing a path (or stopping a recording) performs. Undo only reverses the
+  // bookmark — the path stays on the map, it just stops being persisted.
+  // Deleting it outright is a separate flow with its own undo.
+  const pendingSaveRef = useRef(null);
+
+  const undoPendingSave = () => {
+    const pending = pendingSaveRef.current;
+    if (!pending) return;
+    clearTimeout(pending.timerId);
+    pendingSaveRef.current = null;
+    pending.target._saved = false;
+    persistSavedFeaturesRef.current?.();
+    bumpFeaturesVersion();
+    setToastMsg(null);
+  };
+
+  const queueSaveUndo = (target, label) => {
+    if (!target) return;
+    if (pendingSaveRef.current) clearTimeout(pendingSaveRef.current.timerId);
+    const token = Symbol("undoSave");
+    const timerId = setTimeout(() => {
+      if (pendingSaveRef.current?.token !== token) return;
+      pendingSaveRef.current = null;
+      setToastMsg((cur) => (cur && typeof cur === "object" && cur.__undo === token ? null : cur));
+    }, UNDO_MS);
+    pendingSaveRef.current = { target, timerId, token };
+    setToastMsg({
+      text: `${label} saved.`,
+      action: { label: "Undo", onClick: undoPendingSave },
+      __undo: token,
+    });
+  };
+
+  useEffect(() => () => {
+    if (pendingSaveRef.current) clearTimeout(pendingSaveRef.current.timerId);
+  }, []);
+
   const captureImportDiff = (beforeM, beforeP) => {
     const newMarkers = markersRef.current.filter((m) => !beforeM.has(m));
     const newPaths = pathsRef.current.filter((p) => !beforeP.has(p));
@@ -6772,10 +6810,11 @@ export default function Map() {
       }
       persistSavedFeatures();
       bumpFeaturesVersion();
+      queueSaveUndo(path, "Track");
+    } else {
+      setToastMsg("Track recorded.");
+      setTimeout(() => setToastMsg(null), 3000);
     }
-
-    setToastMsg("Track recorded.");
-    setTimeout(() => setToastMsg(null), 3000);
   };
 
   const handleFinishPath = () => {
@@ -6814,6 +6853,7 @@ export default function Map() {
       }
       persistSavedFeatures();
       bumpFeaturesVersion();
+      queueSaveUndo(path, "Path");
     }
   };
 

@@ -1,4 +1,4 @@
-- add msg on save creating and recorded path
+- fix import by links, it don't import if the previous import by link was done
 - fix import by opening file, it only imports if the app is already opened
 - on start/resume recording path remove toast msg "Click ...", time in format hh:mm, remove undo/redo buttons, when recording add to the right pause button, clicking start/stop tracking bearing do nothing, when stopped recording path save it and show toast msg with undo option
 
