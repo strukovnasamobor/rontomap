@@ -4068,16 +4068,16 @@ export default function Map() {
 
       try {
         const { name, base64 } = fileData;
+        // atob() yields a *binary* string — one char per byte. Using it as text
+        // mangles every non-ASCII character: UTF-8 "š" (C5 A1) reads back as
+        // "Å¡". Rebuild the bytes and decode them as UTF-8, which also strips a
+        // BOM (common in GPX/KML written by Windows tools, and fatal to
+        // JSON.parse for .rontojson/.geojson).
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
         const isBinary = name.toLowerCase().endsWith(".fit");
-        let content;
-        if (isBinary) {
-          const binary = atob(base64);
-          const bytes = new Uint8Array(binary.length);
-          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-          content = bytes.buffer;
-        } else {
-          content = atob(base64);
-        }
+        const content = isBinary ? bytes.buffer : new TextDecoder("utf-8").decode(bytes);
 
         const { data } = await importFromContent(name, content);
         const createMarker = createMarkerRef.current;
