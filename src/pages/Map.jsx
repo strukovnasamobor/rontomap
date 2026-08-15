@@ -38,8 +38,8 @@ import {
   timeOutline,
   createOutline,
   pencilOutline,
-  bookmark,
-  bookmarkOutline,
+  save,
+  saveOutline,
   ribbonOutline,
   walkOutline,
   bicycleOutline,
@@ -9215,7 +9215,7 @@ export default function Map() {
                 <IonIcon icon={analyticsOutline} style={featListFilter.paths ? undefined : { opacity: 0.3 }} />
               </ActionIconButton>
               <ActionIconButton label={featListFilter.saved ? "Hide saved features" : "Show saved features"} onClick={() => setFeatListFilter((f) => ({ ...f, saved: !f.saved }))}>
-                <IonIcon icon={bookmarkOutline} style={featListFilter.saved ? undefined : { opacity: 0.3 }} />
+                <IonIcon icon={saveOutline} style={featListFilter.saved ? undefined : { opacity: 0.3 }} />
               </ActionIconButton>
               <ActionIconButton label="Close" onClick={() => setOpenFeaturesList(false)}>
                 <IonIcon icon={closeOutline} />
@@ -9247,7 +9247,7 @@ export default function Map() {
                         </span>
                       </div>
                       {row._saved && !selected && (
-                        <IonIcon icon={bookmark} className="panel-saved-indicator" />
+                        <IonIcon icon={save} className="panel-saved-indicator" />
                       )}
                       {selected && (
                         <>
@@ -9291,7 +9291,7 @@ export default function Map() {
                               label={row._saved ? "Unsave" : "Save"}
                               onClick={(e) => { e.stopPropagation(); toggleSaveFeature(row); }}
                             >
-                              <IonIcon icon={row._saved ? bookmark : bookmarkOutline} />
+                              <IonIcon icon={row._saved ? save : saveOutline} />
                             </ActionIconButton>
                           )}
                           <ActionIconButton
@@ -9970,7 +9970,7 @@ export default function Map() {
                     <span className="panel-list-info">{headerInfo}</span>
                   </div>
                   {isSaved && !detailsActionsOpen && (
-                    <IonIcon icon={bookmark} className="panel-saved-indicator" />
+                    <IonIcon icon={save} className="panel-saved-indicator" />
                   )}
                   {detailsActionsOpen && (
                     <div className="panel-name-actions">
@@ -10011,7 +10011,7 @@ export default function Map() {
                           label={isSaved ? `Unsave ${featureNoun}` : `Save ${featureNoun}`}
                           onClick={(e) => { e.stopPropagation(); handleFeatureToggleSave(); }}
                         >
-                          <IonIcon icon={isSaved ? bookmark : bookmarkOutline} />
+                          <IonIcon icon={isSaved ? save : saveOutline} />
                         </ActionIconButton>
                       )}
                       <ActionIconButton label={`Delete ${featureNoun}`} onClick={(e) => { e.stopPropagation(); handleFeatureDelete(); }}>
