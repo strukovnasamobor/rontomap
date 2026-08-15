@@ -1,7 +1,10 @@
 FEATURE COLLECTIONS
     - icon: folder-open
-    - main actions on folders: sort-dist (disabled), sort-name, filter, link, embedded, export, back
-    - side actions in folders: rename, show/hide, save/unsave (show save icon instead of bookmark), delete
+    * main actions on folders: sort-dist (disabled), sort-name, filter, link, embedded, export, back
+    - side actions in folders: rename, show/hide, save/unsave, delete
+    - features collection are saved by default
+    - remember sort after reopening feature list
+    - remember the feature collection that is opened, when adding marker or creating path save at the opened feature collection
     - row interaction: Two-stage, same as feature rows: tap 1 selects and reveals the 4 side actions, tap 2 opens the collection
     - back affordance: Sticky ← <name> row at the top of the list — keeps all 7 toolbar buttons
     - new collection persistence: Session-only until its save action is used, like a new marker
@@ -9,9 +12,9 @@ FEATURE COLLECTIONS
     - ordering: Collections pin to the top of the root list, name-ascending, independent of the feature sort
     - show/hide + save/unsave: Cascade to contents
     - delete: Ask delete with features, or keep features (root); skip the dialog when the collection is empty
-
-    - to paths, sights and markers add cut-icon to move them in another collection or as a side action and selecting features
-    - imported features put in one folder with name date & time
+    * to paths, sights and markers add cut-icon to move them in another collection or as a side action and selecting features to be added
+    - after stopped recording path name it "Path recorded on dd-mm-yyyy" and save it in the root
+    * action button for import, imported features put in one folder and name it "Imported on dd-mm-yyyy"
 - side menu action review
 - add features pictures (indexDB <=> Firestore, export/import)
 - login - sync offline regions, route data, feature collections, traced paths

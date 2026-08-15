@@ -1352,13 +1352,15 @@ textarea.rename-modal-input {
 
 .panel-list-icon-marker,
 .panel-list-icon-sight,
-.panel-list-icon-path {
+.panel-list-icon-path,
+.panel-list-icon-collection {
   color: #333 !important;
 }
 
 .panel-dark .panel-list-icon-marker,
 .panel-dark .panel-list-icon-sight,
-.panel-dark .panel-list-icon-path {
+.panel-dark .panel-list-icon-path,
+.panel-dark .panel-list-icon-collection {
   color: #ccc !important;
 }
 
@@ -1399,6 +1401,49 @@ textarea.rename-modal-input {
   color: #888;
   font-size: 14px;
   padding: 10px 4px;
+}
+
+/* "Create new feature collection": a text affordance pinned to the end of the
+   root list. Single-line, so the text block centres in the 50px row. */
+.panel-list-item-add .panel-list-icon,
+.panel-list-item-add .panel-list-name,
+.panel-dark .panel-list-item-add .panel-list-icon,
+.panel-dark .panel-list-item-add .panel-list-name {
+  color: #ff6f00 !important;
+}
+
+.panel-list-item-add .panel-list-text {
+  justify-content: center;
+}
+
+/* Collection breadcrumb: sticky label naming the folder you are inside. Not a
+   control — leaving is the toolbar's back action. Lives inside the scroll
+   container, so it costs nothing at the root level. The background must be
+   opaque or list rows scroll visibly underneath it. */
+.panel-list-crumb {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px;
+  background: white;
+  font-size: 12px;
+  color: #888;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.panel-list-crumb span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel-dark .panel-list-crumb {
+  background: #1a1a1a;
+  color: #666;
+  border-bottom-color: rgba(255, 255, 255, 0.06);
 }
 
 /* Features list dark mode */

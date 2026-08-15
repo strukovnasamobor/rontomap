@@ -19,6 +19,7 @@
  * @property {string} name
  * @property {[number, number]} pos - [lat, lng]
  * @property {string} [description]
+ * @property {string} [collectionId] - persistence only; never emitted by collectFeatures
  */
 
 /**
@@ -34,6 +35,7 @@
  * @property {RontoSnappedSegment[]} [snappedSegments]
  * @property {RontoSight[]} [sights]
  * @property {string} [description]
+ * @property {string} [collectionId] - persistence only; never emitted by collectFeatures
  */
 
 /**
@@ -55,6 +57,33 @@
  * @property {number} t
  * @property {string} [name]
  * @property {string} [description]
+ */
+
+/**
+ * A feature collection (folder) as shown in the features list. One nesting
+ * level: collections never contain collections. Membership lives on the
+ * feature (collectionId), not here, so a deleted feature cannot dangle.
+ *
+ * @typedef {Object} RontoCollection
+ * @property {string} id
+ * @property {string} [name]
+ * @property {boolean} [hidden]
+ * @property {string} [description]
+ * @property {number} [createdAt]
+ */
+
+/**
+ * The saved-features localStorage blob (key: rontomap_saved_features).
+ *
+ * Deliberately NOT the same shape as RontoFeatureCollection: collections are
+ * not part of the import/export interchange. GPX, GeoJSON and FIT have no
+ * folder concept, scopeData rebuilds fresh object literals that would drop the
+ * field, and exportFeatures rejects a document with no markers and no paths.
+ *
+ * @typedef {Object} RontoSavedBlob
+ * @property {RontoMarker[]} markers
+ * @property {RontoPath[]} paths
+ * @property {RontoCollection[]} [collections]
  */
 
 /**

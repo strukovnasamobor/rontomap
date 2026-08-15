@@ -257,16 +257,45 @@ async function handleMapboxRequest(request) {
   }
 }
 
+// A navigation response carrying redirected=true is refused by Chrome (see
+// cachePutClean). Rebuilding from the body strips the flag.
+async function stripRedirect(response) {
+  if (!response.redirected) return response;
+  return new Response(await response.blob(), {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+}
+
 async function handleAppRequest(request) {
   const cache = await caches.open(APP_CACHE);
 
   if (request.mode === "navigate") {
+    // Network-first, cache only as the offline fallback. Serving the cached
+    // shell first stranded every client for one load after each deploy: the
+    // old index.html references hashed bundles that no longer exist, and
+    // Firebase Hosting rewrites those 404s to index.html — so the page dies on
+    // "Expected a JavaScript-or-Wasm module script but the server responded
+    // with a MIME type of text/html" and renders nothing.
+    const ctrl = new AbortController();
+    // Don't let a hanging network stall an offline launch.
+    const timer = setTimeout(() => ctrl.abort(), 3000);
+    try {
+      const fresh = await fetch(request, { signal: ctrl.signal });
+      if (fresh && fresh.ok) {
+        cachePutClean(cache, "/index.html").catch(() => {});
+        return await stripRedirect(fresh);
+      }
+    } catch {
+      // Offline or too slow — fall through to the cached shell.
+    } finally {
+      clearTimeout(timer);
+    }
+
     const shell =
       (await cache.match("/index.html")) || (await cache.match("/"));
-    if (shell) {
-      cachePutClean(cache, "/index.html").catch(() => {});
-      return shell;
-    }
+    if (shell) return shell;
   }
 
   try {

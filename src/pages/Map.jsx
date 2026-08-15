@@ -48,6 +48,7 @@ import {
   arrowBackOutline,
   eyeOutline,
   eyeOffOutline,
+  folderOpenOutline,
 } from "ionicons/icons";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDoubleTap } from "use-double-tap";
@@ -593,8 +594,20 @@ export default function Map() {
   const [sheetLevel, setSheetLevel] = useState(0);
   const preferredSheetLevel = useRef(0);
   const [showFeaturesList, setOpenFeaturesList] = useState(false);
-  const [featListSort, setFeatListSort] = useState("dist-asc");
+  // Remembered across reloads, like the map style. Validated on read so a
+  // hand-edited or stale value can't put the list into an unsortable state.
+  const [featListSort, setFeatListSort] = useState(() => {
+    const stored = localStorage.getItem("rontomap_feat_list_sort");
+    return /^(dist|name)-(asc|desc)$/.test(stored || "") ? stored : "dist-asc";
+  });
   const [featListFilter, setFeatListFilter] = useState({ markers: true, sights: true, paths: true, saved: true });
+  // Which collection the features list is drilled into; null is the root list.
+  // Collections never contain collections, so one level is all that's needed.
+  // This outlives the list panel — it is also the collection that newly added
+  // markers and paths are filed into — so it is mirrored into a ref for the
+  // long-lived map handlers set up once in the setup effect.
+  const [openCollectionId, setOpenCollectionId] = useState(null);
+  const openCollectionIdRef = useRef(null);
   const [mapCenterTick, setMapCenterTick] = useState(0);
   const [featuresVersion, setFeaturesVersion] = useState(0);
   const bumpFeaturesVersion = useCallback(() => setFeaturesVersion((v) => v + 1), []);
@@ -636,6 +649,8 @@ export default function Map() {
   const [descAlert, setDescAlert] = useState(false);
   const descTargetRef = useRef(null);
   const [deleteAllAlert, setDeleteAllAlert] = useState(false);
+  // { collection, count } — only opened for a collection that has members.
+  const [deleteCollectionAlert, setDeleteCollectionAlert] = useState(null);
   const [cancelPathAlert, setCancelPathAlert] = useState(false);
   const cancelPathAlertRef = useRef(false);
   const [circuitAlert, setCircuitAlert] = useState(false);
@@ -657,6 +672,9 @@ export default function Map() {
   const isPathModeRef = useRef(false);
   const activePathRef = useRef(null);
   const pathsRef = useRef([]);
+  // Feature collections (folders). Plain objects — no Mapbox presence — kept in
+  // a ref like markers and paths so every handler can mutate them in place.
+  const collectionsRef = useRef([]);
   const pendingDeleteRef = useRef(null);
   const pathPointToastShownRef = useRef(false);
   const pathClickHandledRef = useRef(false);
@@ -1108,6 +1126,11 @@ export default function Map() {
     return rem > 0 ? `${hrs} h ${rem} min` : `${hrs} h`;
   };
 
+  // dd-mm-yyyy, in local time — a recording is named for the day the user made
+  // it, so this must not slide across a timezone via toISOString().
+  const formatDateDMY = (date) =>
+    `${String(date.getDate()).padStart(2, "0")}-${String(date.getMonth() + 1).padStart(2, "0")}-${date.getFullYear()}`;
+
   const formatRecordingDuration = (seconds) => {
     const total = Math.max(0, Math.floor(seconds ?? 0));
     const hrs = Math.floor(total / 3600);
@@ -1119,6 +1142,36 @@ export default function Map() {
     if (seconds == null) return "";
     const eta = new Date(Date.now() + seconds * 1000);
     return eta.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  };
+
+  // Screen-space hit test against the marker elements, for cases where the
+  // markers can't receive pointer events themselves (embedded mode makes them
+  // click-through so a drag that starts on a pin still pans the map).
+  const findMarkerAtPoint = (point) => {
+    const map = mapRef.current;
+    if (!map) return null;
+    const container = map.getContainer().getBoundingClientRect();
+    const x = container.left + point.x;
+    const y = container.top + point.y;
+    const TOLERANCE = 4; // a little slack for finger taps
+    let hit = null;
+    let hitDist = Infinity;
+    for (const marker of markersRef.current) {
+      const el = marker.getElement();
+      if (!el || el.classList.contains("mapboxgl-user-location")) continue;
+      const r = el.getBoundingClientRect();
+      if (!r.width || !r.height) continue; // hidden markers
+      if (x < r.left - TOLERANCE || x > r.right + TOLERANCE) continue;
+      if (y < r.top - TOLERANCE || y > r.bottom + TOLERANCE) continue;
+      const dx = x - (r.left + r.width / 2);
+      const dy = y - (r.top + r.height / 2);
+      const dist = dx * dx + dy * dy;
+      if (dist < hitDist) {
+        hitDist = dist;
+        hit = marker;
+      }
+    }
+    return hit;
   };
 
   // Initialize map and add controls
@@ -1189,21 +1242,10 @@ export default function Map() {
         e.stopPropagation();
         if (wasDragged) return;
         if (isPathModeRef.current) return;
-        // Embedded: no detail panel — hand the click to the embedding page instead
-        if (isEmbeddedRef.current) {
-          const pos = marker.getLngLat();
-          postEmbeddedEvent("marker-click", {
-            marker: {
-              name: marker._markerName || "",
-              description: marker._description || "",
-              lng: pos.lng,
-              lat: pos.lat,
-              isSight: !!marker._sightPath,
-              index: markersRef.current.indexOf(marker),
-            },
-          });
-          return;
-        }
+        // Embedded features are click-through (see the .embedded rule in
+        // Map.css), so this never fires there — the map click handler
+        // hit-tests markers and reports them to the embedding page instead.
+        if (isEmbeddedRef.current) return;
         // Debounce so a second click within 300ms toggles fullscreen instead of opening details
         if (markerClickTimer) {
           clearTimeout(markerClickTimer);
@@ -3342,6 +3384,27 @@ export default function Map() {
           return;
         }
 
+        // Embedded: markers are click-through so panning still works over a
+        // pin, which means their own click listener never fires. Hit-test the
+        // click against the marker elements and report it to the parent page.
+        if (isEmbeddedRef.current) {
+          const marker = findMarkerAtPoint(e.point);
+          if (marker) {
+            const pos = marker.getLngLat();
+            postEmbeddedEvent("marker-click", {
+              marker: {
+                name: marker._markerName || "",
+                description: marker._description || "",
+                lng: pos.lng,
+                lat: pos.lat,
+                isSight: !!marker._sightPath,
+                index: markersRef.current.indexOf(marker),
+              },
+            });
+            return;
+          }
+        }
+
 
 
         // Feature selection: click on finished path opens detail panel
@@ -3366,7 +3429,7 @@ export default function Map() {
           //  1. Details panel open → close it.
           //  2. Features list open → close it.
           //  3. Offline maps panel open → close it.
-          //  4. Nothing open → open the list (sorted by current map center).
+          //  4. Nothing open → open the list, keeping the sort the user chose.
           if (selectedFeatureRef.current) {
             setSelectedFeature(null);
             return;
@@ -3379,7 +3442,6 @@ export default function Map() {
             setShowOfflineMapsPanel(false);
             return;
           }
-          setFeatListSort("dist-asc");
           setOpenFeaturesList(true);
           setSheetLevel(preferredSheetLevel.current);
         }
@@ -4200,20 +4262,33 @@ export default function Map() {
     const map = mapRef.current;
     if (!map) return;
     const filter = featListFilterRef.current;
+    // Hiding a folder hides everything in it on the map. Only _hidden feeds
+    // this — a collection pending deletion propagates _pendingDelete to its
+    // members at queue time instead, so a "keep features" delete doesn't blink
+    // its contents off the map during the undo window.
+    const hiddenCollectionIds = new Set(
+      collectionsRef.current.filter((c) => c._hidden).map((c) => c._id),
+    );
+    const inHiddenCollection = (f) =>
+      !!f?._collectionId && hiddenCollectionIds.has(f._collectionId);
     for (const m of markersRef.current) {
       const isSight = !!m._sightPath;
       const typeAllowed = isSight ? (filter.sights && filter.paths) : filter.markers;
       const savedHidden = !filter.saved && (isSight ? !!m._sightPath._saved : !!m._saved);
+      // A sight has no collection of its own — it follows its parent path.
+      const owner = isSight ? m._sightPath : m;
       const hidden = !typeAllowed
         || savedHidden
         || !!m._hidden
         || !!m._pendingDelete
+        || inHiddenCollection(owner)
         || (isSight && (!!m._sightPath._hidden || !!m._sightPath._pendingDelete));
       const el = m.getElement();
       if (el) el.style.display = hidden ? "none" : "";
     }
     for (const p of pathsRef.current) {
-      const hidden = !filter.paths || (!filter.saved && !!p._saved) || !!p._hidden || !!p._pendingDelete;
+      const hidden = !filter.paths || (!filter.saved && !!p._saved) || !!p._hidden || !!p._pendingDelete
+        || inHiddenCollection(p);
       const vis = hidden ? "none" : "visible";
       if (map.getLayer(p.layerId)) map.setLayoutProperty(p.layerId, "visibility", vis);
       if (map.getLayer(`${p.layerId}-hit`)) map.setLayoutProperty(`${p.layerId}-hit`, "visibility", vis);
@@ -4660,9 +4735,20 @@ export default function Map() {
     if (!showFeaturesList) {
       setSelectedFeatureListRef(null);
       setSkipPanelAnim(false);
+      // openCollectionId deliberately survives the list closing: it is the
+      // active collection, and new markers and paths are filed into it.
     }
     if (showFeaturesList) bumpFeaturesVersion();
   }, [showFeaturesList, bumpFeaturesVersion]);
+
+  // Landing mid-list in an unrelated view is disorienting.
+  useEffect(() => {
+    if (listScrollRef.current) listScrollRef.current.scrollTop = 0;
+  }, [openCollectionId]);
+
+  useEffect(() => {
+    openCollectionIdRef.current = openCollectionId;
+  }, [openCollectionId]);
 
   // Push the current filter / hidden state onto the map. Mirrors the filter
   // into a ref first so the style-change handler sees the latest value.
@@ -5182,13 +5268,33 @@ export default function Map() {
     bumpFeaturesVersion();
   };
 
+  // Removing a collection. In the cascade case paths must go before markers:
+  // performDeletePath also strips the path's sights out of markersRef, so a
+  // single undifferentiated pass would operate on already-removed objects.
+  const performDeleteCollection = (pending) => {
+    const { target, cascade, members = [] } = pending;
+    if (!target) return;
+    if (cascade) {
+      members.forEach((f) => { delete f._pendingDelete; });
+      members.filter((f) => f.vertices).forEach((p) => performDeletePath(p));
+      members.filter((f) => !f.vertices).forEach((m) => performDeleteMarker(m));
+    }
+    // In the keep-features case _collectionId was already stripped at queue
+    // time, so the members are back at root and need nothing further.
+    collectionsRef.current = collectionsRef.current.filter((c) => c !== target);
+    setOpenCollectionId((cur) => (cur === target._id ? null : cur));
+    persistSavedFeaturesRef.current?.();
+    bumpFeaturesVersion();
+  };
+
   const commitPendingDelete = () => {
     const pending = pendingDeleteRef.current;
     if (!pending) return;
     if (pending.timerId) clearTimeout(pending.timerId);
     pendingDeleteRef.current = null;
     delete pending.target._pendingDelete;
-    if (pending.type === "path") performDeletePath(pending.target);
+    if (pending.type === "collection") performDeleteCollection(pending);
+    else if (pending.type === "path") performDeletePath(pending.target);
     else performDeleteMarker(pending.target);
     setToastMsg((cur) =>
       cur && typeof cur === "object" && cur.__undo === pending.token ? null : cur
@@ -5201,6 +5307,10 @@ export default function Map() {
     if (pending.timerId) clearTimeout(pending.timerId);
     pendingDeleteRef.current = null;
     delete pending.target._pendingDelete;
+    if (pending.type === "collection") {
+      if (pending.cascade) pending.members.forEach((f) => { delete f._pendingDelete; });
+      else pending.members.forEach((f) => { f._collectionId = pending.target._id; });
+    }
     bumpFeaturesVersion();
     setToastMsg(null);
   };
@@ -5212,18 +5322,35 @@ export default function Map() {
     }
   }, []);
 
-  const queueDelete = (target, type) => {
+  const queueDelete = (target, type, opts = {}) => {
     if (!target) return;
     if (pendingDeleteRef.current) commitPendingDelete();
     target._pendingDelete = true;
+
+    // Preview the outcome for the length of the undo window. Cascade marks the
+    // members pending too, which the existing _pendingDelete checks in the list
+    // and in applyFeatureVisibility already honour. Keep strips membership now,
+    // so the features pop up at root immediately — exactly what committing
+    // will mean.
+    let members = [];
+    if (type === "collection") {
+      const found = collectionMembers(target._id);
+      members = [...found.markers, ...found.paths];
+      if (opts.cascade) members.forEach((f) => { f._pendingDelete = true; });
+      else members.forEach((f) => { delete f._collectionId; });
+    }
+
     const token = Symbol("undo");
     const timerId = setTimeout(() => {
       // Only commit if this pending is still the active one.
       if (pendingDeleteRef.current?.token === token) commitPendingDelete();
     }, UNDO_MS);
-    pendingDeleteRef.current = { target, type, timerId, token };
+    pendingDeleteRef.current = { target, type, timerId, token, cascade: !!opts.cascade, members };
     bumpFeaturesVersion();
-    const label = type === "path" ? "Path" : type === "sight" ? "Sight" : "Marker";
+    const label = type === "path" ? "Path"
+      : type === "sight" ? "Sight"
+      : type === "collection" ? "Collection"
+      : "Marker";
     setToastMsg({
       text: `${label} deleted`,
       action: { label: "Undo", onClick: undoPendingDelete },
@@ -5692,7 +5819,9 @@ export default function Map() {
 
   const openRenameFromListItem = (item) => {
     if (!item?.ref) return;
-    if (item.type === "path") {
+    if (item.type === "collection") {
+      namingTargetRef.current = { type: "collection", target: item.ref };
+    } else if (item.type === "path") {
       namingTargetRef.current = { type: "path", target: item.ref };
     } else {
       namingTargetRef.current = { type: "marker", target: item.ref };
@@ -5700,9 +5829,58 @@ export default function Map() {
     setNameAlert(true);
   };
 
+  // The collection is built here but deliberately not pushed into
+  // collectionsRef — the push happens when the name dialog commits, so
+  // cancelling creates nothing.
+  const handleCreateCollection = () => {
+    namingTargetRef.current = {
+      type: "collection",
+      isNew: true,
+      target: {
+        _id: generateFeatureId(),
+        name: "",
+        _isCollection: true,
+        createdAt: Date.now(),
+      },
+    };
+    setNameAlert(true);
+  };
+
+  // Shared by the name dialog's Save and Clear. For a brand-new collection this
+  // is the moment it starts existing, and it is saved from birth like every
+  // other newly created feature — the row's save action can unsave it after.
+  // The caller persists: isFeaturePersisted(t.target) is true by the time it
+  // checks, because _saved is set here first.
+  const commitCollectionName = (t, name) => {
+    t.target.name = name;
+    if (t.isNew && !collectionsRef.current.includes(t.target)) {
+      t.target._saved = true;
+      collectionsRef.current.push(t.target);
+      t.isNew = false;
+    }
+  };
+
   const deleteFromListItem = (item) => {
     if (!item?.ref) return;
+    if (item.type === "collection") {
+      const { markers, paths } = collectionMembers(item.ref._id);
+      const count = markers.length + paths.length;
+      // Asking is pointless when both answers do the same thing, and the undo
+      // toast already covers a mis-tap.
+      if (count === 0) {
+        queueDelete(item.ref, "collection", { cascade: false });
+        return;
+      }
+      setDeleteCollectionAlert({ collection: item.ref, count });
+      return;
+    }
     queueDelete(item.ref, item.type);
+  };
+
+  const confirmDeleteCollection = (cascade) => {
+    const target = deleteCollectionAlert?.collection;
+    setDeleteCollectionAlert(null);
+    if (target) queueDelete(target, "collection", { cascade });
   };
 
   // === Saved-feature persistence (localStorage) ===
@@ -5717,8 +5895,28 @@ export default function Map() {
       ? crypto.randomUUID()
       : `f-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
+  // Membership is a live query over the feature refs — nothing to keep in sync
+  // when a feature is deleted, and a member can never dangle. Sights follow
+  // their parent path, so they are never listed independently.
+  const collectionMembers = useCallback((id) => ({
+    markers: markersRef.current.filter((m) => !m._sightPath && m._collectionId === id),
+    paths: pathsRef.current.filter((p) => p._collectionId === id),
+  }), []);
+
   const persistSavedFeatures = useCallback(() => {
     try {
+      // A feature may only record its collectionId when that collection is
+      // itself saved. Otherwise a reload would resurrect the feature pointing
+      // at a folder that no longer exists, and it would vanish from the list.
+      const savedCollectionIds = new Set(
+        collectionsRef.current.filter((c) => c._saved).map((c) => c._id),
+      );
+      const tagCollection = (entry, f) => {
+        if (f._collectionId && savedCollectionIds.has(f._collectionId)) {
+          entry.collectionId = f._collectionId;
+        }
+      };
+
       const savedMarkers = [];
       for (const m of markersRef.current) {
         if (!m._saved || m._sightPath) continue;
@@ -5730,6 +5928,7 @@ export default function Map() {
           ...(m._hidden ? { hidden: true } : {}),
           ...(m._description ? { description: m._description } : {}),
         };
+        tagCollection(entry, m);
         savedMarkers.push(entry);
       }
 
@@ -5767,12 +5966,23 @@ export default function Map() {
             return am;
           });
         }
+        tagCollection(pathData, p);
         savedPaths.push(pathData);
+      }
+
+      const savedCollections = [];
+      for (const c of collectionsRef.current) {
+        if (!c._saved) continue;
+        if (!c._id) c._id = generateFeatureId();
+        const entry = { id: c._id, name: c.name || "", createdAt: c.createdAt ?? Date.now() };
+        if (c._hidden) entry.hidden = true;
+        if (c._description) entry.description = c._description;
+        savedCollections.push(entry);
       }
 
       localStorage.setItem(
         SAVED_FEATURES_KEY,
-        JSON.stringify({ markers: savedMarkers, paths: savedPaths }),
+        JSON.stringify({ markers: savedMarkers, paths: savedPaths, collections: savedCollections }),
       );
     } catch (e) {
       console.warn("Failed to persist saved features", e);
@@ -5784,16 +5994,24 @@ export default function Map() {
     (item) => {
       if (!item?.ref) return;
       const target = item.ref;
-      if (!target._saved) {
-        target._saved = true;
-        if (!target._id) target._id = generateFeatureId();
-      } else {
-        target._saved = false;
+      const next = !target._saved;
+      target._saved = next;
+      if (next && !target._id) target._id = generateFeatureId();
+      if (item.type === "collection") {
+        // Saving a folder saves its contents; unsaving drops them too. The
+        // asymmetry is not available: persistSavedFeatures refuses to write a
+        // collectionId for an unsaved collection, so a member left saved would
+        // silently reappear at root on the next reload — an invisible move.
+        const { markers, paths } = collectionMembers(target._id);
+        for (const f of [...markers, ...paths]) {
+          f._saved = next;
+          if (next && !f._id) f._id = generateFeatureId();
+        }
       }
       persistSavedFeatures();
       bumpFeaturesVersion();
     },
-    [persistSavedFeatures, bumpFeaturesVersion],
+    [persistSavedFeatures, bumpFeaturesVersion, collectionMembers],
   );
 
   const hydrateSavedFeatures = useCallback(() => {
@@ -5801,10 +6019,40 @@ export default function Map() {
       const raw = localStorage.getItem(SAVED_FEATURES_KEY);
       if (!raw) return;
       const data = JSON.parse(raw);
-      if (!data || (!data.markers?.length && !data.paths?.length)) return;
+      if (!data || (!data.markers?.length && !data.paths?.length && !data.collections?.length)) return;
+
+      // Collections first, and above the map-ready guard below: they hold no
+      // Mapbox objects, and a feature can only resolve its collectionId against
+      // a collection that actually hydrated.
+      const hydratedCollectionIds = new Set();
+      for (const c of data.collections || []) {
+        if (!c?.id) continue;
+        if (!collectionsRef.current.some((x) => x._id === c.id)) {
+          collectionsRef.current.push({
+            _id: c.id,
+            name: c.name || "",
+            _isCollection: true,
+            createdAt: c.createdAt ?? Date.now(),
+            _saved: true,
+            ...(c.hidden ? { _hidden: true } : {}),
+            ...(c.description ? { _description: c.description } : {}),
+          });
+        }
+        hydratedCollectionIds.add(c.id);
+      }
+      // An unresolvable collectionId degrades to "feature sits at root" — never
+      // to a feature that exists but can't be reached from any list.
+      const restoreCollection = (obj, entry) => {
+        if (entry?.collectionId && hydratedCollectionIds.has(entry.collectionId)) {
+          obj._collectionId = entry.collectionId;
+        }
+      };
 
       const createMarker = createMarkerRef.current;
-      if (!createMarker || !pathHelpersRef.current) return;
+      if (!createMarker || !pathHelpersRef.current) {
+        bumpFeaturesVersion();
+        return;
+      }
 
       const markersBefore = markersRef.current.length;
       const pathsBefore = pathsRef.current.length;
@@ -5828,6 +6076,7 @@ export default function Map() {
         if (entry?.id) m._id = entry.id;
         if (entry?.hidden) m._hidden = true;
         if (entry?.description) m._description = entry.description;
+        restoreCollection(m, entry);
       }
       const savedPathData = data.paths || [];
       for (let i = pathsBefore; i < pathsRef.current.length; i++) {
@@ -5837,6 +6086,7 @@ export default function Map() {
         if (entry?.id) p._id = entry.id;
         if (entry?.hidden) p._hidden = true;
         if (entry?.description) p._description = entry.description;
+        restoreCollection(p, entry);
         if (entry?.sights && p.sights) {
           for (let j = 0; j < Math.min(entry.sights.length, p.sights.length); j++) {
             if (entry.sights[j]?.hidden) p.sights[j]._hidden = true;
@@ -6091,6 +6341,9 @@ export default function Map() {
     const newMarker = createMarkerRef.current(pos, "#ff6f00");
     if (description) newMarker._description = description;
     if (hidden) newMarker._hidden = true;
+    // A sight inherits its collection from its path; leaving the path must not
+    // silently eject it from the folder it was showing in.
+    if (path._collectionId) newMarker._collectionId = path._collectionId;
     if (name) {
       newMarker._markerName = name;
       updateMarkerLabel(newMarker);
@@ -6133,6 +6386,15 @@ export default function Map() {
     setFeatListSort((prev) => (prev === `${field}-asc` ? `${field}-desc` : `${field}-asc`));
   };
 
+  // Persist the chosen sort so reopening the list — or the app — keeps it.
+  useEffect(() => {
+    try {
+      localStorage.setItem("rontomap_feat_list_sort", featListSort);
+    } catch {
+      /* storage unavailable (private mode) — the sort just won't be remembered */
+    }
+  }, [featListSort]);
+
   const featuresListItems = useMemo(() => {
     const map = mapRef.current;
     if (!map) return [];
@@ -6143,10 +6405,17 @@ export default function Map() {
     const refLng = ref.lng;
     const items = [];
 
+    // The root list shows features that belong to no collection; a drilled-in
+    // list shows only that collection's members. `?? null` on both sides so an
+    // absent _collectionId reads as root.
+    const scopeId = openCollectionId ?? null;
+    const inScope = (f) => (f._collectionId ?? null) === scopeId;
+
     if (featListFilter.markers) {
       for (const m of markersRef.current) {
         if (m._sightPath) continue;
         if (m._pendingDelete) continue;
+        if (!inScope(m)) continue;
         if (!featListFilter.saved && m._saved) continue;
         const ll = m.getLngLat();
         items.push({
@@ -6165,6 +6434,7 @@ export default function Map() {
       for (const p of pathsRef.current) {
         if (!p.isFinished) continue;
         if (p._pendingDelete) continue;
+        if (!inScope(p)) continue;
         if (!featListFilter.saved && p._saved) continue;
         if (!p.vertices || p.vertices.length === 0) continue;
         const bounds = new mapboxgl.LngLatBounds();
@@ -6224,15 +6494,57 @@ export default function Map() {
       return 0;
     });
 
-    return items;
+    // One nesting level: no collections inside collections.
+    if (scopeId != null) return items;
+
+    // Collections are always name-ascending among themselves — they have no
+    // location, so the distance sort can say nothing meaningful about them.
+    // They lead the list when sorting by name, where they belong to the same
+    // ordering as the features, and trail it when sorting by distance, where
+    // they don't. The type filters deliberately do not apply: a folder is a
+    // container, and hiding the only door to its contents would strand them.
+    // The saved filter does apply, with the same inverted sense as features:
+    // save state cascades, so a folder and its contents hide together.
+    const collectionRows = [];
+    for (const c of collectionsRef.current) {
+      if (c._pendingDelete) continue;
+      if (!featListFilter.saved && c._saved) continue;
+      const members = collectionMembers(c._id);
+      collectionRows.push({
+        type: "collection",
+        name: c.name || "Collection",
+        dist: 0,
+        length: 0,
+        ref: c,
+        _saved: !!c._saved,
+        count: members.markers.length + members.paths.length,
+      });
+    }
+    // Under the name sort collections share the features' ordering, so they
+    // follow its direction too. Under the distance sort there is no direction
+    // to follow — they have no location — so they stay name-ascending.
+    const collMul = field === "name" ? mul : 1;
+    collectionRows.sort((a, b) => collMul * a.name.localeCompare(b.name));
+
+    return field === "name" ? [...collectionRows, ...items] : [...items, ...collectionRows];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [featListFilter, featListSort, mapCenterTick, featuresVersion]);
+  }, [featListFilter, featListSort, mapCenterTick, featuresVersion, openCollectionId]);
 
   const handleFeatureListClick = (item) => {
     // Second tap on the already-selected row opens the details panel.
     // The list stays mounted (hidden via CSS) so its scroll position
     // is preserved, and the details panel inherits the current sheet level.
     if (selectedFeatureListRef === item.ref) {
+      // Activating a collection means entering it, not opening a details panel.
+      if (item.type === "collection") {
+        if (featListGlowCleanupRef.current) {
+          featListGlowCleanupRef.current();
+          featListGlowCleanupRef.current = null;
+        }
+        setSelectedFeatureListRef(null);
+        setOpenCollectionId(item.ref._id);
+        return;
+      }
       listRestoreRef.current = {
         scrollTop: listScrollRef.current?.scrollTop || 0,
       };
@@ -6251,6 +6563,10 @@ export default function Map() {
       featListGlowCleanupRef.current();
       featListGlowCleanupRef.current = null;
     }
+
+    // A collection has no map presence: nothing to glow, nothing to zoom to.
+    // The code below reads .getElement()/.vertices and would throw on one.
+    if (item.type === "collection") return;
 
     const map = mapRef.current;
     const pp = getPanelPadding();
@@ -6491,8 +6807,35 @@ export default function Map() {
     setMapClickMenu(null);
   };
 
+  // A newly added marker or path joins whichever collection the features list
+  // is currently showing, so opening a folder and adding to it needs no
+  // separate move step. Guarded on the collection still existing — deleting it
+  // while it is open would otherwise file new features into a phantom folder.
+  // Only for features the user creates deliberately: path vertices, midpoints
+  // and sights are not features in their own right, and a recorded track goes
+  // to the root by design.
+  const fileInActiveCollection = (feature) => {
+    const id = openCollectionIdRef.current;
+    if (id && collectionsRef.current.some((c) => c._id === id)) {
+      feature._collectionId = id;
+    }
+  };
+
+  // A newly added feature is bookmarked straight away, the same way finishing a
+  // path or stopping a recording already does. No undo toast here: the details
+  // panel opens on top of it and carries the save action, so unsaving is one
+  // tap away and better placed than a toast the panel would sit over.
+  const saveNewFeature = (feature) => {
+    feature._saved = true;
+    if (!feature._id) feature._id = generateFeatureId();
+    persistSavedFeatures();
+    bumpFeaturesVersion();
+  };
+
   const handleAddMarkerHere = () => {
     const m = createMarkerRef.current(mapClickMenu.lngLat);
+    fileInActiveCollection(m);
+    saveNewFeature(m);
     setMapClickMenu(null);
     // Auto-open the detail panel; the selectedFeature effect handles drag enable.
     setSelectedFeature({ type: "marker", marker: m });
@@ -6504,6 +6847,8 @@ export default function Map() {
     if (!map) return;
     const center = map.getCenter();
     const m = createMarkerRef.current(center);
+    fileInActiveCollection(m);
+    saveNewFeature(m);
     setIsSideMenuOpen(false);
     setSelectedFeature({ type: "marker", marker: m });
     setSheetLevel(preferredSheetLevel.current);
@@ -6561,6 +6906,7 @@ export default function Map() {
       midpoints: [],
       isFinished: false,
     };
+    fileInActiveCollection(newPath);
     pathsRef.current.push(newPath);
     activePathRef.current = newPath;
     pathUndoStackRef.current = [];
@@ -6890,6 +7236,11 @@ export default function Map() {
 
     path.isFinished = true;
     delete path.isTrack;
+    // A recording is started from the map, not from inside a folder, so it is
+    // filed at the root regardless of which collection the list is showing —
+    // and it names itself, since there is no naming step when a recording ends.
+    if (!path.name) path.name = `Path recorded on ${formatDateDMY(new Date())}`;
+    delete path._collectionId;
     h.updatePathLine(path);
     h.updateVertexStyles(path);
 
@@ -8827,10 +9178,14 @@ export default function Map() {
       <RenameModal
         isOpen={nameAlert}
         isDark={idMapStyle === "rontomap_streets_dark"}
-        title={namingTargetRef.current?.type === "path" ? "Path name" : "Marker name"}
+        title={
+          namingTargetRef.current?.type === "collection"
+            ? (namingTargetRef.current?.isNew ? "New collection" : "Collection name")
+            : namingTargetRef.current?.type === "path" ? "Path name" : "Marker name"
+        }
         maxLength={50}
         initialValue={
-          namingTargetRef.current?.type === "path"
+          namingTargetRef.current?.type === "path" || namingTargetRef.current?.type === "collection"
             ? namingTargetRef.current?.target?.name ?? ""
             : namingTargetRef.current?.target?._markerName ?? ""
         }
@@ -8843,7 +9198,9 @@ export default function Map() {
         onClear={() => {
           const t = namingTargetRef.current;
           if (t) {
-            if (t.type === "path") {
+            if (t.type === "collection") {
+              commitCollectionName(t, "");
+            } else if (t.type === "path") {
               t.target.name = "";
             } else {
               t.target._markerName = "";
@@ -8857,7 +9214,9 @@ export default function Map() {
         onSave={(name) => {
           const t = namingTargetRef.current;
           if (t) {
-            if (t.type === "path") {
+            if (t.type === "collection") {
+              commitCollectionName(t, name);
+            } else if (t.type === "path") {
               t.target.name = name;
             } else {
               t.target._markerName = name;
@@ -8919,6 +9278,22 @@ export default function Map() {
         buttons={[
           { text: "Cancel", role: "cancel" },
           { text: "Delete", handler: confirmDeleteAllFeatures },
+        ]}
+      />
+      <IonAlert
+        isOpen={!!deleteCollectionAlert}
+        cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
+        onDidDismiss={() => setDeleteCollectionAlert(null)}
+        header="Delete collection"
+        message={
+          `"${deleteCollectionAlert?.collection?.name || "Collection"}" contains ` +
+          `${deleteCollectionAlert?.count} ` +
+          `${deleteCollectionAlert?.count === 1 ? "feature" : "features"}.`
+        }
+        buttons={[
+          { text: "Cancel", role: "cancel" },
+          { text: "Keep features", handler: () => confirmDeleteCollection(false) },
+          { text: "Delete features", handler: () => confirmDeleteCollection(true) },
         ]}
       />
       <IonAlert
@@ -9204,6 +9579,28 @@ export default function Map() {
         const items = featuresListItems;
         const [sortField, sortDir] = featListSort.split("-");
         const darkClass = idMapStyle === "rontomap_streets_dark" ? " panel-dark" : "";
+        // Resolve the open collection once. If the id no longer resolves the
+        // view degrades to root rather than showing an unexplained empty list.
+        const openCollection =
+          collectionsRef.current.find((c) => c._id === openCollectionId) || null;
+        const exitCollection = () => {
+          setSelectedFeatureListRef(null);
+          setOpenCollectionId(null);
+        };
+        // The create row sits with the collections block, on the far side from
+        // the features: above them when sorting by name (collections lead the
+        // list), below them when sorting by distance (collections trail it).
+        const createCollectionRow = (forField) => {
+          if (openCollection || sortField !== forField) return null;
+          return (
+            <div className="panel-list-item panel-list-item-add" onClick={handleCreateCollection}>
+              <IonIcon icon={addOutline} className="panel-list-icon" />
+              <div className="panel-list-text">
+                <span className="panel-list-name">Create new feature collection</span>
+              </div>
+            </div>
+          );
+        };
         // Keep the list mounted while details are shown so scroll position
         // is preserved — just hide it visually.
         const hiddenClass = selectedFeature ? " panel-hidden" : "";
@@ -9243,16 +9640,31 @@ export default function Map() {
               <ActionIconButton label={featListFilter.saved ? "Hide saved features" : "Show saved features"} onClick={() => setFeatListFilter((f) => ({ ...f, saved: !f.saved }))}>
                 <IonIcon icon={saveOutline} style={featListFilter.saved ? undefined : { opacity: 0.3 }} />
               </ActionIconButton>
-              <ActionIconButton label="Close" onClick={() => setOpenFeaturesList(false)}>
-                <IonIcon icon={closeOutline} />
+              <ActionIconButton
+                label={openCollection ? "Back to all features" : "Close"}
+                onClick={() => (openCollection ? exitCollection() : setOpenFeaturesList(false))}
+              >
+                <IonIcon icon={openCollection ? arrowBackOutline : closeOutline} />
               </ActionIconButton>
             </div>
             <div className="panel-list-items" ref={listScrollRef}>
+              {openCollection && (
+                <div className="panel-list-crumb">
+                  <IonIcon icon={folderOpenOutline} />
+                  <span>{openCollection.name || "Collection"}</span>
+                </div>
+              )}
+              {createCollectionRow("name")}
               {items.map((item, i) => {
                 const renderRow = (row, nested) => {
-                  const iconIcon = row.type === "path" ? pathIconFor(row.snap) : row.type === "sight" ? pinOutline : locationOutline;
+                  const isCollection = row.type === "collection";
+                  const iconIcon = isCollection
+                    ? folderOpenOutline
+                    : row.type === "path" ? pathIconFor(row.snap) : row.type === "sight" ? pinOutline : locationOutline;
                   const selected = row.ref === selectedFeatureListRef;
-                  const rowHidden = !!row.ref._hidden || (row.type === "sight" && !!row.ref._sightPath?._hidden);
+                  const rowHidden = !!row.ref._hidden
+                    || (row.type === "sight" && !!row.ref._sightPath?._hidden)
+                    || (!isCollection && !!openCollection?._hidden);
                   return (
                     <div
                       className={`panel-list-item${rowHidden ? " panel-list-item-hidden" : ""}`}
@@ -9263,7 +9675,9 @@ export default function Map() {
                       <div className="panel-list-text">
                         <span className="panel-list-name">{row.name}</span>
                         <span className="panel-list-info">
-                          {row.type === "path"
+                          {isCollection
+                            ? (row.count === 0 ? "Empty" : `${row.count} feature${row.count === 1 ? "" : "s"}`)
+                            : row.type === "path"
                             ? [
                                 row.snap === "foot" ? "Foot" : row.snap === "bike" ? "Bike" : row.snap === "car" ? "Car" : "Free",
                                 row.length > 0 ? formatDistance(row.length) : null,
@@ -9314,7 +9728,11 @@ export default function Map() {
                             </ActionIconButton>
                           ) : (
                             <ActionIconButton
-                              label={row._saved ? "Unsave" : "Save"}
+                              label={
+                                isCollection
+                                  ? (row._saved ? "Unsave collection and contents" : "Save collection and contents")
+                                  : (row._saved ? "Unsave" : "Save")
+                              }
                               onClick={(e) => { e.stopPropagation(); toggleSaveFeature(row); }}
                             >
                               <IonIcon icon={row._saved ? save : saveOutline} />
@@ -9331,8 +9749,11 @@ export default function Map() {
                     </div>
                   );
                 };
+                // Key on the view too: drilling in or out swaps the whole list,
+                // and a plain index would let React reuse a collection row's
+                // DOM as a feature row (stale tooltip, stale glow class).
                 return (
-                  <Fragment key={i}>
+                  <Fragment key={`${openCollectionId ?? "root"}-${item.type}-${i}`}>
                     {renderRow(item, false)}
                     {item.type === "path" && item.sights && item.sights.map((sight, j) => (
                       <Fragment key={`s-${j}`}>{renderRow(sight, true)}</Fragment>
@@ -9341,6 +9762,16 @@ export default function Map() {
                 );
               })}
               {items.length === 0 && (() => {
+                // Inside a collection neither of the root messages is true.
+                if (openCollection) {
+                  return (
+                    <div className="panel-list-empty">
+                      {openCollection.name
+                        ? `"${openCollection.name}" is empty.`
+                        : "This collection is empty."}
+                    </div>
+                  );
+                }
                 const hasAnyFeatures =
                   markersRef.current.some((m) => !m._sightPath && !m._pendingDelete) ||
                   pathsRef.current.some((p) => !p._pendingDelete && p.isFinished);
@@ -9360,6 +9791,7 @@ export default function Map() {
                   </div>
                 );
               })()}
+              {createCollectionRow("dist")}
             </div>
           </div>
         );
