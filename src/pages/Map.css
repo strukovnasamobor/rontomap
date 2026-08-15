@@ -1823,6 +1823,26 @@ textarea.rename-modal-input {
   color: #999;
 }
 
+.rec-pause-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-left: 2px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: #f44336;
+  font-size: 20px;
+  cursor: pointer;
+}
+
+.rec-pause-btn:hover {
+  background: rgba(244, 67, 54, 0.1);
+}
+
 .path-actions-dark .route-info {
   background: #1a1a1a;
   box-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
@@ -1831,6 +1851,14 @@ textarea.rename-modal-input {
 
 .path-actions-dark .route-info-separator {
   color: rgba(255, 255, 255, 0.4);
+}
+
+.path-actions-dark .rec-pause-btn {
+  color: #ef5350;
+}
+
+.path-actions-dark .rec-pause-btn:hover {
+  background: rgba(239, 83, 80, 0.15);
 }
 
 .actions-group {

@@ -659,7 +659,6 @@ export default function Map() {
   const [recordingElapsed, setRecordingElapsed] = useState(0);
   const recordingTimerRef = useRef(null);
   const [recordingDistance, setRecordingDistance] = useState(0);
-  const handlePauseRecordingRef = useRef(null);
   const [stopRecordingAlert, setStopRecordingAlert] = useState(false);
   const [routeDistance, setNavRouteDistance] = useState(null);
   const [routeDuration, setNavRouteDuration] = useState(null);
@@ -1090,8 +1089,7 @@ export default function Map() {
     const total = Math.max(0, Math.floor(seconds ?? 0));
     const hrs = Math.floor(total / 3600);
     const mins = Math.floor((total % 3600) / 60);
-    const secs = total % 60;
-    return `${String(hrs).padStart(2, "0")}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+    return `${String(hrs).padStart(2, "0")}:${String(mins).padStart(2, "0")}`;
   };
 
   const formatETA = (seconds) => {
@@ -2405,25 +2403,14 @@ export default function Map() {
             await this._handleChangeMapStyle("rontomap_streets_dark");
             break;
           case "track_location":
-            if (isRecordingModeRef.current && !isRecordingPausedRef.current && handlePauseRecordingRef.current) {
-              handlePauseRecordingRef.current();
-              return;
-            }
             this.hideTrackingIcons();
             await this._handleTrackLocation();
             break;
           case "track_bearing":
-            if (isRecordingModeRef.current && !isRecordingPausedRef.current && handlePauseRecordingRef.current) {
-              handlePauseRecordingRef.current();
-              return;
-            }
             this.hideTrackingIcons();
             await this._handleTrackBearing();
             break;
           case "stop_tracking_bearing":
-            if (isRecordingModeRef.current && !isRecordingPausedRef.current && handlePauseRecordingRef.current) {
-              handlePauseRecordingRef.current();
-            }
             this.hideTrackingIcons();
             await this._handleStopTrackingBearing();
             break;
@@ -2602,7 +2589,9 @@ export default function Map() {
             this.showTrackingBearingIcon();
             this.enableUserInteractions();
             this._trackingLocation = true;
-            this._releaseWakeLock();
+            // Keep the screen awake if a recording is running — recording holds
+            // its own wake lock and is independent of bearing tracking.
+            if (!trackPathRef.current) this._releaseWakeLock();
 
             // If in navigation mode, restore editing UI
             if (isNavigationModeRef.current) {
@@ -4322,16 +4311,6 @@ export default function Map() {
         e.preventDefault();
         setCancelPathAlert(false);
         confirmCancelPath();
-        return;
-      }
-      if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey && isRecordingModeRef.current) {
-        e.preventDefault();
-        undoRecordingPath();
-        return;
-      }
-      if ((e.ctrlKey || e.metaKey) && (e.key === "Z" || e.key === "y") && isRecordingModeRef.current) {
-        e.preventDefault();
-        redoRecordingPath();
         return;
       }
       if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey && isPathModeRef.current) {
@@ -6715,11 +6694,9 @@ export default function Map() {
 
     setIsRecordingStarted(true);
 
-    // Start bearing tracking — this also acquires the wake lock and shows the
-    // stop_tracking_bearing icon, which the user clicks to pause recording.
-    // Mirror the click-handler flow: hide existing tracking icons first.
-    ctrl.hideTrackingIcons();
-    await ctrl._handleTrackBearing();
+    // Recording is independent of bearing tracking — it never moves the camera,
+    // but it does need the screen to stay awake, so take the wake lock itself.
+    await ctrl._requestWakeLock();
 
     // Start elapsed timer
     recordingStartTimeRef.current = Date.now();
@@ -6787,8 +6764,8 @@ export default function Map() {
       }).catch(() => {});
     }
 
-    setToastMsg("Click stop tracking to pause recording.");
-    setTimeout(() => setToastMsg(null), 3000);
+    setToastMsg("Recording path is started.");
+    setTimeout(() => setToastMsg(null), 2000);
   };
 
   const handlePauseRecording = () => {
@@ -6796,15 +6773,9 @@ export default function Map() {
     isRecordingPausedRef.current = true;
     recordingPauseStartRef.current = Date.now();
     RecordingNotification.pause().catch(() => {});
-    // Push undo snapshot on pause
-    if (trackPathRef.current) {
-      pathUndoStackRef.current.push({ trackCoords: trackCoordsRef.current.map((c) => [...c]) });
-      pathRedoStackRef.current = [];
-      setCanUndo(true);
-      setCanRedo(false);
-    }
+    setToastMsg("Recording path is paused.");
+    setTimeout(() => setToastMsg(null), 2000);
   };
-  handlePauseRecordingRef.current = handlePauseRecording;
 
   const handleResumeRecording = () => {
     if (recordingPauseStartRef.current) {
@@ -6814,49 +6785,8 @@ export default function Map() {
     setIsRecordingPaused(false);
     isRecordingPausedRef.current = false;
     RecordingNotification.resume().catch(() => {});
-    // Mirror the click-handler flow: hide existing tracking icons first.
-    locationControlRef.current?.hideTrackingIcons();
-    locationControlRef.current?._handleTrackBearing();
-    setToastMsg("Recording resumed. Click stop tracking to pause.");
+    setToastMsg("Recording path is resumed.");
     setTimeout(() => setToastMsg(null), 2000);
-  };
-
-  const undoRecordingPath = () => {
-    if (!trackPathRef.current || pathUndoStackRef.current.length === 0) return;
-    pathRedoStackRef.current.push({ trackCoords: trackCoordsRef.current.map((c) => [...c]) });
-    const snapshot = pathUndoStackRef.current.pop();
-    trackCoordsRef.current = snapshot.trackCoords.map((c) => [...c]);
-    setRecordingDistance(haversineDistance(trackCoordsRef.current));
-    const source = mapRef.current?.getSource(trackPathRef.current.sourceId);
-    if (source && trackCoordsRef.current.length >= 2) {
-      source.setData({
-        type: "FeatureCollection",
-        features: [pathHelpersRef.current.makeFeature(trackCoordsRef.current, "#0000ff")],
-      });
-    } else if (source) {
-      source.setData({ type: "FeatureCollection", features: [] });
-    }
-    setCanUndo(pathUndoStackRef.current.length > 0);
-    setCanRedo(true);
-  };
-
-  const redoRecordingPath = () => {
-    if (!trackPathRef.current || pathRedoStackRef.current.length === 0) return;
-    pathUndoStackRef.current.push({ trackCoords: trackCoordsRef.current.map((c) => [...c]) });
-    const snapshot = pathRedoStackRef.current.pop();
-    trackCoordsRef.current = snapshot.trackCoords.map((c) => [...c]);
-    setRecordingDistance(haversineDistance(trackCoordsRef.current));
-    const source = mapRef.current?.getSource(trackPathRef.current.sourceId);
-    if (source && trackCoordsRef.current.length >= 2) {
-      source.setData({
-        type: "FeatureCollection",
-        features: [pathHelpersRef.current.makeFeature(trackCoordsRef.current, "#0000ff")],
-      });
-    } else if (source) {
-      source.setData({ type: "FeatureCollection", features: [] });
-    }
-    setCanUndo(true);
-    setCanRedo(pathRedoStackRef.current.length > 0);
   };
 
   const handleStopPathRecording = () => {
@@ -6928,15 +6858,12 @@ export default function Map() {
       RecordingNotification.stop().catch(() => {});
     }
 
-    // If bearing tracking is still active (e.g. user stopped from side menu while tracking),
-    // exit it cleanly so the map returns to free view.
+    // Bearing tracking is independent of recording — leave it as the user set it,
+    // and only drop the wake lock if it isn't still needed for tracking.
     const ctrl = locationControlRef.current;
-    if (ctrl?.isTrackingBearing()) {
-      ctrl._handleStopTrackingBearing();
+    if (!ctrl?.isTrackingBearing()) {
+      ctrl?._releaseWakeLock();
     }
-
-    // Release wake lock (no-op if _handleStopTrackingBearing already released it)
-    ctrl?._releaseWakeLock();
 
     setIsRecordingRoute(false);
     trackPathRef.current = null;
@@ -9230,12 +9157,6 @@ export default function Map() {
         <div className={`path-actions${idMapStyle === "rontomap_streets_dark" ? " path-actions-dark" : ""}`}>
           {(!isRecordingStarted || isRecordingPaused) && (
             <div className="actions-group">
-              <button className="undo-btn" disabled={!canUndo} onClick={undoRecordingPath}>
-                Undo
-              </button>
-              <button className="redo-btn" disabled={!canRedo} onClick={redoRecordingPath}>
-                Redo
-              </button>
               <button className="cancel-btn" onClick={handleStopPathRecording}>
                 Stop
               </button>
@@ -9255,6 +9176,11 @@ export default function Map() {
               <span>{formatRecordingDuration(recordingElapsed)}</span>
               <span className="route-info-separator">&middot;</span>
               <span>{formatDistance(recordingDistance)}</span>
+              {!isRecordingPaused && (
+                <button className="rec-pause-btn" onClick={handlePauseRecording} aria-label="Pause recording">
+                  <IonIcon icon={pauseCircleOutline} />
+                </button>
+              )}
             </div>
           )}
         </div>

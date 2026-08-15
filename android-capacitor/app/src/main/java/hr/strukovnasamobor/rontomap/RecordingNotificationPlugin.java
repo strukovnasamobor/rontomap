@@ -128,8 +128,7 @@ public class RecordingNotificationPlugin extends Plugin {
             nm.createNotificationChannel(ch);
         }
         long sec = elapsedSec();
-        String time = String.format(Locale.US, "%02d:%02d:%02d",
-                sec / 3600, (sec % 3600) / 60, sec % 60);
+        String time = String.format(Locale.US, "%02d:%02d", sec / 3600, (sec % 3600) / 60);
         String text = (distanceText == null || distanceText.isEmpty())
                 ? time : time + "  •  " + distanceText;
         Intent i = new Intent(ctx, MainActivity.class)
