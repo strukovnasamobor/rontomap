@@ -1,3 +1,15 @@
+- instead of footsteps icon for tracing paths put ribbon icon, to paths that are snapped add different icons (foot = walk,  bike = bicycle, car = car)
+- feature collections = folders set folder-open icon
+    - two defaults folders: My Features Collection, RontoMap Public Collection
+    - main actions on folders: sort-dist (disabled), sort-name, filter, link, embedded, export, back
+    - side actions in folders: rename, show/hide, save/unsave (show save icon instead of bookmark), delete
+    - to paths, sights and markers add cut-icon to move them in another collection
+    - add link to make it public
+    - imported features put in one folder with name date & time
+- add features pictures (indexDB <=> Firestore, export/import)
+- login - sync offline regions, route data, feature collections, traced paths
+- vite.config.js - Set to true in production for logs
+
 PARALLEL ACTIONS
 - https://docs.google.com/spreadsheets/d/1no5W-1mDotm4eKghzjjsqetgft5C3l7uLmeSO7iH2jw/edit?gid=1762517575#gid=1762517575
 id | action                         | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10| 11| 12| 13| 14| 15| 16| 17| 18| 19| 20| 21| 22| 23| 24| 25| 26|
@@ -43,19 +55,8 @@ GOAL
 Free (no ads) and simple 3D map for orientation (online and offline), for navigation (online and offline only on Android), for creating and sharing map features (markers/sights and paths/tracks) by link or embeded code, for finding and tracing paths.
 
 UPGRADES
-- instead of footsteps icon for tracing paths put ribbon icon)
-- to paths that are snapped add different icons (foot = walk,  bike = bicycle, car = car)
-- add features pictures (indexDB <=> Firestore, export/import)
-- feature collections = folders set folder-open icon
-    - two defaults folders: My Features Collection, RontoMap Public Collection
-    - main actions on folders: sort-dist (disabled), sort-name, filter, link, embedded, export, back
-    - side actions in folders: rename, show/hide, save/unsave (show save icon instead of bookmark), delete
-    - to paths, sights and markers add cut-icon to move them in another collection
-    - add link to make it public
-    - imported features put in one folder with name date & time
 - public collection - allow rating, comments, traced data, show public features depending of zoom, ratings and traced data
-- login - sync offline regions, route data, feature collections, traced paths
-- vite.config.js - Set to true in production for logs
+- location sharing
 
 NEW VERSIONS
 - change version in build gradle
@@ -152,7 +153,7 @@ FEATURE DETAIL PANEL
     - Detach sight - ion-icon name="git-merge-outline"
     - Delete sight - ion-icon name="trash-outline"
 -  side actions for path
-    - Trace path - ion-icon name="footsteps-outline"
+    - Trace path - ion-icon name="ribbon-outline"
     - Edit path - ion-icon name="create-outline"
     - Set name to path - ion-icon name="pencil-outline"
     - Hide/Unhide path - ion-icon name="eye-outline"/ion-icon name="eye-off-outline"
@@ -175,6 +176,8 @@ FEATURES LIST PANEL
     - Show/Hide Saved Features (toggle on/off for filtering) - ion-icon name="bookmark-outline"
     - Close - ion-icon name="close-outline"
 - list of features with name and details showing for marker/sight - coordinates, for path - snapping, distance, duration (for snapped paths)
+- path item/header icon by snapping - foot: ion-icon name="walk-outline", bike: ion-icon name="bicycle-outline",
+  car: ion-icon name="car-outline", free: ion-icon name="analytics-outline"
   with side icons actions (show when feature is clicked) same as side actions icons in feature details
 - sights show nested in there paths and implicitly save/unsave sync with the path, so no save/unsave side icon
 - when feature list panel is opened and user first click on feature the action icons appears and feature glows,

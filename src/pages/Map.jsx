@@ -40,7 +40,10 @@ import {
   pencilOutline,
   bookmark,
   bookmarkOutline,
-  footstepsOutline,
+  ribbonOutline,
+  walkOutline,
+  bicycleOutline,
+  carOutline,
   gitMergeOutline,
   arrowBackOutline,
   eyeOutline,
@@ -97,6 +100,14 @@ const getRawQueryValues = (name, query = window.location.search.slice(1)) => {
   }
   return out;
 };
+
+// A snapped path shows the icon of its travel mode; a free-drawn one keeps the
+// generic route icon.
+const pathIconFor = (snap) =>
+  snap === "foot" ? walkOutline
+  : snap === "bike" ? bicycleOutline
+  : snap === "car" ? carOutline
+  : analyticsOutline;
 
 /**
  * One share link's worth of URL, decoupled from window.location so the same
@@ -9213,7 +9224,7 @@ export default function Map() {
             <div className="panel-list-items" ref={listScrollRef}>
               {items.map((item, i) => {
                 const renderRow = (row, nested) => {
-                  const iconIcon = row.type === "path" ? analyticsOutline : row.type === "sight" ? pinOutline : locationOutline;
+                  const iconIcon = row.type === "path" ? pathIconFor(row.snap) : row.type === "sight" ? pinOutline : locationOutline;
                   const selected = row.ref === selectedFeatureListRef;
                   const rowHidden = !!row.ref._hidden || (row.type === "sight" && !!row.ref._sightPath?._hidden);
                   return (
@@ -9245,7 +9256,7 @@ export default function Map() {
                               label="Trace path"
                               onClick={(e) => { e.stopPropagation(); handleFeatureTrace(row.ref); }}
                             >
-                              <IonIcon icon={footstepsOutline} />
+                              <IonIcon icon={ribbonOutline} />
                             </ActionIconButton>
                           )}
                           {row.type === "path" && (
@@ -9922,7 +9933,7 @@ export default function Map() {
                 : isSight
                   ? !!selectedFeature.marker._sightPath?._saved
                   : !!selectedFeature.marker._saved;
-              const headerIcon = isPath ? analyticsOutline : isSight ? pinOutline : locationOutline;
+              const headerIcon = isPath ? pathIconFor(selectedFeature.path.roadSnap) : isSight ? pinOutline : locationOutline;
               const headerTypeClass = isPath ? "path" : isSight ? "sight" : "marker";
               const headerName = selectedFeature.type === "marker"
                 ? selectedFeature.marker._markerName || (isSight ? "Sight" : "Marker")
@@ -9965,7 +9976,7 @@ export default function Map() {
                     <div className="panel-name-actions">
                       {isPath && (
                         <ActionIconButton label="Trace path" onClick={(e) => { e.stopPropagation(); handleFeatureTrace(); }}>
-                          <IonIcon icon={footstepsOutline} />
+                          <IonIcon icon={ribbonOutline} />
                         </ActionIconButton>
                       )}
                       {isPath && (
