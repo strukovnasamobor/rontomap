@@ -22,6 +22,8 @@ import {
   addOutline,
   removeOutline,
   pauseCircleOutline,
+  playCircleOutline,
+  stopCircleOutline,
   textOutline,
   radioOutline,
   chevronUpOutline,
@@ -648,8 +650,6 @@ export default function Map() {
   const trackPathRef = useRef(null);
   const trackCoordsRef = useRef([]);
   const bgWatcherIdRef = useRef(null);
-  const [isRecordingMode, setIsRecordingMode] = useState(false);
-  const isRecordingModeRef = useRef(false);
   const [isRecordingPaused, setIsRecordingPaused] = useState(false);
   const isRecordingPausedRef = useRef(false);
   const [isRecordingStarted, setIsRecordingStarted] = useState(false);
@@ -4275,9 +4275,6 @@ export default function Map() {
     isRecordingTrackRef.current = isRecordingTrack;
   }, [isRecordingTrack]);
   useEffect(() => {
-    isRecordingModeRef.current = isRecordingMode;
-  }, [isRecordingMode]);
-  useEffect(() => {
     isRecordingPausedRef.current = isRecordingPaused;
   }, [isRecordingPaused]);
   useEffect(() => {
@@ -6584,7 +6581,7 @@ export default function Map() {
     }, 2000);
   };
 
-  const handleRecordPath = () => {
+  const handleRecordPath = async () => {
     setMapClickMenu(null);
 
     // Finish any active unfinished path
@@ -6608,9 +6605,8 @@ export default function Map() {
       setIsPathMode(false);
     }
 
-    setIsRecordingMode(true);
-    isRecordingModeRef.current = true;
     setIsRecordingRoute(true);
+    isRecordingTrackRef.current = true;
     setIsRecordingStarted(false);
     setIsRecordingPaused(false);
     isRecordingPausedRef.current = false;
@@ -6620,6 +6616,8 @@ export default function Map() {
     pathRedoStackRef.current = [];
     setCanUndo(false);
     setCanRedo(false);
+
+    await handleStartRecording();
   };
 
   const handleStartRecording = async () => {
@@ -6633,6 +6631,7 @@ export default function Map() {
         if (permissions.location !== "granted" && permissions.location !== "limited") {
           setToastMsg("Location permission denied.");
           setTimeout(() => setToastMsg(null), 2000);
+          handleStopPathRecording();
           return;
         }
       }
@@ -6660,6 +6659,7 @@ export default function Map() {
       } catch (err) {
         setToastMsg("Could not get your location.");
         setTimeout(() => setToastMsg(null), 2000);
+        handleStopPathRecording();
         return;
       }
     } else {
@@ -6805,9 +6805,8 @@ export default function Map() {
     setMapClickMenu(null);
     // If recording was never started, just exit recording mode
     if (!trackPathRef.current) {
-      setIsRecordingMode(false);
-      isRecordingModeRef.current = false;
       setIsRecordingRoute(false);
+      isRecordingTrackRef.current = false;
       setIsRecordingStarted(false);
       setIsRecordingPaused(false);
       isRecordingPausedRef.current = false;
@@ -6878,12 +6877,11 @@ export default function Map() {
     }
 
     setIsRecordingRoute(false);
+    isRecordingTrackRef.current = false;
     trackPathRef.current = null;
     trackCoordsRef.current = [];
 
     // Clean up recording mode state
-    setIsRecordingMode(false);
-    isRecordingModeRef.current = false;
     setIsRecordingStarted(false);
     setIsRecordingPaused(false);
     isRecordingPausedRef.current = false;
@@ -9165,38 +9163,6 @@ export default function Map() {
           )}
         </div>
       )}
-      {isRecordingMode && (
-        <div className={`path-actions${idMapStyle === "rontomap_streets_dark" ? " path-actions-dark" : ""}`}>
-          {(!isRecordingStarted || isRecordingPaused) && (
-            <div className="actions-group">
-              <button className="cancel-btn" onClick={handleStopPathRecording}>
-                Stop
-              </button>
-              {!isRecordingStarted ? (
-                <button className="save-btn" onClick={handleStartRecording}>
-                  Start
-                </button>
-              ) : (
-                <button className="save-btn" onClick={handleResumeRecording}>
-                  Resume
-                </button>
-              )}
-            </div>
-          )}
-          {isRecordingStarted && (
-            <div className="route-info">
-              <span>{formatRecordingDuration(recordingElapsed)}</span>
-              <span className="route-info-separator">&middot;</span>
-              <span>{formatDistance(recordingDistance)}</span>
-              {!isRecordingPaused && (
-                <button className="rec-pause-btn" onClick={handlePauseRecording} aria-label="Pause recording">
-                  <IonIcon icon={pauseCircleOutline} />
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-      )}
       {showFeaturesList && (() => {
         const items = featuresListItems;
         const [sortField, sortDir] = featListSort.split("-");
@@ -10107,6 +10073,46 @@ export default function Map() {
       >
         <div className="bottom-safe-area" aria-hidden="true" />
       </div>
+      {/* Rendered after the map so the pill paints over the canvas while still
+          sitting under the map controls and their tooltips (see .recording-dock). */}
+      {isRecordingStarted && (
+        <div className={`recording-dock${idMapStyle === "rontomap_streets_dark" ? " path-actions-dark" : ""}`}>
+          <div className="route-info">
+            <span>{formatRecordingDuration(recordingElapsed)}</span>
+            <span className="route-info-separator">&middot;</span>
+            <span>{formatDistance(recordingDistance)}</span>
+            {isRecordingPaused ? (
+              <>
+                <ActionIconButton
+                  className="rec-resume-btn"
+                  label="Resume Recording"
+                  ariaLabel="Resume recording"
+                  onClick={handleResumeRecording}
+                >
+                  <IonIcon icon={playCircleOutline} />
+                </ActionIconButton>
+                <ActionIconButton
+                  className="rec-stop-btn"
+                  label="Stop Recording"
+                  ariaLabel="Stop recording"
+                  onClick={handleStopPathRecording}
+                >
+                  <IonIcon icon={stopCircleOutline} />
+                </ActionIconButton>
+              </>
+            ) : (
+              <ActionIconButton
+                className="rec-pause-btn"
+                label="Pause Recording"
+                ariaLabel="Pause recording"
+                onClick={handlePauseRecording}
+              >
+                <IonIcon icon={pauseCircleOutline} />
+              </ActionIconButton>
+            )}
+          </div>
+        </div>
+      )}
     </PageFixedLayout>
   );
 }

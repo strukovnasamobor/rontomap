@@ -1637,6 +1637,22 @@ textarea.rename-modal-input {
   pointer-events: auto;
 }
 
+/* Recording pill: docked immediately left of the map-style (change layout) button.
+   Offsets mirror the mapbox bottom-right control stack: 36px button + its 10px
+   margin + a 10px gap. */
+/* No z-index on purpose: the pill is rendered after the map, so it paints over
+   the canvas on tree order alone, while every positive-z layer — the map
+   controls (1001) and their tooltips, menus and panels (1002-1003) — stays in
+   front of it. Leaving it out of a stacking context of its own is also what
+   lets its own tooltips (.action-icon-tooltip, z-index 1010) rise above the
+   location buttons. */
+.recording-dock {
+  position: fixed;
+  right: calc(env(safe-area-inset-right) + 56px);
+  bottom: calc(env(safe-area-inset-bottom) + 10px);
+  pointer-events: auto;
+}
+
 .toast-msg {
   position: fixed;
   bottom: calc(env(safe-area-inset-bottom) + 56px);
@@ -1828,7 +1844,11 @@ textarea.rename-modal-input {
   color: #999;
 }
 
-.rec-pause-btn {
+/* Deliberately unpositioned: the tooltips inside these buttons resolve against
+   the pill (.recording-dock .route-info) so they right-align to its edge. */
+.rec-pause-btn,
+.rec-resume-btn,
+.rec-stop-btn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1839,13 +1859,47 @@ textarea.rename-modal-input {
   border: none;
   border-radius: 50%;
   background: none;
-  color: #f44336;
   font-size: 20px;
   cursor: pointer;
 }
 
+.rec-pause-btn {
+  color: #ff6f00;
+}
+
+.rec-resume-btn {
+  color: #4caf50;
+}
+
+.rec-stop-btn {
+  color: #f44336;
+}
+
 .rec-pause-btn:hover {
+  background: rgba(255, 111, 0, 0.1);
+}
+
+.rec-resume-btn:hover {
+  background: rgba(76, 175, 80, 0.1);
+}
+
+.rec-stop-btn:hover {
   background: rgba(244, 67, 54, 0.1);
+}
+
+.recording-dock .route-info {
+  position: relative;
+}
+
+/* The pill sits at the bottom right of the screen, so its tooltips open upward
+   and are right-aligned to the pill's edge: a long label grows leftward over
+   the map instead of running out past the geolocation button. */
+.recording-dock .action-icon-tooltip {
+  top: auto;
+  bottom: calc(100% + 10px);
+  left: auto;
+  right: 0;
+  transform: none;
 }
 
 .path-actions-dark .route-info {
@@ -1859,11 +1913,33 @@ textarea.rename-modal-input {
 }
 
 .path-actions-dark .rec-pause-btn {
+  color: #ffa726;
+}
+
+.path-actions-dark .rec-resume-btn {
+  color: #66bb6a;
+}
+
+.path-actions-dark .rec-stop-btn {
   color: #ef5350;
 }
 
 .path-actions-dark .rec-pause-btn:hover {
+  background: rgba(255, 167, 38, 0.15);
+}
+
+.path-actions-dark .rec-resume-btn:hover {
+  background: rgba(102, 187, 106, 0.15);
+}
+
+.path-actions-dark .rec-stop-btn:hover {
   background: rgba(239, 83, 80, 0.15);
+}
+
+/* Match the neighbouring map-control tooltips, which invert in the dark style */
+.path-actions-dark .action-icon-tooltip {
+  background: rgba(255, 255, 255, 0.9);
+  color: #1a1a1a;
 }
 
 .actions-group {
