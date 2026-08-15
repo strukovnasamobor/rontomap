@@ -1,14 +1,11 @@
-- instead of footsteps icon for tracing paths put ribbon icon, to paths that are snapped add different icons (foot = walk,  bike = bicycle, car = car)
 - feature collections = folders set folder-open icon
     - two defaults folders: My Features Collection, RontoMap Public Collection
     - main actions on folders: sort-dist (disabled), sort-name, filter, link, embedded, export, back
     - side actions in folders: rename, show/hide, save/unsave (show save icon instead of bookmark), delete
-    - to paths, sights and markers add cut-icon to move them in another collection
-    - add link to make it public
     - imported features put in one folder with name date & time
+    - to paths, sights and markers add cut-icon to move them in another collection
 - add features pictures (indexDB <=> Firestore, export/import)
 - login - sync offline regions, route data, feature collections, traced paths
-- vite.config.js - Set to true in production for logs
 
 PARALLEL ACTIONS
 - https://docs.google.com/spreadsheets/d/1no5W-1mDotm4eKghzjjsqetgft5C3l7uLmeSO7iH2jw/edit?gid=1762517575#gid=1762517575
@@ -55,7 +52,7 @@ GOAL
 Free (no ads) and simple 3D map for orientation (online and offline), for navigation (online and offline only on Android), for creating and sharing map features (markers/sights and paths/tracks) by link or embeded code, for finding and tracing paths.
 
 UPGRADES
-- public collection - allow rating, comments, traced data, show public features depending of zoom, ratings and traced data
+- public collection - button to make feature public, allow rating, comments, traced data, show public features (depending of zoom, ratings and traced data)
 - location sharing
 
 NEW VERSIONS
