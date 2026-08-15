@@ -479,6 +479,11 @@ ion-icon.mapboxgl-ctrl-geocoder--icon-search {
   display: none;
 }
 
+/* Keep the location icon in front of every map marker (path vertices are 1-3) */
+.mapboxgl-user-location {
+  z-index: 5;
+}
+
 .mapboxgl-user-location,
 .mapboxgl-user-location-accuracy-circle,
 .features-locked .mapboxgl-user-location,

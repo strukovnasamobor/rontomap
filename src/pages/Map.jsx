@@ -3109,7 +3109,7 @@ export default function Map() {
             features: [makeFeature(trackCoordsRef.current, "#0000ff")],
           });
         }
-        // Update end vertex position (hidden during recording, shown on stop)
+        // Update end vertex position (hidden while recording, shown on pause/stop)
         if (recPath.vertices.length === 1) {
           const endMarker = createPathVertex(recCoord);
           endMarker.setDraggable(false);
@@ -3121,6 +3121,7 @@ export default function Map() {
           const endV = recPath.vertices[recPath.vertices.length - 1];
           endV.lngLat = recCoord;
           endV.marker.setLngLat(recCoord);
+          endV.marker.getElement().style.display = "none";
         }
       }
     });
@@ -6740,7 +6741,7 @@ export default function Map() {
               features: [pathHelpersRef.current.makeFeature(trackCoordsRef.current, "#0000ff")],
             });
           }
-          // Update end vertex position (hidden during recording, shown on stop)
+          // Update end vertex position (hidden while recording, shown on pause/stop)
           const h = pathHelpersRef.current;
           if (path.vertices.length === 1) {
             const endMarker = h.createPathVertex(coord);
@@ -6753,6 +6754,7 @@ export default function Map() {
             const endV = path.vertices[path.vertices.length - 1];
             endV.lngLat = coord;
             endV.marker.setLngLat(coord);
+            endV.marker.getElement().style.display = "none";
           }
         },
       );
@@ -6768,11 +6770,20 @@ export default function Map() {
     setTimeout(() => setToastMsg(null), 2000);
   };
 
+  // The end vertex follows the user's live position while recording, where it would
+  // sit on top of the location icon — it stays hidden until the recording is paused.
+  const setRecordingEndVertexVisible = (visible) => {
+    const path = trackPathRef.current;
+    if (!path || path.vertices.length < 2) return;
+    path.vertices[path.vertices.length - 1].marker.getElement().style.display = visible ? "" : "none";
+  };
+
   const handlePauseRecording = () => {
     setIsRecordingPaused(true);
     isRecordingPausedRef.current = true;
     recordingPauseStartRef.current = Date.now();
     RecordingNotification.pause().catch(() => {});
+    setRecordingEndVertexVisible(true);
     setToastMsg("Recording path is paused.");
     setTimeout(() => setToastMsg(null), 2000);
   };
@@ -6785,6 +6796,7 @@ export default function Map() {
     setIsRecordingPaused(false);
     isRecordingPausedRef.current = false;
     RecordingNotification.resume().catch(() => {});
+    setRecordingEndVertexVisible(false);
     setToastMsg("Recording path is resumed.");
     setTimeout(() => setToastMsg(null), 2000);
   };
