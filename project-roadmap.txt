@@ -16,7 +16,6 @@ FEATURE COLLECTIONS
     - after stopped recording path name it "Path recorded on dd-mm-yyyy" and save it in the root
     * action button for import, imported features put in one folder and name it "Imported on dd-mm-yyyy"
 - side menu action review
-- add features pictures (indexDB <=> Firestore, export/import)
 - login - sync offline regions, route data, feature collections, traced paths
 
 PARALLEL ACTIONS - review
