@@ -126,6 +126,18 @@ const makeLinkSource = (search, hash) => {
   };
 };
 
+// Notify the embedding page about interactions inside the iframe.
+// Only used in embedded mode; the payload is public map data, so it goes to
+// any parent origin (the embed code can live on any site).
+const postEmbeddedEvent = (type, payload) => {
+  if (window.parent === window) return;
+  try {
+    window.parent.postMessage({ source: "rontomap", type, ...payload }, "*");
+  } catch (err) {
+    console.error("postEmbeddedEvent > postMessage failed:", err);
+  }
+};
+
 // Snapped-segment type code mapping (used in path URL extras blob)
 const SEG_TYPE_TO_CODE = { snapped: "s", offset: "o", fallback: "f", direct: "d" };
 const CODE_TO_SEG_TYPE = { s: "snapped", o: "offset", f: "fallback", d: "direct" };
@@ -1177,7 +1189,21 @@ export default function Map() {
         e.stopPropagation();
         if (wasDragged) return;
         if (isPathModeRef.current) return;
-        if (isEmbeddedRef.current) return;
+        // Embedded: no detail panel — hand the click to the embedding page instead
+        if (isEmbeddedRef.current) {
+          const pos = marker.getLngLat();
+          postEmbeddedEvent("marker-click", {
+            marker: {
+              name: marker._markerName || "",
+              description: marker._description || "",
+              lng: pos.lng,
+              lat: pos.lat,
+              isSight: !!marker._sightPath,
+              index: markersRef.current.indexOf(marker),
+            },
+          });
+          return;
+        }
         // Debounce so a second click within 300ms toggles fullscreen instead of opening details
         if (markerClickTimer) {
           clearTimeout(markerClickTimer);

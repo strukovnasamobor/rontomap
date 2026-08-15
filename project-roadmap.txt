@@ -1,10 +1,17 @@
-- feature collections = folders set folder-open icon
+FEATURE COLLECTIONS
+    - icon: folder-open
     - main actions on folders: sort-dist (disabled), sort-name, filter, link, embedded, export, back
     - side actions in folders: rename, show/hide, save/unsave (show save icon instead of bookmark), delete
+    - row interaction: Two-stage, same as feature rows: tap 1 selects and reveals the 4 side actions, tap 2 opens the collection
+    - back affordance: Sticky ← <name> row at the top of the list — keeps all 7 toolbar buttons
+    - new collection persistence: Session-only until its save action is used, like a new marker
+    - nesting: One level. No collections inside collections
+    - ordering: Collections pin to the top of the root list, name-ascending, independent of the feature sort
+    - show/hide + save/unsave: Cascade to contents
+    - delete: Ask delete with features, or keep features (root); skip the dialog when the collection is empty
+
+    - to paths, sights and markers add cut-icon to move them in another collection or as a side action and selecting features
     - imported features put in one folder with name date & time
-    
-    - to paths, sights and markers add cut-icon to move them in another collection
-    - creating new feature collections
 - side menu action review
 - add features pictures (indexDB <=> Firestore, export/import)
 - login - sync offline regions, route data, feature collections, traced paths
