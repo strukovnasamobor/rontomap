@@ -1,3 +1,5 @@
+- start/stop on nav and tracing path
+
 FEATURE COLLECTIONS
     - icon: folder-open
     * main actions on folders: sort-dist (disabled), sort-name, filter, link, embedded, export, back
@@ -16,6 +18,7 @@ FEATURE COLLECTIONS
     - after stopped recording path name it "Path recorded on dd-mm-yyyy" and save it in the root
     * action button for import, imported features put in one folder and name it "Imported on dd-mm-yyyy"
 - side menu action review
+- tracin path - when resumed location must be near last traced point, on complete show msg and record data
 - login - sync offline regions, route data, feature collections, traced paths
 
 PARALLEL ACTIONS - review
@@ -125,6 +128,10 @@ SIDE MENU
     - Add marker
     - Create path
     - Record path
+        - recording pill (elapsed & distance) actions, left to right
+            - Show/Hide recording path - ion-icon name="eye-outline"/ion-icon name="eye-off-outline"
+            - Pause recording - ion-icon name="pause-circle-outline"
+            - when paused: Resume - ion-icon name="play-circle-outline", Stop - ion-icon name="stop-circle-outline"
     ==============================
     - Features list
     - Copy link to features
@@ -231,8 +238,8 @@ COLORS
 - context point - #ff6f00 & #ffffff
 - markers - #ffffff & #ff6f00
 - sights - #0091ff & #ff6f00
-    - tracing path - #ffffff & #0091ff
-    - traced path - #ffffff & #0000ff
+    - on tracing segments - #ffffff & #0091ff
+    - on traced segments - #ffffff & #0000ff
 - paths
     - start point (circle) - #ff6f00
     - end point (rectangle) - #ff6f00
@@ -248,7 +255,9 @@ COLORS
     - forced midpoints - #ffffff & #6f00ff
     - forced segments - #6f00ff
     - forced directon arrows - #ff6f00
-- routes
+    - tracing segments - #0091ff
+    - traced segments - #0000ff
+- routes (navigation paths)
     - start point (circle) - #0091ff
     - end point (rectangle) - #0091ff
     - start/end point of circuit path (rectangle with circle inside) - #0091ff & #ffffff
@@ -264,10 +273,10 @@ COLORS
     - forced segments - #ff0011
     - forced directon arrows - #0091ff
     - traced segments - #0000ff
-- tracks
-    - start point (circle) - #0000ff
-    - end point (rectangle) - #0000ff
-    - segments - #0000ff
+- tracks (recording paths)
+    - start point (circle) - #ff0000
+    - end point (rectangle) - #ff0000
+    - segments - #ff0000
 
 MAPBOX ROAD COLORS
 - motorway (motorway, motorway_link) - #14b840

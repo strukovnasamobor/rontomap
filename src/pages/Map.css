@@ -1899,6 +1899,7 @@ textarea.rename-modal-input {
 
 /* Deliberately unpositioned: the tooltips inside these buttons resolve against
    the pill (.recording-dock .route-info) so they right-align to its edge. */
+.rec-eye-btn,
 .rec-pause-btn,
 .rec-resume-btn,
 .rec-stop-btn {
@@ -1916,6 +1917,12 @@ textarea.rename-modal-input {
   cursor: pointer;
 }
 
+/* Neutral on purpose: showing/hiding the line is not a recording state change,
+   so it stays quiet next to the coloured pause/resume/stop controls. */
+.rec-eye-btn {
+  color: #555;
+}
+
 .rec-pause-btn {
   color: #ff6f00;
 }
@@ -1926,6 +1933,10 @@ textarea.rename-modal-input {
 
 .rec-stop-btn {
   color: #f44336;
+}
+
+.rec-eye-btn:hover {
+  background: rgba(0, 0, 0, 0.08);
 }
 
 .rec-pause-btn:hover {
@@ -1965,6 +1976,10 @@ textarea.rename-modal-input {
   color: rgba(255, 255, 255, 0.4);
 }
 
+.path-actions-dark .rec-eye-btn {
+  color: rgba(255, 255, 255, 0.75);
+}
+
 .path-actions-dark .rec-pause-btn {
   color: #ffa726;
 }
@@ -1975,6 +1990,10 @@ textarea.rename-modal-input {
 
 .path-actions-dark .rec-stop-btn {
   color: #ef5350;
+}
+
+.path-actions-dark .rec-eye-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
 }
 
 .path-actions-dark .rec-pause-btn:hover {
@@ -2194,44 +2213,44 @@ textarea.rename-modal-input {
   border-radius: 2px;
 }
 
-/* Track path vertex - blue */
+/* Track path vertex - red */
 .track-path-vertex {
-  background: #0000ff;
-  border-color: #0000ff;
+  background: #ff0000;
+  border-color: #ff0000;
 }
 .track-path-vertex.path-vertex-intermediate {
   background: white;
-  border-color: #0000ff;
+  border-color: #ff0000;
 }
 .track-path-vertex.path-vertex-last {
-  background: #0000ff;
-  border-color: #0000ff;
+  background: #ff0000;
+  border-color: #ff0000;
   border-radius: 2px;
 }
 .track-path-vertex.path-vertex-circuit-start,
 .track-path-vertex.path-vertex-circuit-end {
-  background: #0000ff;
-  border-color: #0000ff;
+  background: #ff0000;
+  border-color: #ff0000;
   border-radius: 2px;
   z-index: 3;
 }
 .map-style-dark .track-path-vertex {
-  background: #0000ff;
-  border-color: #0000ff;
+  background: #ff0000;
+  border-color: #ff0000;
 }
 .map-style-dark .track-path-vertex.path-vertex-intermediate {
   background: white;
-  border-color: #0000ff;
+  border-color: #ff0000;
 }
 .map-style-dark .track-path-vertex.path-vertex-last {
-  background: #0000ff;
-  border-color: #0000ff;
+  background: #ff0000;
+  border-color: #ff0000;
   border-radius: 2px;
 }
 .map-style-dark .track-path-vertex.path-vertex-circuit-start,
 .map-style-dark .track-path-vertex.path-vertex-circuit-end {
-  background: #0000ff;
-  border-color: #0000ff;
+  background: #ff0000;
+  border-color: #ff0000;
   border-radius: 2px;
 }
 

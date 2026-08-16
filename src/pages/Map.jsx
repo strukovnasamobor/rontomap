@@ -694,6 +694,7 @@ export default function Map() {
   const [isRecordingPaused, setIsRecordingPaused] = useState(false);
   const isRecordingPausedRef = useRef(false);
   const [isRecordingStarted, setIsRecordingStarted] = useState(false);
+  const [isRecordingPathHidden, setIsRecordingPathHidden] = useState(false);
   const recordingStartTimeRef = useRef(null);
   const recordingPauseAccumulatedRef = useRef(0);
   const recordingPauseStartRef = useRef(null);
@@ -1290,7 +1291,7 @@ export default function Map() {
 
     // Get sight marker colors based on parent path type
     const getSightColors = (path) => {
-      if (path.isTrack) return { pin: "#0000ff", circle: "#ffffff" };
+      if (path.isTrack) return { pin: "#ff0000", circle: "#ffffff" };
       if (path.isRoute) return { pin: "#0091ff", circle: "#ffffff" };
       return { pin: "#ff6f00", circle: "#0091ff" };
     };
@@ -1361,7 +1362,7 @@ export default function Map() {
             "text-ignore-placement": true,
           },
           paint: {
-            "text-color": path.isRoute ? "#0091ff" : path.isTrack ? "#0000ff" : "#ff6f00",
+            "text-color": path.isRoute ? "#0091ff" : path.isTrack ? "#ff0000" : "#ff6f00",
             "text-emissive-strength": 1,
           },
         });
@@ -1432,7 +1433,7 @@ export default function Map() {
     const updatePathLine = (path) => {
       const source = mapRef.current?.getSource(path.sourceId);
       if (!source) return;
-      const mainColor = path.isRoute ? "#0091ff" : path.isTrack ? "#0000ff" : "#ff6f00";
+      const mainColor = path.isRoute ? "#0091ff" : path.isTrack ? "#ff0000" : "#ff6f00";
       const forceColor = path.isRoute ? "#ff0000" : "#6F00FF";
 
       if (path.roadSnap && path.snappedSegments) {
@@ -1875,7 +1876,7 @@ export default function Map() {
           // Render stale snapped segments + live force lines from current vertex positions
           const verts = path.vertices;
           const vi = verts.indexOf(vertexEntry);
-          const mainColor = path.isRoute ? "#0091ff" : path.isTrack ? "#0000ff" : "#ff6f00";
+          const mainColor = path.isRoute ? "#0091ff" : path.isTrack ? "#ff0000" : "#ff6f00";
           const features = [];
           // Keep stale snapped/offset segments
           for (const seg of path.snappedSegments) {
@@ -1901,7 +1902,7 @@ export default function Map() {
           if (source) source.setData({ type: "FeatureCollection", features });
         } else if (path.isCircuit && path.roadSnap && path.snappedSegments) {
           // Snapped circuit: render stale snapped segments only (no live closing segment to avoid duplicates)
-          const mainColor = path.isRoute ? "#0091ff" : path.isTrack ? "#0000ff" : "#ff6f00";
+          const mainColor = path.isRoute ? "#0091ff" : path.isTrack ? "#ff0000" : "#ff6f00";
           const features = [];
           for (const seg of path.snappedSegments) {
             if (seg.coords.length >= 2) {
@@ -2035,7 +2036,7 @@ export default function Map() {
           const pos = marker.getLngLat();
           const midPt = [pos.lng, pos.lat];
           const si = mpEntry.segmentIndex;
-          const mainColor = path.isRoute ? "#0091ff" : path.isTrack ? "#0000ff" : "#ff6f00";
+          const mainColor = path.isRoute ? "#0091ff" : path.isTrack ? "#ff0000" : "#ff6f00";
           const forceColor = path.isRoute ? "#ff0011" : "#6F00FF";
           const features = [];
           // Build segments with per-edge coloring
@@ -2085,7 +2086,7 @@ export default function Map() {
         marker.on("drag", () => {
           const pos = marker.getLngLat();
           const midPt = [pos.lng, pos.lat];
-          const mainColor = path.isRoute ? "#0091ff" : path.isTrack ? "#0000ff" : "#ff6f00";
+          const mainColor = path.isRoute ? "#0091ff" : path.isTrack ? "#ff0000" : "#ff6f00";
           const forceColor = path.isRoute ? "#ff0011" : "#6F00FF";
           const features = [];
           for (let j = 0; j < verts.length - 1; j++) {
@@ -3209,7 +3210,7 @@ export default function Map() {
         if (source && trackCoordsRef.current.length >= 2) {
           source.setData({
             type: "FeatureCollection",
-            features: [makeFeature(trackCoordsRef.current, "#0000ff")],
+            features: [makeFeature(trackCoordsRef.current, "#ff0000")],
           });
         }
         // Update end vertex position (hidden while recording, shown on pause/stop)
@@ -4403,7 +4404,15 @@ export default function Map() {
       if (map.getLayer(`${p.layerId}-hit`)) map.setLayoutProperty(`${p.layerId}-hit`, "visibility", vis);
       if (map.getLayer(`${p.layerId}-arrows`)) map.setLayoutProperty(`${p.layerId}-arrows`, "visibility", vis);
       if (p.vertices) {
+        // The end vertex of a running recording rides the live position, where it
+        // would sit on top of the location icon — it stays hidden until the
+        // recording pauses, so unhiding the path must not reveal it.
+        const liveEnd =
+          p === trackPathRef.current && isRecordingTrackRef.current && !isRecordingPausedRef.current
+            ? p.vertices[p.vertices.length - 1]
+            : null;
         for (const v of p.vertices) {
+          if (v === liveEnd) continue;
           const el = v.marker?.getElement();
           if (el) el.style.display = hidden ? "none" : "";
         }
@@ -7102,6 +7111,7 @@ export default function Map() {
     setIsRecordingStarted(false);
     setIsRecordingPaused(false);
     isRecordingPausedRef.current = false;
+    setIsRecordingPathHidden(false);
     setRecordingElapsed(0);
     setRecordingDistance(0);
     pathUndoStackRef.current = [];
@@ -7230,7 +7240,7 @@ export default function Map() {
           if (source && trackCoordsRef.current.length >= 2) {
             source.setData({
               type: "FeatureCollection",
-              features: [pathHelpersRef.current.makeFeature(trackCoordsRef.current, "#0000ff")],
+              features: [pathHelpersRef.current.makeFeature(trackCoordsRef.current, "#ff0000")],
             });
           }
           // Update end vertex position (hidden while recording, shown on pause/stop)
@@ -7268,6 +7278,17 @@ export default function Map() {
     const path = trackPathRef.current;
     if (!path || path.vertices.length < 2) return;
     path.vertices[path.vertices.length - 1].marker.getElement().style.display = visible ? "" : "none";
+  };
+
+  // The recorded line can be taken off the map while the recording keeps
+  // running — it reuses the same per-feature `_hidden` flag the feature list
+  // uses, so the map filter pass handles line, arrows and vertices in one place.
+  const handleToggleRecordingPathVisible = () => {
+    const path = trackPathRef.current;
+    if (!path) return;
+    path._hidden = !path._hidden;
+    setIsRecordingPathHidden(!!path._hidden);
+    bumpFeaturesVersion();
   };
 
   const handlePauseRecording = () => {
@@ -7345,6 +7366,10 @@ export default function Map() {
 
     path.isFinished = true;
     delete path.isTrack;
+    // The dock's eye toggle only governs the live recording view: the finished
+    // track always lands on the map, and is hidden again from the feature list.
+    delete path._hidden;
+    setIsRecordingPathHidden(false);
     // A recording is started from the map, not from inside a folder, so it is
     // filed at the root regardless of which collection the list is showing —
     // and it names itself, since there is no naming step when a recording ends.
@@ -8051,7 +8076,7 @@ export default function Map() {
           pathHelpersRef.current.applySightColors(m, path);
         });
       }
-      const mainColor = path.isRoute ? "#0091ff" : path.isTrack ? "#91FF00" : "#ff6f00";
+      const mainColor = path.isRoute ? "#0091ff" : path.isTrack ? "#ff0000" : "#ff6f00";
       const map = mapRef.current;
       if (map && path._arrowLayerId && map.getLayer(path._arrowLayerId)) {
         map.setPaintProperty(path._arrowLayerId, "text-color", mainColor);
@@ -10659,6 +10684,14 @@ export default function Map() {
             <span>{formatRecordingDuration(recordingElapsed)}</span>
             <span className="route-info-separator">&middot;</span>
             <span>{formatDistance(recordingDistance)}</span>
+            <ActionIconButton
+              className="rec-eye-btn"
+              label={isRecordingPathHidden ? "Show Recording Path" : "Hide Recording Path"}
+              ariaLabel={isRecordingPathHidden ? "Show recording path" : "Hide recording path"}
+              onClick={handleToggleRecordingPathVisible}
+            >
+              <IonIcon icon={isRecordingPathHidden ? eyeOffOutline : eyeOutline} />
+            </ActionIconButton>
             {isRecordingPaused ? (
               <>
                 <ActionIconButton
