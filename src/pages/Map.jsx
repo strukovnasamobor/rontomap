@@ -769,8 +769,19 @@ export default function Map() {
   const rectMethodsRef = useRef(null);
   const idMapStyleRef = useRef(idMapStyle);
   const isEmbeddedRef = useRef(new URLSearchParams(window.location.search).get("embedded") === "true");
+  // Embed opt-ins, only meaningful together with embedded=true:
+  //   interact=true    - pan/zoom right away, no tap-to-activate step, hover cursor on features
+  //   geolocation=true - show and enable the location control
+  const embedInteractRef = useRef(
+    isEmbeddedRef.current && new URLSearchParams(window.location.search).get("interact") === "true",
+  );
+  const embedGeolocationRef = useRef(
+    isEmbeddedRef.current && new URLSearchParams(window.location.search).get("geolocation") === "true",
+  );
   const embeddedFocusedRef = useRef(false);
   const embeddedToastTimerRef = useRef(null);
+  // Re-applies the embed interaction policy; assigned in the map-init effect.
+  const applyEmbedInteractionPolicyRef = useRef(null);
 
   // Refs for finger-following swipe gestures
   const sideMenuRef = useRef(null);
@@ -1323,12 +1334,17 @@ export default function Map() {
           layout: { "line-cap": "round", "line-join": "round" },
         });
         path._hitLayerId = hitLayerId;
-        map.on("mouseenter", hitLayerId, () => {
-          if (!isPathModeRef.current && !isEmbeddedRef.current) map.getCanvas().style.cursor = "alias";
-        });
-        map.on("mouseleave", hitLayerId, () => {
-          map.getCanvas().style.cursor = "";
-        });
+        // In embedded+interact mode a single mousemove handler owns the canvas
+        // cursor for both markers and paths, so skip these per-layer handlers —
+        // otherwise mouseleave would clear the cursor while still over a marker.
+        if (!embedInteractRef.current) {
+          map.on("mouseenter", hitLayerId, () => {
+            if (!isPathModeRef.current && !isEmbeddedRef.current) map.getCanvas().style.cursor = "alias";
+          });
+          map.on("mouseleave", hitLayerId, () => {
+            map.getCanvas().style.cursor = "";
+          });
+        }
         const arrowLayerId = `${path.layerId}-arrows`;
         map.addLayer({
           id: arrowLayerId,
@@ -2455,13 +2471,21 @@ export default function Map() {
         console.log("enableUserInteractions");
         this._isMapBeingControlledProgrammatically = false;
         this._map.boxZoom.enable();
-        this._map.scrollZoom.enable();
-        this._map.dragPan.enable();
         this._map.dragRotate.enable();
         this._map.keyboard.enable();
         this._map.touchZoomRotate.enable();
         if (this._map.touchZoomRotate._tapDragZoom) this._map.touchZoomRotate._tapDragZoom.disable();
         this._map.touchPitch.enable();
+        // Embedded: restore the embed policy rather than force pan/scroll on —
+        // otherwise a locate flyTo would defeat the tap-to-activate gating.
+        // Guarded on isEmbeddedRef alone: if the policy isn't set yet, leaving
+        // the map as-is is safer than unlocking an embed that meant to gate.
+        if (isEmbeddedRef.current) {
+          applyEmbedInteractionPolicyRef.current?.();
+          return;
+        }
+        this._map.scrollZoom.enable();
+        this._map.dragPan.enable();
       }
 
       async _handleClick(e) {
@@ -3205,6 +3229,21 @@ export default function Map() {
       }
     });
 
+    // Location failed: denied, unavailable or timed out. _handleClick hides all
+    // three icons before triggering, so without this the control just vanishes.
+    // In an embedded map this is the normal outcome when the host iframe has no
+    // allow="geolocation" (Permissions-Policy denies it).
+    geolocateRef.current.on("error", (err) => {
+      console.log("Event > geolocate > error:", err?.code, err?.message);
+      const ctrl = locationControlRef.current;
+      if (!ctrl || ctrl.isTrackingLocation() || ctrl.isTrackingBearing()) return;
+      ctrl.showTrackingLocationIcon();
+      if (err?.code === 1) {
+        setToastMsg("Location permission denied.");
+        setTimeout(() => setToastMsg(null), 2000);
+      }
+    });
+
     // Mouse button down: track left/right for cursor changes
     mapRef.current.getContainer().addEventListener("mousedown", (ev) => {
       if (ev.button === 0) mapRef.current.getContainer().classList.add("map-mousedown");
@@ -3403,9 +3442,29 @@ export default function Map() {
             });
             return;
           }
+          // Same for paths: no detail panel in embed, report the hit instead.
+          for (const p of pathsRef.current) {
+            if (!p.isFinished || !p._hitLayerId) continue;
+            if (!mapRef.current.getLayer(p._hitLayerId)) continue;
+            const features = mapRef.current.queryRenderedFeatures(e.point, { layers: [p._hitLayerId] });
+            if (features.length > 0) {
+              postEmbeddedEvent("path-click", {
+                path: {
+                  name: p.name || "",
+                  description: p.description || "",
+                  isCircuit: !!p.isCircuit,
+                  roadSnap: p.roadSnap || "free",
+                  distance: p.routeDistance ?? null,
+                  duration: p.routeDuration ?? null,
+                  index: pathsRef.current.indexOf(p),
+                  lng: e.lngLat.lng,
+                  lat: e.lngLat.lat,
+                },
+              });
+              return;
+            }
+          }
         }
-
-
 
         // Feature selection: click on finished path opens detail panel
         if (!isPathModeRef.current && !isEmbeddedRef.current) {
@@ -3624,8 +3683,10 @@ export default function Map() {
       { passive: true },
     );
 
-    // Add the geolocate control to the map without adding it to the UI
-    if (!isEmbeddedRef.current) {
+    // Add the geolocate control to the map without adding it to the UI.
+    // addControl is what creates _container, and _handleTrackLocation calls
+    // _geolocate.trigger() — so embed+geolocation=true needs it added too.
+    if (!isEmbeddedRef.current || embedGeolocationRef.current) {
       mapRef.current.addControl(geolocateRef.current);
       geolocateRef.current._container.style.display = "none";
     }
@@ -3651,6 +3712,8 @@ export default function Map() {
         const url = new URL(window.location.href);
         url.searchParams.delete("embedded");
         url.searchParams.delete("style");
+        url.searchParams.delete("interact");
+        url.searchParams.delete("geolocation");
 
         const logoContainer = document.createElement("div");
         logoContainer.className = "mapboxgl-ctrl mapboxgl-ctrl-group rontomap-logo";
@@ -3821,7 +3884,7 @@ export default function Map() {
         mapstyleDiv.addEventListener("click", locationControlRef.current._handleClick);
       }
     }
-    if (isEmbeddedRef.current) {
+    if (isEmbeddedRef.current && !embedGeolocationRef.current) {
       if (locationDiv) locationDiv.style.display = "none";
     }
 
@@ -3999,7 +4062,7 @@ export default function Map() {
     // Disable one-tap-then-drag-to-zoom gesture
     if (mapRef.current.touchZoomRotate._tapDragZoom) mapRef.current.touchZoomRotate._tapDragZoom.disable();
 
-    // Embedded mode: focus-based interaction gating
+    // Embedded mode: focus-based interaction gating (skipped when interact=true)
     if (isEmbeddedRef.current) {
       const isTouchDevice = "ontouchstart" in window || navigator.maxTouchPoints > 0;
       const map = mapRef.current;
@@ -4013,14 +4076,42 @@ export default function Map() {
         }, 2000);
       };
 
-      if (isTouchDevice) {
-        // Touch: enable zoom, rotate, pitch — drag gated by tap-to-activate
+      // Re-applies the handler state for the current embed mode and focus.
+      // Kept in a ref so LocationControl.enableUserInteractions() can restore
+      // this policy instead of blanket-enabling pan/scroll after a flyTo.
+      const applyPolicy = () => {
         map.touchZoomRotate.enable();
         if (map.touchZoomRotate._tapDragZoom) map.touchZoomRotate._tapDragZoom.disable();
         map.touchPitch.enable();
         map.dragRotate.enable();
-        map.dragPan.disable();
+        map.keyboard.enable();
+        map.boxZoom.enable();
 
+        if (embedInteractRef.current) {
+          // interact=true: everything live, nothing to activate first
+          map.dragPan.enable();
+          map.scrollZoom.enable();
+          return;
+        }
+        if (isTouchDevice) {
+          // Touch: drag gated by tap-to-activate
+          map.scrollZoom.enable();
+          if (embeddedFocusedRef.current) map.dragPan.enable();
+          else map.dragPan.disable();
+        } else {
+          // Desktop: scroll zoom gated by focus
+          map.dragPan.enable();
+          if (embeddedFocusedRef.current) map.scrollZoom.enable();
+          else map.scrollZoom.disable();
+        }
+      };
+      applyEmbedInteractionPolicyRef.current = applyPolicy;
+      applyPolicy();
+
+      if (embedInteractRef.current) {
+        // Nothing left to activate — no gating listeners, no toasts.
+        embeddedFocusedRef.current = true;
+      } else if (isTouchDevice) {
         // Activating touch: show toast, mark focused, but do NOT enable drag yet
         // so the current gesture can't pan. Drag becomes enabled on touchend.
         container.addEventListener(
@@ -4044,30 +4135,23 @@ export default function Map() {
         // Browser focus fallback (e.g. user focuses iframe via chrome)
         window.addEventListener("focus", () => {
           embeddedFocusedRef.current = true;
-          map.dragPan.enable();
+          applyPolicy();
         });
         window.addEventListener("blur", () => {
           embeddedFocusedRef.current = false;
-          map.dragPan.disable();
+          applyPolicy();
         });
       } else {
-        // Desktop: enable drag, rotate, pitch — scroll zoom gated by focus
-        map.dragPan.enable();
-        map.dragRotate.enable();
-        map.keyboard.enable();
-        map.boxZoom.enable();
-        map.scrollZoom.disable();
-
         // Track focus to enable/disable scroll zoom
         const enableScroll = () => {
           embeddedFocusedRef.current = true;
-          map.scrollZoom.enable();
+          applyPolicy();
         };
         window.addEventListener("focus", enableScroll);
         container.addEventListener("click", enableScroll);
         window.addEventListener("blur", () => {
           embeddedFocusedRef.current = false;
-          map.scrollZoom.disable();
+          applyPolicy();
         });
 
         // Show toast when user tries to scroll zoom while unfocused
@@ -4080,6 +4164,31 @@ export default function Map() {
           },
           { passive: true },
         );
+      }
+
+      // interact=true: hover affordance on features. Markers are click-through
+      // in embed (pointer-events:none) so DOM hover can't work — hit-test the
+      // canvas instead. This one handler owns the cursor for markers and paths.
+      if (embedInteractRef.current) {
+        let hoverCursor = "";
+        const setHoverCursor = (value) => {
+          if (value === hoverCursor) return;
+          hoverCursor = value;
+          map.getCanvas().style.cursor = value;
+        };
+        map.on("mousemove", (e) => {
+          if (map.isMoving()) return; // .map-dragging CSS owns the cursor mid-drag
+          let hit = !!findMarkerAtPoint(e.point);
+          if (!hit) {
+            const hitLayerIds = pathsRef.current
+              .filter((p) => p.isFinished && p._hitLayerId && map.getLayer(p._hitLayerId))
+              .map((p) => p._hitLayerId);
+            hit =
+              hitLayerIds.length > 0 && map.queryRenderedFeatures(e.point, { layers: hitLayerIds }).length > 0;
+          }
+          setHoverCursor(hit ? "alias" : "");
+        });
+        map.on("mouseout", () => setHoverCursor(""));
       }
     }
 

@@ -92,6 +92,14 @@ ion-page:has(#map-ioncontent) {
   pointer-events: none !important;
 }
 
+/* Embedded + &geolocation=true: the rule above deliberately excludes the user
+   dot and its accuracy circle, but the circle is sized in real metres — a weak
+   fix covers the whole viewport and would swallow every drag. */
+.embedded .mapboxgl-user-location,
+.embedded .mapboxgl-user-location-accuracy-circle {
+  pointer-events: none !important;
+}
+
 /* Locked features on mousedown: all-scroll (same as map) */
 .map-mousedown.features-locked:not(.path-editing) .mapboxgl-marker:not(.mapboxgl-user-location),
 .map-mousedown.features-locked:not(.path-editing) .path-vertex,
