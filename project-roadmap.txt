@@ -18,7 +18,7 @@ FEATURE COLLECTIONS
     - after stopped recording path name it "Path recorded on dd-mm-yyyy" and save it in the root
     * action button for import, imported features put in one folder and name it "Imported on dd-mm-yyyy"
 - side menu action review
-- tracin path - when resumed location must be near last traced point, on complete show msg and record data
+- tracing path - on start tracing snap the path, when resumed location must be near last traced point, on complete show msg and record data
 - login - sync offline regions, route data, feature collections, traced paths
 
 PARALLEL ACTIONS - review

@@ -7544,22 +7544,8 @@ export default function Map() {
     setSelectedFeature(null);
     setOpenFeaturesList(false);
     setDetailsOrigin(null);
-    // Fly so the full path is visible in the unobscured area (the path-mode
-    // toolbar bottom still occludes the map, so leave a generous bottom pad).
-    const map = mapRef.current;
-    if (map && path.vertices && path.vertices.length > 0) {
-      const bounds = new mapboxgl.LngLatBounds();
-      if (path.snappedSegments && path.snappedSegments.length > 0) {
-        path.snappedSegments.forEach((seg) => seg.coords.forEach((c) => bounds.extend(c)));
-      } else {
-        path.vertices.forEach((v) => bounds.extend(v.lngLat));
-      }
-      const isPortrait = window.matchMedia("(orientation: portrait)").matches;
-      const padding = isPortrait
-        ? { top: 80, bottom: 160, left: 40, right: 40 }
-        : { top: 60, bottom: 60, left: 380, right: 60 };
-      map.fitBounds(bounds, { padding, bearing: map.getBearing(), pitch: map.getPitch(), duration: 800 });
-    }
+    // The camera stays where it is: editing starts from whatever the user is
+    // already looking at, so no fitBounds on the path here.
     pathUndoStackRef.current = [];
     pathRedoStackRef.current = [];
     setCanUndo(false);
