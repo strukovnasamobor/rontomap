@@ -17,6 +17,7 @@ import {
   closeOutline,
   searchOutline,
   menuOutline,
+  compass,
   compassOutline,
   layersOutline,
   addOutline,
@@ -393,11 +394,13 @@ function RenameModal({ isOpen, title, initialValue, onCancel, onClear, onSave, s
 }
 
 // Create an <ion-icon> DOM element for use in Mapbox map controls.
-function createIonIcon(iconData, size = "20px") {
+function createIonIcon(iconData, size = "20px", color) {
   const el = document.createElement("ion-icon");
   el.setAttribute("icon", iconData);
   el.style.fontSize = size;
   el.style.pointerEvents = "none";
+  // Inline so it wins over the light/dark rules on .mapboxgl-ctrl-group button ion-icon.
+  if (color) el.style.color = color;
   return el;
 }
 
@@ -2874,7 +2877,7 @@ export default function Map() {
         const stopTrackingBtn = this._container.querySelector('[data-control="stop_tracking_bearing"]');
         trackLocationBtn.appendChild(createIonIcon(locateOutline));
         trackBearingBtn.appendChild(createIonIcon(compassOutline));
-        stopTrackingBtn.appendChild(createIonIcon(pauseCircleOutline));
+        stopTrackingBtn.appendChild(createIonIcon(compass, "20px", "#0091ff"));
         addMapControlTooltip(trackLocationBtn, "Track Location", "left");
         addMapControlTooltip(trackBearingBtn, "Track Bearing", "left");
         addMapControlTooltip(stopTrackingBtn, "Stop Tracking", "left");
