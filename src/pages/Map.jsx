@@ -4812,6 +4812,22 @@ export default function Map() {
     }
   }, [selectedFeature]);
 
+  // Opening a feature that lives in a collection drills the list into that
+  // collection, so the list behind the details panel shows the feature where it
+  // actually lives — the same view you would get by opening the collection
+  // yourself. Only ever drills in: a feature at the root leaves an open
+  // collection alone, since that collection is also where new features are filed.
+  useEffect(() => {
+    if (!selectedFeature) return;
+    const target = selectedFeature.type === "path" ? selectedFeature.path : selectedFeature.marker;
+    // A sight has no collection of its own — it is filed with its path.
+    const owner = target?._sightPath || target;
+    const collectionId = owner?._collectionId;
+    if (!collectionId || collectionId === openCollectionIdRef.current) return;
+    if (!collectionsRef.current.some((c) => c._id === collectionId)) return;
+    setOpenCollectionId(collectionId);
+  }, [selectedFeature]);
+
   // When details opens, zoom out if the feature falls outside the unobstructed
   // region (the part of the viewport not covered by the panel). Mirrors the
   // list-click zoom-out so URL-param / programmatic entry points leave the
@@ -6834,33 +6850,39 @@ export default function Map() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [featListFilter, featListSort, mapCenterTick, featuresVersion, openCollectionId]);
 
-  const handleFeatureListClick = (item) => {
-    // Second tap on the already-selected row opens the details panel.
-    // The list stays mounted (hidden via CSS) so its scroll position
-    // is preserved, and the details panel inherits the current sheet level.
-    if (selectedFeatureListRef === item.ref) {
-      // Activating a collection means entering it, not opening a details panel.
-      if (item.type === "collection") {
-        if (featListGlowCleanupRef.current) {
-          featListGlowCleanupRef.current();
-          featListGlowCleanupRef.current = null;
-        }
-        setSelectedFeatureListRef(null);
-        setOpenCollectionId(item.ref._id);
-        return;
+  // A tap or click on a row opens it: a feature opens its details panel, a
+  // collection is entered. The list stays mounted (hidden via CSS) so its
+  // scroll position is preserved, and the details panel inherits the current
+  // sheet level.
+  const openFeatureListItem = (item) => {
+    // Activating a collection means entering it, not opening a details panel.
+    if (item.type === "collection") {
+      if (featListGlowCleanupRef.current) {
+        featListGlowCleanupRef.current();
+        featListGlowCleanupRef.current = null;
       }
-      listRestoreRef.current = {
-        scrollTop: listScrollRef.current?.scrollTop || 0,
-      };
-      setSkipPanelAnim(true);
-      setDetailsOrigin("list");
-      if (item.type === "path") {
-        setSelectedFeature({ type: "path", path: item.ref });
-      } else {
-        setSelectedFeature({ type: "marker", marker: item.ref });
-      }
+      setSelectedFeatureListRef(null);
+      setOpenCollectionId(item.ref._id);
       return;
     }
+    listRestoreRef.current = {
+      scrollTop: listScrollRef.current?.scrollTop || 0,
+    };
+    setSkipPanelAnim(true);
+    setDetailsOrigin("list");
+    if (item.type === "path") {
+      setSelectedFeature({ type: "path", path: item.ref });
+    } else {
+      setSelectedFeature({ type: "marker", marker: item.ref });
+    }
+  };
+
+  // The side actions are revealed by hovering the row with a mouse or by a long
+  // press on touch — never by the tap that opens it. The revealed row also glows
+  // its feature on the map, but deliberately moves no camera: a mouse sweeping
+  // down the list would otherwise fly the map around.
+  const revealFeatureListActions = (item) => {
+    if (selectedFeatureListRef === item.ref) return;
     setSelectedFeatureListRef(item.ref);
     // Clear previous glow
     if (featListGlowCleanupRef.current) {
@@ -6873,9 +6895,7 @@ export default function Map() {
     if (item.type === "collection") return;
 
     const map = mapRef.current;
-    const pp = getPanelPadding();
     const glowEls = [];
-    const coords = [];
 
     if (item.type === "path") {
       const path = item.ref;
@@ -6893,18 +6913,6 @@ export default function Map() {
           glowEls.push(s.getElement());
         });
       }
-      // Collect every vertex (or snapped point) so the zoom-out ratio is
-      // computed against the whole path — the user wants to see it all in
-      // the unobscured area, not just the start.
-      const asLngLat = (ll) => (Array.isArray(ll) ? [ll[0], ll[1]] : [ll.lng, ll.lat]);
-      if (path.snappedSegments && path.snappedSegments.length > 0) {
-        path.snappedSegments.forEach((seg) =>
-          seg.coords.forEach((c) => coords.push(asLngLat(c))),
-        );
-      } else {
-        path.vertices.forEach((v) => coords.push(asLngLat(v.lngLat)));
-      }
-
       featListGlowCleanupRef.current = () => {
         if (map.getLayer(path.layerId)) {
           map.setPaintProperty(path.layerId, "line-width", ["coalesce", ["get", "width"], 3]);
@@ -6916,48 +6924,10 @@ export default function Map() {
       const el = item.ref.getElement();
       el.classList.add("feature-glow");
       glowEls.push(el);
-      const ll = item.ref.getLngLat();
-      coords.push([ll.lng, ll.lat]);
 
       featListGlowCleanupRef.current = () => {
         glowEls.forEach((el) => el.classList.remove("feature-glow"));
       };
-    }
-
-    // Zoom out if the feature is off-screen or hidden under the open panel.
-    // Measure pixel distances from the unobstructed-center pixel so the zoom
-    // budget reflects what actually fits in the visible strip.
-    if (coords.length > 0) {
-      const rect = map.getContainer().getBoundingClientRect();
-      const MARGIN = 40;
-      const aroundLL = getUnobstructedCenterLL();
-      const cPx = map.project(aroundLL);
-      const availW = Math.max(20, (rect.width - (pp.left || 0) - (pp.right || 0)) / 2 - MARGIN);
-      const availH = Math.max(20, (rect.height - (pp.top || 0) - (pp.bottom || 0)) / 2 - MARGIN);
-
-      let ratio = 1;
-      for (const [lng, lat] of coords) {
-        const p = map.project([lng, lat]);
-        const dx = Math.abs(p.x - cPx.x);
-        const dy = Math.abs(p.y - cPx.y);
-        if (dx > availW) ratio = Math.max(ratio, dx / availW);
-        if (dy > availH) ratio = Math.max(ratio, dy / availH);
-      }
-      if (ratio > 1) {
-        const dz = Math.log2(ratio);
-        const newZoom = Math.max(map.getMinZoom(), map.getZoom() - dz - 0.1);
-        skipNextMoveBumpRef.current = true;
-        // Zoom around the unobstructed-center pixel without touching center
-        // or padding — avoids the low-zoom clamping jolt that a padding
-        // change causes when the world bounds are already in view.
-        map.easeTo({
-          zoom: newZoom,
-          around: aroundLL,
-          duration: 500,
-          bearing: map.getBearing(),
-          pitch: map.getPitch(),
-        });
-      }
     }
 
     // Auto-clear glow after 2s
@@ -6968,6 +6938,62 @@ export default function Map() {
         featListGlowCleanupRef.current = null;
       }
     }, 2000);
+  };
+
+  const clearFeatureListActions = (item) => {
+    if (item && selectedFeatureListRef !== item.ref) return;
+    setSelectedFeatureListRef(null);
+    if (featListGlowCleanupRef.current) {
+      featListGlowCleanupRef.current();
+      featListGlowCleanupRef.current = null;
+    }
+  };
+
+  // Touch has no hover, so a press held past LONG_PRESS_MS reveals the actions
+  // instead. `fired` then swallows the click that ends the press, so revealing
+  // never doubles as opening. A drag past LONG_PRESS_SLOP_PX is the user
+  // scrolling the list, not pressing a row.
+  const LONG_PRESS_MS = 450;
+  const LONG_PRESS_SLOP_PX = 10;
+  const rowPressRef = useRef({ timer: null, x: 0, y: 0, fired: false });
+
+  const cancelRowPress = () => {
+    const lp = rowPressRef.current;
+    if (lp.timer) {
+      clearTimeout(lp.timer);
+      lp.timer = null;
+    }
+  };
+
+  const handleRowPointerDown = (e, onLongPress) => {
+    const lp = rowPressRef.current;
+    cancelRowPress();
+    lp.fired = false;
+    if (e.pointerType === "mouse") return;
+    lp.x = e.clientX;
+    lp.y = e.clientY;
+    lp.timer = setTimeout(() => {
+      lp.timer = null;
+      lp.fired = true;
+      onLongPress();
+    }, LONG_PRESS_MS);
+  };
+
+  const handleRowPointerMove = (e) => {
+    const lp = rowPressRef.current;
+    if (!lp.timer) return;
+    if (Math.abs(e.clientX - lp.x) > LONG_PRESS_SLOP_PX || Math.abs(e.clientY - lp.y) > LONG_PRESS_SLOP_PX) {
+      cancelRowPress();
+    }
+  };
+
+  const handleRowClick = (row) => {
+    const lp = rowPressRef.current;
+    if (lp.fired) {
+      lp.fired = false;
+      return;
+    }
+    openFeatureListItem(row);
   };
 
   // Bottom sheet drag handlers (portrait + desktop mouse)
@@ -9975,7 +10001,14 @@ export default function Map() {
                     <div
                       className={`panel-list-item${rowHidden ? " panel-list-item-hidden" : ""}`}
                       style={nested ? { paddingLeft: 28 } : undefined}
-                      onClick={() => handleFeatureListClick(row)}
+                      onPointerEnter={(e) => { if (e.pointerType === "mouse") revealFeatureListActions(row); }}
+                      onPointerLeave={(e) => { if (e.pointerType === "mouse") clearFeatureListActions(row); }}
+                      onPointerDown={(e) => handleRowPointerDown(e, () => revealFeatureListActions(row))}
+                      onPointerMove={handleRowPointerMove}
+                      onPointerUp={cancelRowPress}
+                      onPointerCancel={cancelRowPress}
+                      onContextMenu={(e) => e.preventDefault()}
+                      onClick={() => handleRowClick(row)}
                     >
                       <IonIcon icon={iconIcon} className={`panel-list-icon panel-list-icon-${row.type}`} />
                       <div className="panel-list-text">
@@ -10726,7 +10759,13 @@ export default function Map() {
               return (
                 <div
                   className="panel-list-item panel-list-item-header"
-                  onClick={() => setDetailsActionsOpen((v) => !v)}
+                  onPointerEnter={(e) => { if (e.pointerType === "mouse") setDetailsActionsOpen(true); }}
+                  onPointerLeave={(e) => { if (e.pointerType === "mouse") setDetailsActionsOpen(false); }}
+                  onPointerDown={(e) => handleRowPointerDown(e, () => setDetailsActionsOpen(true))}
+                  onPointerMove={handleRowPointerMove}
+                  onPointerUp={cancelRowPress}
+                  onPointerCancel={cancelRowPress}
+                  onContextMenu={(e) => e.preventDefault()}
                 >
                   <IonIcon icon={headerIcon} className={`panel-list-icon panel-list-icon-${headerTypeClass}`} />
                   <div className="panel-list-text">
@@ -10793,7 +10832,13 @@ export default function Map() {
                 return (
                   <div
                     className="panel-description"
-                    onClick={() => setDescActionsOpen((v) => !v)}
+                    onPointerEnter={(e) => { if (e.pointerType === "mouse") setDescActionsOpen(true); }}
+                    onPointerLeave={(e) => { if (e.pointerType === "mouse") setDescActionsOpen(false); }}
+                    onPointerDown={(e) => handleRowPointerDown(e, () => setDescActionsOpen(true))}
+                    onPointerMove={handleRowPointerMove}
+                    onPointerUp={cancelRowPress}
+                    onPointerCancel={cancelRowPress}
+                    onContextMenu={(e) => e.preventDefault()}
                   >
                     <span className={`panel-description-text${desc ? "" : " empty"}`}>
                       {desc || "No description yet."}

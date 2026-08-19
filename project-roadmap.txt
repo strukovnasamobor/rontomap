@@ -1,3 +1,6 @@
+? on mouse over / long touch for showing side actions (maps, features, offline maps), click to opens
+? on mouse over / long touch in feature show side actions and for description side actions
+- review project-roadmap
 - start/stop on nav and tracing path
 
 FEATURE COLLECTIONS
@@ -7,14 +10,14 @@ FEATURE COLLECTIONS
     - features collection are saved by default
     - remember sort after reopening feature list
     - remember the feature collection that is opened, when adding marker or creating path save at the opened feature collection
-    - row interaction: Two-stage, same as feature rows: tap 1 selects and reveals the 4 side actions, tap 2 opens the collection
+    - row interaction: same as feature rows: mouse over / long press reveals the 4 side actions, click or tap opens the collection
     - back affordance: Sticky ← <name> row at the top of the list — keeps all 7 toolbar buttons
     - new collection persistence: Session-only until its save action is used, like a new marker
     - nesting: One level. No collections inside collections
     - ordering: Collections pin to the top of the root list, name-ascending, independent of the feature sort
     - show/hide + save/unsave: Cascade to contents
     - delete: Ask delete with features, or keep features (root); skip the dialog when the collection is empty
-    * to paths, sights and markers add cut-icon to move them in another collection or as a side action and selecting features to be added
+    * to paths, sights and markers add cut-icon to move them in another collection or as a side action and selecting features to be added, info in which collection belongs
     - after stopped recording path name it "Path recorded on dd-mm-yyyy" and save it in the root
     * action button for import, imported features put in one folder and name it "Imported on dd-mm-yyyy"
 - side menu action review
@@ -160,7 +163,9 @@ FEATURE DETAIL PANEL
     - Close / Back to list (if origin is feature list) - ion-icon name="close-outline"/ion-icon name="arrow-back-outline"
 - show name of ther feature
 - show details for marker/sight - coordinates, for path - snapping, distance, duration (for snapped paths),
-  when user click on feature item the side action icons appears
+  on mouse over the feature item (on touch devices: long press) the side action icons appears
+- opening a feature that belongs to a feature collection opens that collection in the feature list,
+  as if the user had opened the collection there
 - side actions for marker
     - Set name to marker - ion-icon name="pencil-outline"
     - Hide/Unhide marker - ion-icon name="eye-outline"/ion-icon name="eye-off-outline"
@@ -178,7 +183,7 @@ FEATURE DETAIL PANEL
     - Hide/Unhide path - ion-icon name="eye-outline"/ion-icon name="eye-off-outline"
     - Save/Unsave path - ion-icon name="save-outline"/ion-icon name="save"
     - Delete - ion-icon name="trash-outline"
-- show description, when user click on description the side action  appears
+- show description, on mouse over the description (on touch devices: long press) the side action appears
 - side actions for description
     - Set description - ion-icon name="pencil-outline"
 
@@ -197,11 +202,11 @@ FEATURES LIST PANEL
 - list of features with name and details showing for marker/sight - coordinates, for path - snapping, distance, duration (for snapped paths)
 - path item/header icon by snapping - foot: ion-icon name="walk-outline", bike: ion-icon name="bicycle-outline",
   car: ion-icon name="car-outline", free: ion-icon name="analytics-outline"
-  with side icons actions (show when feature is clicked) same as side actions icons in feature details
+  with side icons actions (show on mouse over / long press) same as side actions icons in feature details
 - sights show nested in there paths and implicitly save/unsave sync with the path, so no save/unsave side icon
-- when feature list panel is opened and user first click on feature the action icons appears and feature glows,
-  if feature doesn't appear in obstructed area then zoom out so that is visible, 
-  if user clicks second time on that feature then feature details panel opens, 
+- mouse over a feature (on touch devices: long press) shows its side action icons and the feature glows on the map,
+  no camera move on hover,
+  clicking / tapping the feature opens the feature details panel (zooming out there if it falls in the obstructed area),
   when feature detail panel closes then feature list panel reopens (in same level), 
   same if user click on feature while feature list is opened then closing feature detail panel it will reopen feature list
 
