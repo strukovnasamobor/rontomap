@@ -139,6 +139,31 @@ const postEmbeddedEvent = (type, payload) => {
   }
 };
 
+// A marker placed by another app can carry that app's own id as JSON in its
+// description — samobornt keys its sights that way, and asks for them back by
+// id. The value may arrive already parsed, as a JSON string, or as JSON sitting
+// inside other text, so each of those is unwrapped before the id is read.
+const sightIdFromDescription = (description) => {
+  let data = description;
+  if (typeof data === "string") {
+    try {
+      data = JSON.parse(data);
+    } catch {
+      const braced = data.match(/\{[\s\S]*\}/);
+      if (!braced) return null;
+      try {
+        data = JSON.parse(braced[0]);
+      } catch {
+        return null;
+      }
+    }
+  }
+  if (typeof data !== "object" || data === null) return null;
+
+  const id = data.id ?? data.sightId ?? data.sight;
+  return id === undefined || id === null ? null : String(id);
+};
+
 // Snapped-segment type code mapping (used in path URL extras blob)
 const SEG_TYPE_TO_CODE = { snapped: "s", offset: "o", fallback: "f", direct: "d" };
 const CODE_TO_SEG_TYPE = { s: "snapped", o: "offset", f: "fallback", d: "direct" };
@@ -779,10 +804,23 @@ export default function Map() {
   const embedGeolocationRef = useRef(
     isEmbeddedRef.current && new URLSearchParams(window.location.search).get("geolocation") === "true",
   );
+  // The ready event goes out once per frame load, and not before the features
+  // named in the URL are on the map: a page that asks for one by id the moment
+  // it hears ready must find it there.
+  const embedReadySentRef = useRef(false);
   const embeddedFocusedRef = useRef(false);
   const embeddedToastTimerRef = useRef(null);
   // Re-applies the embed interaction policy; assigned in the map-init effect.
   const applyEmbedInteractionPolicyRef = useRef(null);
+
+  // Tell an embedding page the frame is live and can take commands. Sent once:
+  // from the map's load event, or, when the URL names a features collection,
+  // only after those features are on the map.
+  const postEmbedReady = () => {
+    if (!isEmbeddedRef.current || embedReadySentRef.current) return;
+    embedReadySentRef.current = true;
+    postEmbeddedEvent("ready", {});
+  };
 
   // Refs for finger-following swipe gestures
   const sideMenuRef = useRef(null);
@@ -2392,10 +2430,9 @@ export default function Map() {
       if (locationControlRef.current && "geolocation" in navigator) {
         locationControlRef.current.showTrackingLocationIcon();
       }
-      // An embedding page can only aim the camera once the map exists, so say
-      // when the frame is live instead of making it guess from iframe onload,
-      // which fires long before this.
-      if (isEmbeddedRef.current) postEmbeddedEvent("ready", {});
+      // With features to import the ready event waits for them (see
+      // postEmbedReady); with none, the map being up is all there is to wait for.
+      if (!getQueryParams("features_collection")) postEmbedReady();
     });
 
     // Listen for styledata changes
@@ -5264,9 +5301,10 @@ export default function Map() {
     });
 
   // Commands from the embedding page. The counterpart to postEmbeddedEvent:
-  // that reports what happened inside the frame, this lets the page aim the
-  // camera without reloading the iframe, which is otherwise the only way to
-  // change the view a `?lat=&long=` URL set.
+  // that reports what happened inside the frame, these aim the camera without
+  // reloading the iframe, which is otherwise the only way to change the view a
+  // `?lat=&long=` URL set. show-marker names a marker the map already holds, so
+  // the embedding page needs no coordinates of its own to send the map to one.
   //
   // Gating: embedded mode only, the message must come from the window that
   // embedded us, and it must carry our own command marker. There is no origin
@@ -5286,6 +5324,24 @@ export default function Map() {
       if (event.source !== window.parent) return;
       const data = event.data;
       if (!data || data.source !== "rontomap-embed") return;
+
+      if (data.type === "show-marker") {
+        const sightId = data.sightId === undefined || data.sightId === null ? null : String(data.sightId);
+        const marker = sightId
+          ? markersRef.current.find((m) => sightIdFromDescription(m._description) === sightId)
+          : null;
+        // Nothing to show is not an error worth moving the map for: leaving the
+        // view alone is better than flying somewhere that only looks right.
+        if (!marker) {
+          console.warn("Embed > show-marker: no marker carries sight id", sightId);
+          return;
+        }
+        const pos = marker.getLngLat();
+        const zoom = num(data.zoom);
+        flyToCamera({ lat: pos.lat, long: pos.lng, zoom, duration: num(data.duration) || 1000 });
+        console.log(`Embed > show-marker: sight ${sightId} at ${pos.lat}, ${pos.lng}`);
+        return;
+      }
 
       if (data.type === "set-camera") {
         const camera = data.camera || {};
@@ -5878,6 +5934,7 @@ export default function Map() {
         .then((snap) => {
           if (!snap.exists()) {
             onLinkImportFailed();
+            postEmbedReady();
             return;
           }
           const data = snap.data();
@@ -5893,9 +5950,15 @@ export default function Map() {
             let msg = parts.length ? `Imported ${parts.join(", ")}.` : "Imported 0 features.";
             if (result.skipped > 0) msg += ` ${result.skipped} skipped.`;
             finishLinkImport(beforeM, beforeP, msg);
+            // The features are on the map now, so a page waiting on ready can
+            // ask for one of them straight away.
+            postEmbedReady();
           });
         })
-        .catch(() => onLinkImportFailed());
+        .catch(() => {
+          onLinkImportFailed();
+          postEmbedReady();
+        });
     }
   };
   importFromLinkRef.current = importFromLink;
