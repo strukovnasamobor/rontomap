@@ -351,6 +351,9 @@ SHARING LINKS & EMBEDDED CODE
 - embedded commands - posted by the embedding page with frame.contentWindow.postMessage({source:"rontomap-embed", type, ...}, origin)
     - only in embedded mode, and only from the window that embedded the frame
     - wait for the ready event: commands sent before it are dropped
+    set-features    { collectionId }
+                    swaps the whole features collection in place, no frame reload — so the
+                    camera, the chosen style and everything else on screen survive it
     show-marker     { sightId, zoom, duration }
                     flies to the marker whose description carries that id as JSON
                     ({"id": ...}); does nothing at all if no marker has it

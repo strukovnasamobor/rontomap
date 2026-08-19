@@ -808,6 +808,9 @@ export default function Map() {
   // named in the URL are on the map: a page that asks for one by id the moment
   // it hears ready must find it there.
   const embedReadySentRef = useRef(false);
+  // Which features collection is on the map right now. The URL puts the first
+  // one there; an embedding page can swap it for another without reloading.
+  const embedFeaturesIdRef = useRef(new URLSearchParams(window.location.search).get("features_collection"));
   const embeddedFocusedRef = useRef(false);
   const embeddedToastTimerRef = useRef(null);
   // Re-applies the embed interaction policy; assigned in the map-init effect.
@@ -5320,10 +5323,61 @@ export default function Map() {
     const num = (value) =>
       value === null || value === undefined || value === "" ? NaN : Number(value);
 
+    // Materializing into a style that is still loading throws out of
+    // ensurePathLayer, and a command can arrive mid style-switch. Time-boxed,
+    // like the link importer's copy, so a style that never loads fails loudly.
+    const whenStyleReady = (fn) => {
+      const map = mapRef.current;
+      if (!map) return;
+      if (map.isStyleLoaded()) {
+        fn();
+        return;
+      }
+      const timer = setTimeout(fn, 10000);
+      map.once("style.load", () => {
+        clearTimeout(timer);
+        fn();
+      });
+    };
+
     const handleCommand = (event) => {
       if (event.source !== window.parent) return;
       const data = event.data;
       if (!data || data.source !== "rontomap-embed") return;
+
+      if (data.type === "set-features") {
+        const collectionId = data.collectionId ? String(data.collectionId) : null;
+        if (!collectionId) {
+          console.warn("Embed > set-features without a collection id");
+          return;
+        }
+        if (collectionId === embedFeaturesIdRef.current) return;
+        // Fetch first, swap second: a failed read must leave the map holding
+        // the features it already has rather than emptying it.
+        getDoc(doc(db, "featuresCollections", collectionId))
+          .then((snap) => {
+            if (!snap.exists()) {
+              console.warn("Embed > set-features: no collection", collectionId);
+              return;
+            }
+            const features = snap.data();
+            whenStyleReady(() => {
+              confirmDeleteAllFeatures();
+              const result = materializeFeatures(features, {
+                createMarker: createMarkerRef.current,
+                pathHelpersRef,
+                updateMarkerLabel,
+                deserializeSnappedSegments,
+                pathsRef,
+              });
+              syncLabelsNow();
+              embedFeaturesIdRef.current = collectionId;
+              console.log(`Embed > set-features: ${collectionId} (${result.markerCount} markers, ${result.pathCount} paths)`);
+            });
+          })
+          .catch((err) => console.warn("Embed > set-features failed:", err));
+        return;
+      }
 
       if (data.type === "show-marker") {
         const sightId = data.sightId === undefined || data.sightId === null ? null : String(data.sightId);
