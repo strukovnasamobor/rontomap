@@ -2392,6 +2392,10 @@ export default function Map() {
       if (locationControlRef.current && "geolocation" in navigator) {
         locationControlRef.current.showTrackingLocationIcon();
       }
+      // An embedding page can only aim the camera once the map exists, so say
+      // when the frame is live instead of making it guess from iframe onload,
+      // which fires long before this.
+      if (isEmbeddedRef.current) postEmbeddedEvent("ready", {});
     });
 
     // Listen for styledata changes
@@ -5228,27 +5232,89 @@ export default function Map() {
     });
   };
 
+  // Fly to an explicit camera. Missing zoom falls back to the same default a
+  // ?lat/?long link gets; a missing bearing or pitch keeps what the map already
+  // has, so a partial camera never snaps the view to north-up and flat.
+  // Returns false when there is nothing to fly to.
+  const flyToCamera = ({ lat, long, zoom, bearing, pitch, duration = 1000 }) => {
+    const map = mapRef.current;
+    if (!map) return false;
+    if (!Number.isFinite(lat) || !Number.isFinite(long)) return false;
+    map.flyTo({
+      center: [long, lat],
+      zoom: Number.isFinite(zoom) ? zoom : defaultZoomOnQueryParams,
+      bearing: Number.isFinite(bearing) ? bearing : map.getBearing(),
+      pitch: Number.isFinite(pitch) ? pitch : map.getPitch(),
+      duration,
+    });
+    return true;
+  };
+
   // Fly to the camera baked into a share link. Mirrors the "map already
   // initialized" branch of the setup effect so a link arriving at runtime frames
   // the same view a cold start would. Partial links keep the current
   // bearing/pitch rather than snapping to 0.
-  const flyToLinkCamera = (link) => {
-    const map = mapRef.current;
-    if (!map) return;
-    const lat = parseFloat(link.get("lat"));
-    const long = parseFloat(link.get("long"));
-    if (isNaN(lat) || isNaN(long)) return;
-    const z = parseFloat(link.get("zoom"));
-    const b = parseFloat(link.get("bearing"));
-    const p = parseFloat(link.get("pitch"));
-    map.flyTo({
-      center: [long, lat],
-      zoom: !isNaN(z) ? z : defaultZoomOnQueryParams,
-      bearing: !isNaN(b) ? b : map.getBearing(),
-      pitch: !isNaN(p) ? p : map.getPitch(),
-      duration: 1000,
+  const flyToLinkCamera = (link) =>
+    flyToCamera({
+      lat: parseFloat(link.get("lat")),
+      long: parseFloat(link.get("long")),
+      zoom: parseFloat(link.get("zoom")),
+      bearing: parseFloat(link.get("bearing")),
+      pitch: parseFloat(link.get("pitch")),
     });
-  };
+
+  // Commands from the embedding page. The counterpart to postEmbeddedEvent:
+  // that reports what happened inside the frame, this lets the page aim the
+  // camera without reloading the iframe, which is otherwise the only way to
+  // change the view a `?lat=&long=` URL set.
+  //
+  // Gating: embedded mode only, the message must come from the window that
+  // embedded us, and it must carry our own command marker. There is no origin
+  // allowlist to check against — the embed code can live on any site — but the
+  // surface is deliberately just the camera, which that page could already aim
+  // by changing the iframe URL. Never widen this to anything it could not
+  // already do from outside.
+  useEffect(() => {
+    if (!isEmbeddedRef.current) return;
+
+    // null/""/undefined must not become 0 the way Number() would: an absent
+    // zoom means "keep the default", not "zoom all the way out".
+    const num = (value) =>
+      value === null || value === undefined || value === "" ? NaN : Number(value);
+
+    const handleCommand = (event) => {
+      if (event.source !== window.parent) return;
+      const data = event.data;
+      if (!data || data.source !== "rontomap-embed") return;
+
+      if (data.type === "set-camera") {
+        const camera = data.camera || {};
+        const duration = num(camera.duration);
+        const applied = {
+          lat: num(camera.lat),
+          long: num(camera.long),
+          zoom: num(camera.zoom),
+          bearing: num(camera.bearing),
+          pitch: num(camera.pitch),
+          duration: Number.isFinite(duration) ? duration : 1000,
+        };
+        if (!flyToCamera(applied)) {
+          console.warn("Embed > set-camera without usable coordinates:", camera);
+          return;
+        }
+        console.log(`Embed > set-camera: ${applied.lat}, ${applied.long} @ zoom ${applied.zoom}`);
+        return;
+      }
+
+      console.warn("Embed > unknown command:", data.type);
+    };
+
+    window.addEventListener("message", handleCommand);
+    return () => window.removeEventListener("message", handleCommand);
+    // flyToCamera is re-made every render but only ever reads refs, so the
+    // listener can keep the first one and stay attached for the frame's life.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleImportFeatures = async () => {
     setMapClickMenu(null);

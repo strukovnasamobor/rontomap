@@ -344,5 +344,12 @@ SHARING LINKS & EMBEDDED CODE
       <iframe ... allow="fullscreen; geolocation" ...></iframe>
     - the "Open in RontoMap" logo strips embedded, style, interact and geolocation from the link
 - embedded events - posted to the embedding page with window.parent.postMessage({source:"rontomap", type, ...}, "*")
+    ready           {}                          the map exists and takes commands; sent once per frame load
     marker-click    { marker: {name, description, lng, lat, isSight, index} }
     path-click      { path: {name, description, isCircuit, roadSnap, distance, duration, index, lng, lat} }
+- embedded commands - posted by the embedding page with frame.contentWindow.postMessage({source:"rontomap-embed", type, ...}, origin)
+    - only in embedded mode, and only from the window that embedded the frame
+    - wait for the ready event: commands sent before it are dropped
+    set-camera      { camera: {lat, long, zoom, bearing, pitch, duration} }
+                    flies the map there without reloading the frame; lat/long required,
+                    zoom defaults as ?lat/?long does, bearing/pitch/duration keep current/1000ms
