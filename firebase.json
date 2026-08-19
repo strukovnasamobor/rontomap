@@ -1,17 +1,42 @@
 {
   "hosting": {
     "public": "dist",
-    "predeploy": ["npm run build"],
-    "ignore": ["firebase.json", "**/node_modules/**", "**/.DS_Store", "**/.git/**"],
+    "predeploy": [
+      "npm run build"
+    ],
+    "ignore": [
+      "firebase.json",
+      "**/node_modules/**",
+      "**/.DS_Store",
+      "**/.git/**"
+    ],
     "rewrites": [
       {
-        "source": "**",
+        "source": "**/!(*.*)",
         "destination": "/index.html"
       }
     ],
     "headers": [
       {
         "source": "**/*.@(js|css|html|json)",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=0, must-revalidate"
+          }
+        ]
+      },
+      {
+        "source": "**/!(*.*)",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=0, must-revalidate"
+          }
+        ]
+      },
+      {
+        "source": "**/*.webmanifest",
         "headers": [
           {
             "key": "Cache-Control",
