@@ -6735,8 +6735,8 @@ export default function Map() {
   const featuresListItems = useMemo(() => {
     const map = mapRef.current;
     if (!map) return [];
-    // Sort distance relative to the current map center; re-runs on moveend
-    // via mapCenterTick.
+    // Distance sort is always measured from the current map center; re-runs on
+    // moveend via mapCenterTick, so panning re-orders the list.
     const ref = map.getCenter();
     const refLat = ref.lat;
     const refLng = ref.lng;
