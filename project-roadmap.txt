@@ -1,6 +1,7 @@
-? on mouse over / long touch for showing side actions (maps, features, offline maps), click to opens
-? on mouse over / long touch in feature show side actions and for description side actions
 - review project-roadmap
+    - on mouse over / long touch for showing side actions (maps, features, offline maps), click to opens
+    - on mouse over / long touch in feature show side actions and for description side actions
+    - on mouse over / long touch for showing side actions
 - start/stop on nav and tracing path
 
 FEATURE COLLECTIONS
@@ -222,9 +223,11 @@ OFFLINE MAPS PANEL
     - Show/Hide Regions (toggle on/off for filtering) - ion-icon name="map-outline"
     - Add region - ion-icon "add-outline"
     - Close - ion-icon name="close-outline"
-- showing base map if is it downloaded with number of tiles and size with side action icons:
+- showing base map if is it downloaded with number of tiles and size with side action icons
+  (show on mouse over / long press):
     - Delete - ion-icon name="trash-outline"
-- list of offline regions with number of tiles, size and date of download/update with side icons actions (show when region is clicked)
+- list of offline regions with number of tiles, size and date of download/update with side icons actions
+  (show on mouse over / long press)
     - Rename - ion-icon name="pencil-outline"
     - Update - ion-icon name="refresh-outline" - when clicked show downloading circle
     - Delete - ion-icon name="trash-outline"
@@ -233,7 +236,8 @@ OFFLINE MAPS PANEL
 - when download is clicked on creating new offline region show offline maps panel with downloading circle
 - when close is clicked on creating new offline region show offline maps panel
 - only on Android: show Routings data with search icon that suggests data for current view
-  and list of suggested regions (side action: install) and then installed routing data (side actions: update, delete)
+  and list of suggested regions (side action: install) and then installed routing data
+  (side actions on mouse over / long press: update, delete)
 - when trying to snap the path to the road
     - on web if it fails because of device is offline then show toast msg
     - on Android first try using offline routing, if fails try online, if that fails then show toast msg

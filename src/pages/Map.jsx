@@ -642,6 +642,7 @@ export default function Map() {
   const [detailsOrigin, setDetailsOrigin] = useState(null);
   // Action icons inside the details header row start hidden; revealed when the
   // user clicks the header — mirrors the feature-list row pattern.
+  const [hoveredOfflineRowId, setHoveredOfflineRowId] = useState(null);
   const [detailsActionsOpen, setDetailsActionsOpen] = useState(false);
   const [descActionsOpen, setDescActionsOpen] = useState(false);
   const listRestoreRef = useRef(null);
@@ -4944,8 +4945,24 @@ export default function Map() {
       setSelectedRoutingSubId(null);
       setRoutingExpanded(false);
       setRoutingSuggestions([]);
+      setHoveredOfflineRowId(null);
     }
   }, [showOfflineMapsPanel]);
+
+  // A long press revealed the actions on a touch device; a tap anywhere off the
+  // rows puts them away again. Mirrors the feature-list rule.
+  useEffect(() => {
+    if (!hoveredOfflineRowId) return;
+    const onDocDown = (e) => {
+      if (!e.target?.closest?.(".panel-list-item")) setHoveredOfflineRowId(null);
+    };
+    document.addEventListener("mousedown", onDocDown);
+    document.addEventListener("touchstart", onDocDown);
+    return () => {
+      document.removeEventListener("mousedown", onDocDown);
+      document.removeEventListener("touchstart", onDocDown);
+    };
+  }, [hoveredOfflineRowId]);
 
   // Dynamic toast position: 10px above feature panel in portrait
   const [toastBottom, setToastBottom] = useState(null);
@@ -6986,6 +7003,20 @@ export default function Map() {
       cancelRowPress();
     }
   };
+
+  // Offline rows reveal their side actions on hover / long press like feature
+  // rows do. Kept separate from shownRegionId and selectedRoutingSubId, which
+  // still mean "highlighted on the map" and "selected routing row" — a click on
+  // an offline row keeps flying to its region or expanding its list.
+  const offlineRowRevealProps = (id) => ({
+    onPointerEnter: (e) => { if (e.pointerType === "mouse") setHoveredOfflineRowId(id); },
+    onPointerLeave: (e) => { if (e.pointerType === "mouse") setHoveredOfflineRowId((cur) => (cur === id ? null : cur)); },
+    onPointerDown: (e) => handleRowPointerDown(e, () => setHoveredOfflineRowId(id)),
+    onPointerMove: handleRowPointerMove,
+    onPointerUp: cancelRowPress,
+    onPointerCancel: cancelRowPress,
+    onContextMenu: (e) => e.preventDefault(),
+  });
 
   const handleRowClick = (row) => {
     const lp = rowPressRef.current;
@@ -10196,6 +10227,7 @@ export default function Map() {
           <div
             key="base"
             className={`panel-list-item panel-list-item-base${shownRegionId === "__base__" ? " panel-list-item-active" : ""}`}
+            {...offlineRowRevealProps("__base__")}
             onClick={() => {
               setSelectedRoutingSubId(null);
               setRoutingExpanded(false);
@@ -10210,7 +10242,7 @@ export default function Map() {
                 {formatRegionDate(offlineBaseMap) && <> {"\u00b7 "}{formatRegionDate(offlineBaseMap)}</>}
               </span>
             </div>
-            {shownRegionId === "__base__" && (
+            {hoveredOfflineRowId === "__base__" && (
               <>
                 <ActionIconButton
                   label="Update"
@@ -10323,6 +10355,7 @@ export default function Map() {
                     <div
                       key={r.id}
                       className={`panel-list-item${shownRegionId === r.id ? " panel-list-item-active" : ""}`}
+                      {...offlineRowRevealProps(r.id)}
                       onClick={() => handleOfflineRegionClick(r)}
                     >
                       <IonIcon icon={mapOutline} className="panel-list-icon" />
@@ -10333,7 +10366,7 @@ export default function Map() {
                           {formatRegionDate(r) && <> {"\u00b7 "}{formatRegionDate(r)}</>}
                         </span>
                       </div>
-                      {shownRegionId === r.id && (
+                      {hoveredOfflineRowId === r.id && (
                         <>
                           <ActionIconButton
                             label="Rename"
@@ -10464,6 +10497,7 @@ export default function Map() {
                         key={subKey}
                         className={`panel-list-item${expanded ? " panel-list-item-active" : ""}`}
                         style={{ paddingLeft: 34 }}
+                        {...offlineRowRevealProps(subKey)}
                         onClick={() => {
                           if (shownRegionId) clearOfflineRegionHighlight();
                           setSelectedRoutingSubId((cur) => (cur === subKey ? null : subKey));
@@ -10499,7 +10533,7 @@ export default function Map() {
                               <IonIcon icon={closeOutline} />
                             </ActionIconButton>
                           </div>
-                        ) : expanded && (
+                        ) : hoveredOfflineRowId === subKey && (
                           <>
                             <ActionIconButton
                               label="Update routing data"
