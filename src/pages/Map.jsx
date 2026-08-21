@@ -826,7 +826,7 @@ export default function Map() {
   const postEmbedReady = () => {
     if (!isEmbeddedRef.current || embedReadySentRef.current) return;
     embedReadySentRef.current = true;
-    postEmbeddedEvent("ready", {});
+    postEmbeddedEvent("ready", { styleId: idMapStyleRef.current });
   };
 
   // Refs for finger-following swipe gestures
@@ -4530,7 +4530,15 @@ export default function Map() {
 
   // Keep refs in sync with state
   useEffect(() => {
+    const previous = idMapStyleRef.current;
     idMapStyleRef.current = idMapStyle;
+    // An embedding page that drives the style from its own light/dark theme
+    // has to know what the map is showing, so it can leave a deliberate
+    // choice such as satellite alone. Held until ready has gone out, since
+    // that carries the opening style itself and would otherwise say it twice.
+    if (isEmbeddedRef.current && embedReadySentRef.current && previous !== idMapStyle) {
+      postEmbeddedEvent("style-change", { styleId: idMapStyle });
+    }
   }, [idMapStyle]);
   useEffect(() => {
     isPathModeRef.current = isPathMode;
@@ -5449,6 +5457,21 @@ export default function Map() {
           return;
         }
         console.log(`Embed > set-camera: ${applied.lat}, ${applied.long} @ zoom ${applied.zoom}`);
+        return;
+      }
+
+      if (data.type === "set-style") {
+        const styleId = data.styleId ? String(data.styleId) : null;
+        if (!Object.keys(MAP_STYLE_IDS).includes(styleId)) {
+          console.warn("Embed > set-style: unknown style", styleId);
+          return;
+        }
+        if (styleId === idMapStyleRef.current) return;
+        // Deliberately not saved to localStorage the way the style control
+        // does: this follows the embedding page's theme, and must not
+        // overwrite the style someone chose for rontomap on its own.
+        setIdMapStyle(styleId);
+        console.log("Embed > set-style:", styleId);
         return;
       }
 
