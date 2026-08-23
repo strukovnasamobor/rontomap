@@ -1,4 +1,10 @@
-- start/stop on nav and tracing path
+- redesign start/stop on nav and tracing path
+- tracing path 
+    - on start tracing snap the path
+    - when user gets to end point the tracing path is completed and show toast msg on completing path
+    * records data of traced path below it's description (date and time of start, finish, duration)
+    * path's with recorded tracing data can't be edited, show user msg that he need to delete data first
+
 
 FEATURE COLLECTIONS
     - icon: folder-open
@@ -17,8 +23,8 @@ FEATURE COLLECTIONS
     * to paths, sights and markers add cut-icon to move them in another collection or as a side action and selecting features to be added, info in which collection belongs
     - after stopped recording path name it "Path recorded on dd-mm-yyyy" and save it in the root
     * action button for import, imported features put in one folder and name it "Imported on dd-mm-yyyy"
-- side menu action review
-- tracing path - on start tracing snap the path, when resumed location must be near last traced point, on complete show msg and record data
+- side menu action review and project-roadmap
+
 - login - sync offline regions, route data, feature collections, traced paths
 
 PARALLEL ACTIONS - review

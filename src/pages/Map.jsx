@@ -5377,11 +5377,33 @@ export default function Map() {
         fn();
         return;
       }
-      const timer = setTimeout(fn, 10000);
-      map.once("style.load", () => {
+
+      // "style.load" is one-shot, and startup initialises the map more than
+      // once - the second pass lands about 1.5s in, after the first style has
+      // already loaded. A caller attaching between the two waits for an event
+      // that has been and gone, so it used to sit out the whole 10s fallback:
+      // measured offline on a phone, the embedded features appeared at 12.2s
+      // when the map had been drawable since 1.0s. "styledata" keeps firing
+      // while a style settles, so it still arrives for a late listener, and
+      // the poll covers a style that goes quiet without ever emitting either.
+      // The timeout stays as the last resort it was always meant to be.
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        clearInterval(poll);
         clearTimeout(timer);
+        map.off("styledata", check);
         fn();
-      });
+      };
+      const check = () => {
+        if (map.isStyleLoaded()) finish();
+      };
+
+      map.on("styledata", check);
+      map.once("style.load", finish);
+      const poll = setInterval(check, 100);
+      const timer = setTimeout(finish, 10000);
     };
 
     const handleCommand = (event) => {
@@ -5867,11 +5889,33 @@ export default function Map() {
         fn();
         return;
       }
-      const timer = setTimeout(fn, 10000);
-      map.once("style.load", () => {
+
+      // "style.load" is one-shot, and startup initialises the map more than
+      // once - the second pass lands about 1.5s in, after the first style has
+      // already loaded. A caller attaching between the two waits for an event
+      // that has been and gone, so it used to sit out the whole 10s fallback:
+      // measured offline on a phone, the embedded features appeared at 12.2s
+      // when the map had been drawable since 1.0s. "styledata" keeps firing
+      // while a style settles, so it still arrives for a late listener, and
+      // the poll covers a style that goes quiet without ever emitting either.
+      // The timeout stays as the last resort it was always meant to be.
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        clearInterval(poll);
         clearTimeout(timer);
+        map.off("styledata", check);
         fn();
-      });
+      };
+      const check = () => {
+        if (map.isStyleLoaded()) finish();
+      };
+
+      map.on("styledata", check);
+      map.once("style.load", finish);
+      const poll = setInterval(check, 100);
+      const timer = setTimeout(finish, 10000);
     };
 
     // Shared tail for all three branches.
