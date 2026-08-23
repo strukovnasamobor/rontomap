@@ -352,8 +352,11 @@ SHARING LINKS & EMBEDDED CODE
       <iframe ... allow="fullscreen; geolocation" ...></iframe>
     - the "Open in RontoMap" logo strips embedded, style, interact and geolocation from the link
 - embedded events - posted to the embedding page with window.parent.postMessage({source:"rontomap", type, ...}, "*")
-    ready           {}                          the frame takes commands; sent once per frame load, and
-                                                with &features_collection only once they are on the map
+    ready           { styleId }                 the frame takes commands; sent once per frame load, and
+                                                with &features_collection only once they are on the map;
+                                                styleId is the basemap it opened with
+    style-change    { styleId }                 the basemap changed, from the style control or set-style;
+                                                only after ready, which already carries the opening style
     marker-click    { marker: {name, description, lng, lat, isSight, index} }
     path-click      { path: {name, description, isCircuit, roadSnap, distance, duration, index, lng, lat} }
 - embedded commands - posted by the embedding page with frame.contentWindow.postMessage({source:"rontomap-embed", type, ...}, origin)
@@ -368,3 +371,8 @@ SHARING LINKS & EMBEDDED CODE
     set-camera      { camera: {lat, long, zoom, bearing, pitch, duration} }
                     flies the map there without reloading the frame; lat/long required,
                     zoom defaults as ?lat/?long does, bearing/pitch/duration keep current/1000ms
+    set-style       { styleId }
+                    swaps the basemap in place, no frame reload; one of rontomap_streets_light,
+                    rontomap_streets_dark, rontomap_satellite. Not saved to localStorage the way
+                    the style control is: it follows the embedding page, and must not overwrite
+                    the style chosen for rontomap on its own. Ignored if already that style.
