@@ -5378,15 +5378,17 @@ export default function Map() {
         return;
       }
 
-      // "style.load" is one-shot, and startup initialises the map more than
-      // once - the second pass lands about 1.5s in, after the first style has
-      // already loaded. A caller attaching between the two waits for an event
-      // that has been and gone, so it used to sit out the whole 10s fallback:
-      // measured offline on a phone, the embedded features appeared at 12.2s
-      // when the map had been drawable since 1.0s. "styledata" keeps firing
-      // while a style settles, so it still arrives for a late listener, and
-      // the poll covers a style that goes quiet without ever emitting either.
-      // The timeout stays as the last resort it was always meant to be.
+      // "style.load" is one-shot, and this helper has more than one caller:
+      // the features named by the URL land first, then an embedding page's
+      // set-features arrives over postMessage. Whoever runs second attaches
+      // after the event has already fired and then waits for one that never
+      // comes again, so it used to sit out the whole 10s fallback. Measured
+      // offline on a phone: two waits, one starting at 0.5s that "style.load"
+      // released, and one starting at 1.75s that did not fire until 12.2s -
+      // on a map that had been drawable since 1.0s. "styledata" keeps firing
+      // while a style settles, so it still reaches a late listener, and the
+      // poll covers a style that goes quiet without emitting either. The
+      // timeout stays as the last resort it was always meant to be.
       let done = false;
       const finish = () => {
         if (done) return;
@@ -5890,15 +5892,17 @@ export default function Map() {
         return;
       }
 
-      // "style.load" is one-shot, and startup initialises the map more than
-      // once - the second pass lands about 1.5s in, after the first style has
-      // already loaded. A caller attaching between the two waits for an event
-      // that has been and gone, so it used to sit out the whole 10s fallback:
-      // measured offline on a phone, the embedded features appeared at 12.2s
-      // when the map had been drawable since 1.0s. "styledata" keeps firing
-      // while a style settles, so it still arrives for a late listener, and
-      // the poll covers a style that goes quiet without ever emitting either.
-      // The timeout stays as the last resort it was always meant to be.
+      // "style.load" is one-shot, and this helper has more than one caller:
+      // the features named by the URL land first, then an embedding page's
+      // set-features arrives over postMessage. Whoever runs second attaches
+      // after the event has already fired and then waits for one that never
+      // comes again, so it used to sit out the whole 10s fallback. Measured
+      // offline on a phone: two waits, one starting at 0.5s that "style.load"
+      // released, and one starting at 1.75s that did not fire until 12.2s -
+      // on a map that had been drawable since 1.0s. "styledata" keeps firing
+      // while a style settles, so it still reaches a late listener, and the
+      // poll covers a style that goes quiet without emitting either. The
+      // timeout stays as the last resort it was always meant to be.
       let done = false;
       const finish = () => {
         if (done) return;
