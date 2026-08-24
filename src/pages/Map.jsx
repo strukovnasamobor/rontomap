@@ -17,14 +17,12 @@ import {
   closeOutline,
   searchOutline,
   menuOutline,
-  compass,
-  compassOutline,
+  pauseOutline,
   layersOutline,
   addOutline,
   removeOutline,
-  pauseCircleOutline,
-  playCircleOutline,
-  stopCircleOutline,
+  playOutline,
+  stopOutline,
   textOutline,
   radioOutline,
   chevronUpOutline,
@@ -208,6 +206,11 @@ const formatBytes = (bytes) => {
 
 // Ramer-Douglas-Peucker simplification (~5m tolerance)
 const UNDO_MS = 5000;
+
+// How close the user has to stand to the point a trace starts, resumes at, or
+// ends at. One rule for all three, so a trace can't be joined out of nowhere.
+const TRACE_NEAR_M = 10;
+
 
 const RDP_TOLERANCE = 0.00005;
 const rdpSimplify = (coords, tolerance) => {
@@ -715,6 +718,12 @@ export default function Map() {
   const isNavigationModeRef = useRef(false);
   const [isNavigationTracking, setIsNavigationTracking] = useState(false);
   const isNavigationTrackingRef = useRef(false);
+  // Paused navigation/tracing keeps its route and its traced progress; only the
+  // start button's label changes, from Start to Resume.
+  const [isNavigationPaused, setIsNavigationPaused] = useState(false);
+  const completeTracingRef = useRef(null);
+  const pauseNavigationRef = useRef(null);
+  const resumeNavigationRef = useRef(null);
   const [isRecordingTrack, setIsRecordingRoute] = useState(false);
   const isRecordingTrackRef = useRef(false);
   const trackPathRef = useRef(null);
@@ -745,6 +754,9 @@ export default function Map() {
   const isRenavigatingRef = useRef(false);
   const offPathTimerRef = useRef(null);
   const offPathVertexSegRef = useRef(0);
+  // Where a trace lost the path. While it is set, the traced progress is frozen
+  // there: the user has to rejoin near it before the trace advances again.
+  const traceLostPointRef = useRef(null);
   const routeTotalDistanceRef = useRef(null);
   const isTracingPathRef = useRef(false);
 
@@ -1455,6 +1467,7 @@ export default function Map() {
       routeSplitTRef.current = 0;
       isOffPathRef.current = false;
       offPathCoordsRef.current = [];
+      traceLostPointRef.current = null;
       isRenavigatingRef.current = false;
       routeTotalDistanceRef.current = null;
     };
@@ -2050,7 +2063,7 @@ export default function Map() {
       setPathVertexCount(path.vertices.length);
       if (!pathPointToastShownRef.current) {
         pathPointToastShownRef.current = true;
-        setToastMsg("Click a point to remove it, or hold and drag it.");
+        setToastMsg("Click a point to remove, or drag to move.");
         setTimeout(() => {
           setToastMsg(null);
         }, 3000);
@@ -2561,10 +2574,16 @@ export default function Map() {
           case "track_bearing":
             this.hideTrackingIcons();
             await this._handleTrackBearing();
+            // Mirror of the pause button: this one starts, or resumes, a route
+            // that is laid out but not running. No-op when there is none.
+            resumeNavigationRef.current?.();
             break;
           case "stop_tracking_bearing":
             this.hideTrackingIcons();
             await this._handleStopTrackingBearing();
+            // This button is also where navigation and tracing are paused —
+            // no-ops when neither is running.
+            pauseNavigationRef.current?.();
             break;
         }
       }
@@ -2656,21 +2675,8 @@ export default function Map() {
           return;
         }
 
-        // If in navigation mode, finish path visually and enter navigation tracking
-        if (isNavigationModeRef.current && !isNavigationTrackingRef.current) {
-          const path = activePathRef.current;
-          if (path) {
-            path.isFinished = true;
-            pathHelpersRef.current.hideIntermediateVertices(path);
-            path.midpoints.forEach((mp) => mp.marker.remove());
-            path.midpoints = [];
-            path.vertices.forEach((v) => v.marker.getElement().classList.remove("active-path-feature"));
-          }
-          setIsNavigationTracking(true);
-          isNavigationTrackingRef.current = true;
-          setToastMsg("Click stop icon to leave navigation.");
-          setTimeout(() => setToastMsg(null), 3000);
-        }
+        // Starting bearing tracking only moves the camera — navigation and
+        // tracing begin from the Start/Resume button, never from here.
 
         // Remember the current zoom and pitch to restore them when stopping bearing tracking
         this._zoomOnStartTrackingBearing = this._map.getZoom();
@@ -2745,33 +2751,10 @@ export default function Map() {
             // its own wake lock and is independent of bearing tracking.
             if (!trackPathRef.current) this._releaseWakeLock();
 
-            // If in navigation mode, restore editing UI
-            if (isNavigationModeRef.current) {
-              isOffPathRef.current = false;
-              offPathCoordsRef.current = [];
-              isRenavigatingRef.current = false;
-              if (offPathTimerRef.current) { clearTimeout(offPathTimerRef.current); offPathTimerRef.current = null; }
-              const path = activePathRef.current;
-              if (path) {
-                path.isFinished = false;
-                pathHelpersRef.current.showAllVertices(path);
-                pathHelpersRef.current.rebuildMidpoints(path);
-                path.vertices.forEach((v) => {
-                  v.marker.setDraggable(true);
-                  v.marker.getElement().classList.add("active-path-feature");
-                });
-                pathHelpersRef.current.updateVertexStyles(path);
-                // Restore sight colors after tracking
-                if (path.sights) {
-                  path.sights.forEach((m) => {
-                    delete m._passed;
-                    pathHelpersRef.current.applySightColors(m, path);
-                  });
-                }
-              }
-              setIsNavigationTracking(false);
-              isNavigationTrackingRef.current = false;
-            }
+            // Navigation and tracing are deliberately untouched here. Pausing
+            // them hangs off the button's click instead (see _handleClick), so
+            // that ending navigation can stop the camera without pausing what
+            // has just been torn down.
           });
       }
 
@@ -2877,8 +2860,8 @@ export default function Map() {
         const trackBearingBtn = this._container.querySelector('[data-control="track_bearing"]');
         const stopTrackingBtn = this._container.querySelector('[data-control="stop_tracking_bearing"]');
         trackLocationBtn.appendChild(createIonIcon(locateOutline));
-        trackBearingBtn.appendChild(createIonIcon(compassOutline));
-        stopTrackingBtn.appendChild(createIonIcon(compass, "20px", "#0091ff"));
+        trackBearingBtn.appendChild(createIonIcon(navigateOutline));
+        stopTrackingBtn.appendChild(createIonIcon(pauseOutline));
         addMapControlTooltip(trackLocationBtn, "Track Location", "left");
         addMapControlTooltip(trackBearingBtn, "Track Bearing", "left");
         addMapControlTooltip(stopTrackingBtn, "Stop Tracking", "left");
@@ -3162,11 +3145,13 @@ export default function Map() {
             // User is off-path
             if (!isOffPathRef.current) {
               isOffPathRef.current = true;
-              offPathCoordsRef.current = [
-                passedPathCoordsRef.current.length > 0
-                  ? passedPathCoordsRef.current[passedPathCoordsRef.current.length - 1]
-                  : point,
-              ];
+              const lostPoint = passedPathCoordsRef.current.length > 0
+                ? passedPathCoordsRef.current[passedPathCoordsRef.current.length - 1]
+                : point;
+              offPathCoordsRef.current = [lostPoint];
+              // A trace is only walked, never skipped: leaving the path pins the
+              // progress here until the user comes back to this very point.
+              if (isTracingPathRef.current) traceLostPointRef.current = lostPoint;
               // Only renavigate for regular navigation, not path tracing
               if (!isTracingPathRef.current) {
                 // Record which vertex segment user was on
@@ -3194,10 +3179,19 @@ export default function Map() {
               }
             }
 
+            // Back on the line after losing it: the trace picks up again only
+            // where it was left. Rejoining further along leaves the progress at
+            // the lost point, so no stretch can be skipped by cutting a corner.
+            const lostPoint = traceLostPointRef.current;
+            if (lostPoint && haversineDistance([point, lostPoint]) <= TRACE_NEAR_M) {
+              traceLostPointRef.current = null;
+            }
+
             // Enforce forward-only split (prevent GPS jitter causing backward jumps)
             if (
-              segmentIndex > routeSplitIndexRef.current ||
-              (segmentIndex === routeSplitIndexRef.current && paramT >= routeSplitTRef.current)
+              !traceLostPointRef.current &&
+              (segmentIndex > routeSplitIndexRef.current ||
+                (segmentIndex === routeSplitIndexRef.current && paramT >= routeSplitTRef.current))
             ) {
               routeSplitIndexRef.current = segmentIndex;
               routeSplitTRef.current = paramT;
@@ -3242,6 +3236,23 @@ export default function Map() {
               if (path.routeDuration != null && routeTotalDistanceRef.current > 0) {
                 setNavRouteDuration(path.routeDuration * (remaining / routeTotalDistanceRef.current));
               }
+            }
+
+            // A trace completes only when both hold: the user is standing at the
+            // end point, and the whole line has actually been passed — the split
+            // has reached the last vertex, with nothing left ahead of it. Either
+            // one alone is not enough: on a circuit path the end point is the
+            // start point, and being on the last segment still leaves the rest of
+            // that segment unwalked.
+            if (isTracingPathRef.current) {
+              const end = renderedLine[renderedLine.length - 1];
+              // Nothing left ahead of the split, exactly: t is clamped to 1 once
+              // the user draws level with the last vertex, which puts the split
+              // on that vertex and leaves zero unwalked length. Read off the
+              // split rather than a distance, so no epsilon can creep in.
+              const allPassed = si >= renderedLine.length - 2 && st >= 1;
+              const atEnd = allPassed && haversineDistance([userPos, end]) <= TRACE_NEAR_M;
+              if (atEnd) completeTracingRef.current?.();
             }
           }
         }
@@ -3584,7 +3595,7 @@ export default function Map() {
           setPathVertexCount(path.vertices.length);
           if (!pathPointToastShownRef.current) {
             pathPointToastShownRef.current = true;
-            setToastMsg("Click a point to remove it, or hold and drag it.");
+            setToastMsg("Click a point to remove, or drag to move.");
             setTimeout(() => {
               setToastMsg(null);
             }, 3000);
@@ -6768,24 +6779,43 @@ export default function Map() {
     bumpFeaturesVersion();
   };
 
-  const handleFeatureTrace = (pathArg) => {
-    const path = pathArg ?? (selectedFeature?.type === "path" ? selectedFeature.path : null);
-    if (!path || path.vertices.length < 2) return;
+  // A fresh trace is anchored to the path start; a resumed one picks up where it
+  // stopped, which is the last point of the traced overlay. The overlay only
+  // counts for the path it was traced on — another path's progress is not ours.
+  const traceAnchorPos = (path) => {
+    const passed = passedPathCoordsRef.current;
+    if (activePathRef.current === path && passed.length > 0) {
+      return { pos: passed[passed.length - 1], resuming: true };
+    }
+    return { pos: path?.vertices?.[0]?.lngLat ?? null, resuming: false };
+  };
+
+  // Guard shared by entering trace mode and by Start/Resume. Returns true when the
+  // user is close enough, and toasts the reason when they are not.
+  const isUserNearTraceAnchor = (path) => {
     const ctrl = locationControlRef.current;
     if (!ctrl || ctrl._lastPostionLat == null || ctrl._lastPostionLong == null) {
       setToastMsg("Enable location to trace path.");
       setTimeout(() => setToastMsg(null), 3000);
-      return;
+      return false;
     }
+    const { pos: anchor, resuming } = traceAnchorPos(path);
+    if (!anchor) return false;
     const userPos = [ctrl._lastPostionLong, ctrl._lastPostionLat];
-    const startPos = path.vertices[0].lngLat;
-    const dist = haversineDistance([userPos, startPos]);
-    if (dist > 50) {
-      setToastMsg("You need to be near the path start point.");
+    if (haversineDistance([userPos, anchor]) > TRACE_NEAR_M) {
+      setToastMsg(resuming ? "You need to be near the last traced point." : "You need to be near the path start point.");
       setTimeout(() => setToastMsg(null), 3000);
-      return;
+      return false;
     }
+    return true;
+  };
+
+  const handleFeatureTrace = (pathArg) => {
+    const path = pathArg ?? (selectedFeature?.type === "path" ? selectedFeature.path : null);
+    if (!path || path.vertices.length < 2) return;
+    if (!isUserNearTraceAnchor(path)) return;
     if (!pathArg) setSelectedFeature(null);
+    // A trace keeps the path's own snapping — a free-drawn path is traced free.
     confirmTracePath(path.roadSnap ?? null, path);
   };
 
@@ -7286,14 +7316,9 @@ export default function Map() {
     setSheetLevel(preferredSheetLevel.current);
   };
 
+  // Drawing a path runs alongside a recording: the recording owns trackPathRef
+  // and its own dock, the drawn path owns activePathRef and the path bar.
   const handleCreatePath = (opts) => {
-    if (isRecordingTrackRef.current) {
-      setMapClickMenu(null);
-      setToastMsg("Stop recording first.");
-      setTimeout(() => setToastMsg(null), 2000);
-      return;
-    }
-
     // Determine starting location and whether to auto-create the first vertex.
     // - From context menu (no opts): use mapClickMenu.lngLat and adopt the context dot as the start vertex.
     // - From side menu (opts.noAutoVertex === true): no starting point — user must click the map.
@@ -7730,10 +7755,14 @@ export default function Map() {
     recordingPauseStartRef.current = null;
     setRecordingElapsed(0);
     setRecordingDistance(0);
-    pathUndoStackRef.current = [];
-    pathRedoStackRef.current = [];
-    setCanUndo(false);
-    setCanRedo(false);
+    // The undo stacks belong to a path being drawn, which now runs alongside a
+    // recording — only clear them when there is no such path to undo.
+    if (!isPathModeRef.current) {
+      pathUndoStackRef.current = [];
+      pathRedoStackRef.current = [];
+      setCanUndo(false);
+      setCanRedo(false);
+    }
 
     // Stopping a recording saves the track, which also bookmarks it — same as
     // the Save button on a hand-drawn path. Skip degenerate one-point tracks:
@@ -7772,6 +7801,8 @@ export default function Map() {
           m.setDraggable(false);
         });
       delete path._wasLocked;
+      // Only an edit carries this, which is what tells the two cases apart.
+      const wasEdit = !!path._preEditSnapshot;
       delete path._preEditSnapshot;
       pathUndoStackRef.current = [];
       pathRedoStackRef.current = [];
@@ -7779,16 +7810,24 @@ export default function Map() {
       setCanRedo(false);
       setNavRouteDistance(null);
       setNavRouteDuration(null);
-      // Saving a path also bookmarks it, so it survives a reload. Re-persist
-      // unconditionally: finishing an edit of an already-saved path has to
-      // write the new geometry back to storage.
-      if (!path._saved) {
-        path._saved = true;
-        if (!path._id) path._id = generateFeatureId();
+      if (wasEdit) {
+        // Editing changes a path, it does not save it: an unsaved path stays
+        // unsaved, a saved one gets its new geometry written back. Nothing was
+        // bookmarked, so there is no save to undo either.
+        if (isFeaturePersisted(path)) persistSavedFeatures();
+        bumpFeaturesVersion();
+        setToastMsg("Path is changed.");
+        setTimeout(() => setToastMsg(null), 3000);
+      } else {
+        // Saving a new path also bookmarks it, so it survives a reload.
+        if (!path._saved) {
+          path._saved = true;
+          if (!path._id) path._id = generateFeatureId();
+        }
+        persistSavedFeatures();
+        bumpFeaturesVersion();
+        queueSaveUndo(path, "Path");
       }
-      persistSavedFeatures();
-      bumpFeaturesVersion();
-      queueSaveUndo(path, "Path");
     }
   };
 
@@ -7967,23 +8006,8 @@ export default function Map() {
     const path = mapClickMenu.path;
     setMapClickMenu(null);
     if (!path || path.vertices.length < 2) return;
-
-    const ctrl = locationControlRef.current;
-    if (!ctrl || ctrl._lastPostionLat == null || ctrl._lastPostionLong == null) {
-      setToastMsg("Enable location to trace path.");
-      setTimeout(() => setToastMsg(null), 3000);
-      return;
-    }
-
-    const userPos = [ctrl._lastPostionLong, ctrl._lastPostionLat];
-    const startPos = path.vertices[0].lngLat;
-    const dist = haversineDistance([userPos, startPos]);
-    if (dist > 50) {
-      setToastMsg("You need to be near the path start point.");
-      setTimeout(() => setToastMsg(null), 3000);
-      return;
-    }
-
+    if (!isUserNearTraceAnchor(path)) return;
+    // A trace keeps the path's own snapping — a free-drawn path is traced free.
     confirmTracePath(path.roadSnap ?? null, path);
   };
 
@@ -8042,6 +8066,7 @@ export default function Map() {
     isNavigationModeRef.current = true;
     setIsNavigationMode(true);
     isTracingPathRef.current = true;
+    setIsNavigationPaused(false);
     setSnapMode(mode);
     setForceMode(false);
     setPathVertexCount(path.vertices.length);
@@ -8062,11 +8087,8 @@ export default function Map() {
   };
 
   const startNavigation = async (destinationLngLat) => {
-    // Auto-stop recording before starting navigation
-    if (isRecordingTrackRef.current) {
-      handleStopPathRecording();
-    }
-
+    // A running recording is left alone: it keeps logging the track while the
+    // route is laid out and followed.
     const ctrl = locationControlRef.current;
 
     // Finish any active unfinished path
@@ -8155,6 +8177,7 @@ export default function Map() {
     isPathModeRef.current = true;
     setIsNavigationMode(true);
     isNavigationModeRef.current = true;
+    setIsNavigationPaused(false);
     pathPointToastShownRef.current = false;
     setSnapMode(null);
     setForceMode(false);
@@ -8198,9 +8221,11 @@ export default function Map() {
     setTimeout(() => setToastMsg(null), 3000);
   };
 
-  const handleStartNavigation = () => {
+  const handleStartNavigation = ({ resume = false, startBearing = true } = {}) => {
     const path = activePathRef.current;
     if (!path || path.vertices.length < 2) return;
+    // A trace can only be joined where it left off (or at the path start).
+    if (isTracingPathRef.current && !isUserNearTraceAnchor(path)) return;
 
     // Finish the path visually
     path.isFinished = true;
@@ -8212,26 +8237,81 @@ export default function Map() {
     // Enter navigation tracking mode
     setIsNavigationTracking(true);
     isNavigationTrackingRef.current = true;
+    setIsNavigationPaused(false);
 
-    // Initialize passed path layer
+    // Initialize passed path layer. Resuming keeps the progress made so far —
+    // only a fresh start rewinds it.
     pathHelpersRef.current.ensurePassedPathLayer(path);
-    passedPathCoordsRef.current = [];
-    routeSplitIndexRef.current = 0;
-    routeSplitTRef.current = 0;
+    if (!resume) {
+      passedPathCoordsRef.current = [];
+      routeSplitIndexRef.current = 0;
+      routeSplitTRef.current = 0;
+    }
     isOffPathRef.current = false;
     offPathCoordsRef.current = [];
+    traceLostPointRef.current = null;
     isRenavigatingRef.current = false;
     offPathTimerRef.current = null;
     offPathVertexSegRef.current = 0;
     routeTotalDistanceRef.current = path.routeDistance ?? null;
 
-    // Start bearing tracking
-    const ctrl = locationControlRef.current;
-    ctrl.hideTrackingIcons();
-    ctrl._handleTrackBearing();
+    // Start bearing tracking, unless the bearing control is what got us here.
+    if (startBearing) {
+      const ctrl = locationControlRef.current;
+      ctrl.hideTrackingIcons();
+      ctrl._handleTrackBearing();
+    }
 
-    setToastMsg(isTracingPathRef.current ? "Click tracking icon to stop tracing." : "Click tracking icon to leave navigation.");
+    setToastMsg(isTracingPathRef.current ? "Click pause icon to pause tracing." : "Click pause icon to pause navigation.");
     setTimeout(() => setToastMsg(null), 3000);
+  };
+
+  // Put the route back into its editable state — the shape the bar is in before
+  // Start, and the one it returns to on Pause.
+  const restoreRouteEditing = (path) => {
+    if (!path) return;
+    const h = pathHelpersRef.current;
+    path.isFinished = false;
+    h.showAllVertices(path);
+    h.rebuildMidpoints(path);
+    path.vertices.forEach((v) => {
+      v.marker.setDraggable(true);
+      v.marker.getElement().classList.add("active-path-feature");
+    });
+    h.updateVertexStyles(path);
+    if (path.sights) {
+      path.sights.forEach((m) => {
+        delete m._passed;
+        h.applySightColors(m, path);
+      });
+    }
+  };
+
+  // Pause stops following the route but keeps everything else: the traced overlay
+  // stays on the map and the route becomes editable again, with the start button
+  // now reading Resume. Bearing tracking is left as the user set it — it is an
+  // independent control, same as during a path recording.
+  const handlePauseNavigation = () => {
+    if (!isNavigationTrackingRef.current) return;
+    if (offPathTimerRef.current) { clearTimeout(offPathTimerRef.current); offPathTimerRef.current = null; }
+    isOffPathRef.current = false;
+    offPathCoordsRef.current = [];
+    traceLostPointRef.current = null;
+    isRenavigatingRef.current = false;
+    restoreRouteEditing(activePathRef.current);
+    setIsNavigationTracking(false);
+    isNavigationTrackingRef.current = false;
+    setIsNavigationPaused(true);
+    setToastMsg(isTracingPathRef.current ? "Tracing is paused." : "Navigation is paused.");
+    setTimeout(() => setToastMsg(null), 2000);
+  };
+  // Reached from the stop-bearing control, which is wired up once at map setup.
+  pauseNavigationRef.current = handlePauseNavigation;
+
+  // The start-bearing control doubles as Start/Resume while a route is laid out.
+  resumeNavigationRef.current = () => {
+    if (!isNavigationModeRef.current || isNavigationTrackingRef.current) return;
+    handleStartNavigation({ resume: isNavigationPaused, startBearing: false });
   };
 
   const handleRenavigate = async () => {
@@ -8336,7 +8416,9 @@ export default function Map() {
     setCancelNavigationAlert(true);
   };
 
-  const confirmCancelNavigation = () => {
+  // Tear down navigation/tracing and hand the path back to the map. Shared by
+  // cancelling and by a trace that reached its end point.
+  const endNavigation = () => {
     if (offPathTimerRef.current) { clearTimeout(offPathTimerRef.current); offPathTimerRef.current = null; }
     pathHelpersRef.current.removePassedPathLayer();
 
@@ -8402,6 +8484,7 @@ export default function Map() {
     setIsNavigationTracking(false);
     isNavigationTrackingRef.current = false;
     isTracingPathRef.current = false;
+    setIsNavigationPaused(false);
     setToastMsg(null);
     setSnapMode(null);
     setForceMode(false);
@@ -8411,7 +8494,30 @@ export default function Map() {
     setCanRedo(false);
     setNavRouteDistance(null);
     setNavRouteDuration(null);
+
+    // Nothing is being followed any more, so leave bearing tracking too — that
+    // restores the zoom and pitch the map had before it started.
+    const ctrl = locationControlRef.current;
+    if (ctrl?.isTrackingBearing()) {
+      ctrl.hideTrackingIcons();
+      ctrl._handleStopTrackingBearing();
+    }
   };
+
+  const confirmCancelNavigation = () => {
+    endNavigation();
+  };
+
+  // Reaching the end point finishes a trace on its own: the path goes back to
+  // being an ordinary path and the user is told it is done. The toast is set
+  // after the teardown, which clears any standing message.
+  const completeTracing = () => {
+    endNavigation();
+    setToastMsg("Tracing completed.");
+    setTimeout(() => setToastMsg(null), 3000);
+  };
+  // Reached from the geolocate handler, which is wired up once at map setup.
+  completeTracingRef.current = completeTracing;
 
   const confirmTrackBearing = () => {
     const ctrl = locationControlRef.current;
@@ -9921,10 +10027,10 @@ export default function Map() {
                         }, 2000);
                         return;
                       }
-                      handleStartNavigation();
+                      handleStartNavigation({ resume: isNavigationPaused });
                     }}
                   >
-                    Start
+                    {isNavigationPaused ? "Resume" : "Start"}
                   </button>
                 ) : (
                   <button
@@ -11022,7 +11128,7 @@ export default function Map() {
                   ariaLabel="Resume recording"
                   onClick={handleResumeRecording}
                 >
-                  <IonIcon icon={playCircleOutline} />
+                  <IonIcon icon={playOutline} />
                 </ActionIconButton>
                 <ActionIconButton
                   className="rec-stop-btn"
@@ -11030,7 +11136,7 @@ export default function Map() {
                   ariaLabel="Stop recording"
                   onClick={handleStopPathRecording}
                 >
-                  <IonIcon icon={stopCircleOutline} />
+                  <IonIcon icon={stopOutline} />
                 </ActionIconButton>
               </>
             ) : (
@@ -11040,7 +11146,7 @@ export default function Map() {
                 ariaLabel="Pause recording"
                 onClick={handlePauseRecording}
               >
-                <IonIcon icon={pauseCircleOutline} />
+                <IonIcon icon={pauseOutline} />
               </ActionIconButton>
             )}
           </div>

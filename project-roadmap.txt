@@ -1,9 +1,10 @@
-- redesign start/stop on nav and tracing path
-- tracing path 
-    - on start tracing snap the path
-    - when user gets to end point the tracing path is completed and show toast msg on completing path
-    * records data of traced path below it's description (date and time of start, finish, duration)
-    * path's with recorded tracing data can't be edited, show user msg that he need to delete data first
+? when path is in edit and save is clicked then show toast msg "Path is changed", do not save him if is not saved and remove undo option
+? stop tracking only if near end point and all path is passed
+? icons for stop, start, pause path recording
+? detour when tracing path
+- tracing path as a text link not a side action
+- records data of traced path below it's description (date and time of start, finish, duration)
+- path's with recorded tracing data can't be edited, show user msg that he need to delete data first
 
 
 FEATURE COLLECTIONS
@@ -138,8 +139,10 @@ SIDE MENU
     - Record path
         - recording pill (elapsed & distance) actions, left to right
             - Show/Hide recording path - ion-icon name="eye-outline"/ion-icon name="eye-off-outline"
-            - Pause recording - ion-icon name="pause-circle-outline"
-            - when paused: Resume - ion-icon name="play-circle-outline", Stop - ion-icon name="stop-circle-outline"
+            - Pause recording - ion-icon name="pause-outline"
+            - when paused: Resume - ion-icon name="play-outline", Stop - ion-icon name="stop-outline"
+        - while recording is running the user can still navigate, trace a path and create a path,
+          the recording keeps logging the track and its dock stays on screen
     ==============================
     - Features list
     - Copy link to features
@@ -151,6 +154,37 @@ SIDE MENU
     - Offline maps
     ==============================
     - About
+
+CREATING & EDITING PATH
+- path actions bar: Undo, Redo, Cancel, Save + snap toggle (Free/Foot/Bike/Car, Force)
+- on Save of a new path: save (bookmark) it and show toast msg "Path saved." with undo option
+- on Save of an edited path: show toast msg "Path is changed.", no undo option,
+  an unsaved path stays unsaved, a saved one gets its new geometry written back
+
+NAVIGATION & TRACING PATH
+- path actions bar before start: Undo, Redo, Cancel, Start + snap toggle (Free/Foot/Bike/Car, Force)
+- while running only the data pill is shown (distance, duration, ETA for navigation),
+  on start/resume show toast msg where to click to pause
+- start/resume starts user tracking bearing, stop/cancel stops it
+- location control icons: track location - ion-icon name="locate-outline",
+  start user tracking bearing - ion-icon name="navigate-outline",
+  stop user tracking bearing (= pause) - ion-icon name="pause-outline"
+- clicking stop user tracking bearing pauses navigation/tracing:
+  it keeps the traced progress and the traced overlay on the map, brings back the actions bar
+  with the route editable again and Start renamed to Resume
+- clicking start user tracking bearing starts, or resumes, navigation/tracing if a route is laid out
+  (same as Start/Resume in the actions bar), otherwise it only moves the camera
+- tracing path
+    - on start tracing the path is snapped if it is a snapped path, otherwise it is traced free
+    - to start tracing the user must be within 10 m of the path start point,
+      to resume within 10 m of the last traced point, otherwise show toast msg
+    - when the user leaves the path the traced progress stays at the point where he left it,
+      it continues only when he returns within 10 m of that point,
+      returning anywhere else does not trace the skipped part
+    - the tracing is completed only when the user is near the end point (10 m)
+      and the whole path is passed (unwalked path length is 0):
+      show toast msg "Tracing completed.", the path returns to its normal look
+      and user tracking bearing is stopped
 
 FEATURE DETAIL PANEL
 - opening on left mouse click / tap on feature
