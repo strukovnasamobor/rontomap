@@ -1,11 +1,9 @@
-? when path is in edit and save is clicked then show toast msg "Path is changed", do not save him if is not saved and remove undo option
 ? stop tracking only if near end point and all path is passed
-? icons for stop, start, pause path recording
 ? detour when tracing path
-- tracing path as a text link not a side action
+
+- tracing path as a text link not as a side action
 - records data of traced path below it's description (date and time of start, finish, duration)
 - path's with recorded tracing data can't be edited, show user msg that he need to delete data first
-
 
 FEATURE COLLECTIONS
     - icon: folder-open
