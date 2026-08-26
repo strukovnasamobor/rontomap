@@ -161,9 +161,27 @@ self.addEventListener("activate", (event) => {
       // On native, tiles live in the native store (filesDir), not Cache
       // Storage — so reclaim the SW tile cache (orphaned on existing installs
       // after the switch to native downloads). On web, keep it.
+      //
+      // Except that "native" here is the "; wv)" user agent, which every
+      // Android WebView carries: a host app embedding this map is read as
+      // native too, and its tiles ARE in Cache Storage, put there by this
+      // worker's own region download. Deleting them would empty its offline
+      // map on the next activation - i.e. on every deploy. The regions store
+      // is what tells the two apart: it is only written when this worker did
+      // the downloading, which the native wrapper never does because it
+      // downloads through the TileDownload plugin instead.
+      let swOwnsTiles = false;
+      try {
+        swOwnsTiles = (await dbGetAll()).length > 0;
+      } catch {
+        // Unreadable store: assume ownership rather than risk deleting tiles
+        // that nothing else is holding.
+        swOwnsTiles = true;
+      }
+      const reclaimTiles = IS_NATIVE && !swOwnsTiles;
       await Promise.all(
         keys
-          .filter((k) => k !== APP_CACHE && (IS_NATIVE || k !== TILES_CACHE))
+          .filter((k) => k !== APP_CACHE && (reclaimTiles || k !== TILES_CACHE))
           .map((k) => caches.delete(k)),
       );
 
@@ -228,15 +246,40 @@ self.addEventListener("fetch", (event) => {
   }
 });
 
+// A glyph range the sweep did not cover (a script nobody's labels use, say).
+// Answering the miss with an empty, valid glyph PBF lets the worker finish
+// parsing the tile with that text simply absent - whereas a 504 fails the
+// whole tile, and every layer drawn from that source vanishes with it.
+function isGlyphRequest(url) {
+  return /\/fonts\/v1\//.test(url);
+}
+function emptyGlyphResponse() {
+  return new Response(new Uint8Array(0), {
+    status: 200,
+    headers: { "Content-Type": "application/x-protobuf" },
+  });
+}
+
 async function handleMapboxRequest(request) {
   if (IS_NATIVE) {
     // Native owns tile storage + offline serving (the ServiceWorker request
-    // interceptor returns stored tiles from filesDir). Don't touch Cache
-    // Storage here; just fetch — the interceptor answers stored tiles, and a
-    // genuine miss while offline falls through to the 504 below.
+    // interceptor returns stored tiles from filesDir). Don't write to Cache
+    // Storage here, or it would double-store: just fetch, and let the
+    // interceptor answer.
     try {
       return await fetch(request);
     } catch {
+      // "; wv)" is in the user agent of EVERY Android WebView, not only this
+      // app's own wrapper, so a host app embedding this map in its WebView is
+      // read as native too - and it has no interceptor of its own. Its tiles
+      // were written to Cache Storage by the region download, so look there
+      // before giving up. A wrapper that really does have the interceptor
+      // never gets here while the interceptor can answer, and its Cache
+      // Storage holds no tiles to find, so this changes nothing for it.
+      const cache = await caches.open(TILES_CACHE);
+      const cached = await cache.match(normalizeCacheKey(request.url));
+      if (cached) return cached;
+      if (isGlyphRequest(request.url)) return emptyGlyphResponse();
       return new Response("", { status: 504, statusText: "Offline" });
     }
   }
@@ -252,6 +295,7 @@ async function handleMapboxRequest(request) {
     }
     return response;
   } catch {
+    if (isGlyphRequest(request.url)) return emptyGlyphResponse();
     console.warn(`[sw miss] offline 504: url=${request.url} key=${key}`);
     return new Response("", { status: 504, statusText: "Offline" });
   }

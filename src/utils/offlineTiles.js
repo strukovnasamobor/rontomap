@@ -231,12 +231,25 @@ async function processStyle(style, styleLabel, bounds, minZoom, maxZoom, accessT
       // the browser sends commas unencoded — matching that preserves cache
       // hits. URL-encoding the whole stack would produce "%2C" and miss.
       const fontstackPart = stack.split(",").map(encodeURIComponent).join(",");
-      for (let r = 0; r < 2560; r += 256) {
-        const rangeStr = `${r}-${r + 255}`;
-        const fontUrl = style.glyphs
-          .replace("{fontstack}", fontstackPart)
-          .replace("{range}", rangeStr);
-        urls.add(resolveMapboxUrl(fontUrl, accessToken));
+      // Mapbox GL JS v3 does not request a stack at all: it asks for each font
+      // in the stack on its own ("Roboto Regular/0-255.pbf", then "Arial
+      // Unicode MS Regular/0-255.pbf" as the fallback), so a cache holding
+      // only the comma-joined stack URL never matches a runtime request.
+      // Offline that 504 fails the whole worker-tile parse for any source
+      // with a symbol layer on it - the basemap's labels, and the route line
+      // too, which shares its source with the direction-arrow symbol layer.
+      // Measured on a phone: every path tile "errored", line invisible.
+      // The stack URL is kept for older clients; the per-font ones are what
+      // this SDK hits.
+      const fontParts = [fontstackPart, ...stack.split(",").map((f) => encodeURIComponent(f.trim()))];
+      for (const part of new Set(fontParts)) {
+        for (let r = 0; r < 2560; r += 256) {
+          const rangeStr = `${r}-${r + 255}`;
+          const fontUrl = style.glyphs
+            .replace("{fontstack}", part)
+            .replace("{range}", rangeStr);
+          urls.add(resolveMapboxUrl(fontUrl, accessToken));
+        }
       }
     }
   }

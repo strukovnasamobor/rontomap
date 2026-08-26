@@ -827,6 +827,9 @@ export default function Map() {
   // Which features collection is on the map right now. The URL puts the first
   // one there; an embedding page can swap it for another without reloading.
   const embedFeaturesIdRef = useRef(new URLSearchParams(window.location.search).get("features_collection"));
+  // Guards prepare-offline: the tile sweep is long, and a second one
+  // started on top of it would double the work and the progress numbers.
+  const embedOfflineBusyRef = useRef(false);
   const embeddedFocusedRef = useRef(false);
   const embeddedToastTimerRef = useRef(null);
   // Re-applies the embed interaction policy; assigned in the map-init effect.
@@ -1366,9 +1369,16 @@ export default function Map() {
     };
 
     // --- Path creation helpers ---
-    const ensurePathLayer = (path) => {
+    const ensurePathLayer = (path, attempt = 0) => {
       const map = mapRef.current;
       if (!map) return;
+      // addSource/addLayer throw while a style is still loading, and that throw
+      // would escape into materializePathFromShape. Defer until the style is
+      // up rather than lose the layer, and redraw once it finally exists.
+      if (!map.isStyleLoaded() && attempt < 100) {
+        setTimeout(() => ensurePathLayer(path, attempt + 1), 100);
+        return;
+      }
       if (!map.getSource(path.sourceId)) {
         map.addSource(path.sourceId, {
           type: "geojson",
@@ -1425,6 +1435,10 @@ export default function Map() {
         });
         path._arrowLayerId = arrowLayerId;
       }
+      // If we deferred above, materialisation already ran updatePathLine while
+      // the source did not exist yet - and that returns silently, which is how
+      // the route ended up with a layer but no line in it. Redraw now.
+      if (attempt > 0) pathHelpersRef.current?.updatePathLine?.(path);
     };
 
     const ensurePassedPathLayer = (routePath) => {
@@ -1490,7 +1504,9 @@ export default function Map() {
 
     const updatePathLine = (path) => {
       const source = mapRef.current?.getSource(path.sourceId);
-      if (!source) return;
+      if (!source) {
+        return;
+      }
       const mainColor = path.isRoute ? "#0091ff" : path.isTrack ? "#ff0000" : "#ff6f00";
       const forceColor = path.isRoute ? "#ff0000" : "#6F00FF";
 
@@ -4495,7 +4511,16 @@ export default function Map() {
     const bearing = map.getBearing();
     const pitch = map.getPitch();
     map.setStyle(mapStyle, { diff: false });
-    map.once("style.load", () => {
+
+    // setStyle({diff:false}) drops every custom layer, so the paths below are
+    // what puts them back - and hanging that off a one-shot "style.load" loses
+    // them for good whenever the event has already fired by the time we listen.
+    // Startup sets the style twice (once empty, once for real), which is enough
+    // to hit that: the route would simply never reappear, while the markers,
+    // being plain DOM, stayed put and made it look like only paths were broken.
+    // "styledata" keeps firing while a style settles and the poll covers the
+    // rest; the timeout is the same last resort it always was.
+    const onStyleReady = () => {
       map.jumpTo({
         center,
         zoom,
@@ -4536,7 +4561,33 @@ export default function Map() {
       // The new style dropped every custom layer and the re-added ones default
       // to visible, so re-apply the filter / per-feature hidden state.
       applyFeatureVisibility();
-    });
+    };
+
+    let styleSettled = false;
+    // Right after setStyle() the OLD style can still report isStyleLoaded(),
+    // so waiting on that alone fires immediately and re-adds the layers to a
+    // style that is about to be thrown away. Require a styledata event first:
+    // that only arrives once the new style has started loading.
+    let sawStyleData = false;
+    const finishStyle = () => {
+      if (styleSettled) return;
+      styleSettled = true;
+      clearInterval(stylePoll);
+      clearTimeout(styleTimer);
+      map.off("styledata", onStyleData);
+      onStyleReady();
+    };
+    const checkStyle = () => {
+      if (sawStyleData && map.isStyleLoaded()) finishStyle();
+    };
+    const onStyleData = () => {
+      sawStyleData = true;
+      checkStyle();
+    };
+    map.once("style.load", finishStyle);
+    map.on("styledata", onStyleData);
+    const stylePoll = setInterval(checkStyle, 100);
+    const styleTimer = setTimeout(finishStyle, 10000);
   }, [mapStyle, applyFeatureVisibility]);
 
   // Keep refs in sync with state
@@ -5409,14 +5460,152 @@ export default function Map() {
         map.off("styledata", check);
         fn();
       };
+      // isStyleLoaded() can read true for a moment while a style is still
+      // settling. Require it to hold for a beat before believing it.
+      let steadySince = 0;
       const check = () => {
-        if (map.isStyleLoaded()) finish();
+        if (!map.isStyleLoaded()) {
+          steadySince = 0;
+          return;
+        }
+        if (steadySince === 0) {
+          steadySince = performance.now();
+          return;
+        }
+        if (performance.now() - steadySince >= 300) finish();
       };
 
       map.on("styledata", check);
       map.once("style.load", finish);
       const poll = setInterval(check, 100);
       const timer = setTimeout(finish, 10000);
+    };
+
+    // Bounding box of every marker and path on the map right now.
+    const boundsOfLoadedFeatures = () => {
+      const bounds = new mapboxgl.LngLatBounds();
+      let any = false;
+      (markersRef.current || []).forEach((m) => {
+        bounds.extend(m.getLngLat());
+        any = true;
+      });
+      (pathsRef.current || []).forEach((path) => {
+        if (path.snappedSegments) {
+          path.snappedSegments.forEach((seg) => seg.coords.forEach((c) => { bounds.extend(c); any = true; }));
+        } else if (path.vertices) {
+          path.vertices.forEach((v) => { bounds.extend(v.lngLat); any = true; });
+        }
+      });
+      return any ? bounds : null;
+    };
+
+    const prepareOfflineForEmbed = async () => {
+      if (embedOfflineBusyRef.current) return;
+      embedOfflineBusyRef.current = true;
+
+      const finish = (type, payload) => {
+        embedOfflineBusyRef.current = false;
+        postEmbeddedEvent(type, payload || {});
+      };
+
+      let swListener = null;
+      const detach = () => {
+        if (swListener) navigator.serviceWorker.removeEventListener("message", swListener);
+        swListener = null;
+      };
+
+      try {
+        // Let the map finish drawing first. The sweep is hundreds of requests
+        // and it starts the moment the embedding page hears "ready", which is
+        // while the style, its glyphs and sprites are still arriving - and the
+        // embed's own logo is a network-loaded background image. Racing them
+        // for the connection is what left the route unstyled and that button
+        // blank on a cold start. "idle" is the map saying it has nothing left
+        // to fetch or draw; the timeout is there so a map that never settles
+        // (an unreachable sprite, say) still gets its tiles.
+        await new Promise((resolve) => {
+          const map = mapRef.current;
+          if (!map) return resolve();
+          let settled = false;
+          const done = () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            map.off("idle", done);
+            resolve();
+          };
+          const timer = setTimeout(done, 15000);
+          map.once("idle", done);
+        });
+
+        const bounds = boundsOfLoadedFeatures();
+        if (!bounds) return finish("offline-error", { message: "no features on the map yet" });
+
+        // Native Android downloads through its own foreground service; this
+        // path is for the web/WebView embed, where the service worker is what
+        // holds the tiles.
+        const sw = await getActiveServiceWorker();
+        if (!sw) return finish("offline-error", { message: "no active service worker" });
+
+        const area = {
+          north: bounds.getNorth(),
+          south: bounds.getSouth(),
+          east: bounds.getEast(),
+          west: bounds.getWest(),
+        };
+        const styleConfigs = buildOfflineStyleConfigs();
+
+        let urls;
+        try {
+          const res = await calculateTileUrls(area, styleConfigs, mapboxgl.accessToken, 2);
+          urls = res.urls;
+        } catch (err) {
+          return finish("offline-error", { message: String(err?.message || err) });
+        }
+        if (!urls || urls.length === 0) return finish("offline-ready", { total: 0 });
+
+        const region = {
+          name: "Embedded map",
+          type: "region",
+          ...area,
+          minZoom: REGION_MIN_ZOOM,
+          maxZoom: OFFLINE_MAX_ZOOM,
+          styleConfigs,
+          tileCount: urls.length,
+          sizeBytes: 0,
+        };
+
+        // A listener of its own rather than a hook into the panel's handler:
+        // this download has no UI inside the map, and its progress belongs to
+        // the embedding page.
+        swListener = (event) => {
+          const msg = event.data;
+          if (!msg || !msg.type) return;
+          if (msg.type === "DOWNLOAD_PROGRESS") {
+            postEmbeddedEvent("offline-progress", {
+              done: msg.done,
+              total: msg.total,
+              failed: msg.failed,
+              percent: msg.percent,
+            });
+            if (msg.complete) {
+              detach();
+              recordActualDownload(msg.done, msg.sizeBytes || 0, styleConfigs);
+              finish("offline-ready", { total: msg.total, sizeBytes: msg.sizeBytes || 0 });
+            }
+          } else if (msg.type === "DOWNLOAD_ERROR") {
+            detach();
+            finish("offline-error", { message: msg.message });
+          }
+        };
+        navigator.serviceWorker.addEventListener("message", swListener);
+
+        postEmbeddedEvent("offline-progress", { done: 0, total: urls.length, failed: 0, percent: 0 });
+        sw.postMessage({ type: "DOWNLOAD_REGION", region, tileUrls: urls });
+      } catch (err) {
+        detach();
+        finish("offline-error", { message: String(err?.message || err) });
+      }
     };
 
     const handleCommand = (event) => {
@@ -5473,6 +5662,15 @@ export default function Map() {
         const zoom = num(data.zoom);
         flyToCamera({ lat: pos.lat, long: pos.lng, zoom, duration: num(data.duration) || 1000 });
         console.log(`Embed > show-marker: sight ${sightId} at ${pos.lat}, ${pos.lng}`);
+        return;
+      }
+
+      // Warm the tile cache for everything currently on the map, so the embed
+      // still draws with no network. The embedding page holds no coordinates of
+      // its own - the features are the single source of truth for where a sight
+      // is - so the area is derived from them here rather than passed in.
+      if (data.type === "prepare-offline") {
+        prepareOfflineForEmbed();
         return;
       }
 
@@ -5923,8 +6121,19 @@ export default function Map() {
         map.off("styledata", check);
         fn();
       };
+      // isStyleLoaded() can read true for a moment while a style is still
+      // settling. Require it to hold for a beat before believing it.
+      let steadySince = 0;
       const check = () => {
-        if (map.isStyleLoaded()) finish();
+        if (!map.isStyleLoaded()) {
+          steadySince = 0;
+          return;
+        }
+        if (steadySince === 0) {
+          steadySince = performance.now();
+          return;
+        }
+        if (performance.now() - steadySince >= 300) finish();
       };
 
       map.on("styledata", check);
@@ -8854,6 +9063,18 @@ export default function Map() {
             setDownloadProgress(null);
             refreshOfflineRegions();
             resolveBase(true);
+          } else if (isEmbeddedRef.current) {
+            // Embedded: this sweep was asked for with prepare-offline, and it
+            // is the embedding page that reports it - none of the offline-maps
+            // UI belongs inside someone else's page, and opening the panel over
+            // their map (or toasting into it) is not ours to do. The recording
+            // is left to prepareOfflineForEmbed, which is the only side that
+            // knows which style configs the sweep actually used.
+            downloadingRegionRef.current = null;
+            setIsDownloading(false);
+            setDownloadProgress(null);
+            setCurrentDownloadRegionId(null);
+            setDownloadingRegion(null);
           } else {
             const r = downloadingRegionRef.current;
             recordActualDownload(data.done, data.sizeBytes, r?.styleConfigs);

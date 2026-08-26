@@ -14,7 +14,15 @@ export default defineConfig({
         // at) AND fails the build — aborting `firebase deploy` at predeploy.
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
       },
-      includeAssets: ["icons/icon-192.png", "icons/icon-512.png", "icons/icon-512-maskable.png"],
+      // icon-512-nobg.png is the embed's "Open in RontoMap" button. Left out of
+      // this list it was never precached, so offline the service worker answered
+      // it with a 504 and the button rendered as an empty square.
+      includeAssets: [
+        "icons/icon-192.png",
+        "icons/icon-512.png",
+        "icons/icon-512-maskable.png",
+        "icons/icon-512-nobg.png",
+      ],
       manifest: {
         id: "hr.strukovnasamobor.rontomap",
         name: "RontoMap",
