@@ -65,9 +65,19 @@ import { Share } from "@capacitor/share";
 import { Keyboard } from "@capacitor/keyboard";
 import polyline from "@mapbox/polyline";
 import { db } from "../../firebase";
-import { collection, addDoc, doc, getDoc, serverTimestamp } from "firebase/firestore";
+import { collection, addDoc, doc, getDoc, getDocFromCache, serverTimestamp } from "firebase/firestore";
 import { collectFeatures, collectMarker, collectPath, materializeFeatures, materializePathFromShape } from "../services/io/converters/rontoJson";
 import { importFeatures, importFromContent, exportFeatures } from "../services/io";
+
+// Offline, getDoc() first waits for a backend that cannot answer - up to
+// Firestore's 10s online-state timeout - before it looks in the local cache.
+// When the browser already knows it is offline, ask the cache directly and
+// only fall back to the normal read if the cache holds nothing.
+const readFeaturesCollection = (collectionId) => {
+  const ref = doc(db, "featuresCollections", collectionId);
+  if (!navigator.onLine) return getDocFromCache(ref).catch(() => getDoc(ref));
+  return getDoc(ref);
+};
 
 // base64url helpers (no padding, URL-safe)
 const b64uEncode = (s) =>
@@ -1375,8 +1385,12 @@ export default function Map() {
       // addSource/addLayer throw while a style is still loading, and that throw
       // would escape into materializePathFromShape. Defer until the style is
       // up rather than lose the layer, and redraw once it finally exists.
-      if (!map.isStyleLoaded() && attempt < 100) {
-        setTimeout(() => ensurePathLayer(path, attempt + 1), 100);
+      if (!map.isStyleLoaded()) {
+        if (attempt < 600) {
+          setTimeout(() => ensurePathLayer(path, attempt + 1), 100);
+        } else {
+          console.warn("ensurePathLayer > style never loaded, giving up on", path.id);
+        }
         return;
       }
       if (!map.getSource(path.sourceId)) {
@@ -4563,31 +4577,51 @@ export default function Map() {
       applyFeatureVisibility();
     };
 
+    // The layers can only go back once the new style is actually loaded, and
+    // "loaded" here has two traps. Right after setStyle() the OLD style can
+    // still report isStyleLoaded(), so a styledata event - which only arrives
+    // once the new style has started loading - is required first. And
+    // "style.load" fires for the root style before its Standard import has
+    // finished, when isStyleLoaded() is still false: re-adding then throws
+    // "Style is not done loading" out of addSource, and giving up at that
+    // point (as this once did) lost the route for good after every style
+    // change while the markers, being plain DOM, stayed put. So nothing
+    // here settles until isStyleLoaded() is true; a style that never loads
+    // (offline, not swept) just keeps its layers pending, and is logged.
     let styleSettled = false;
-    // Right after setStyle() the OLD style can still report isStyleLoaded(),
-    // so waiting on that alone fires immediately and re-adds the layers to a
-    // style that is about to be thrown away. Require a styledata event first:
-    // that only arrives once the new style has started loading.
     let sawStyleData = false;
-    const finishStyle = () => {
-      if (styleSettled) return;
+    const tryFinish = () => {
+      if (styleSettled || !sawStyleData || !map.isStyleLoaded()) return;
       styleSettled = true;
-      clearInterval(stylePoll);
-      clearTimeout(styleTimer);
-      map.off("styledata", onStyleData);
-      onStyleReady();
-    };
-    const checkStyle = () => {
-      if (sawStyleData && map.isStyleLoaded()) finishStyle();
+      stopWaiting();
+      try {
+        onStyleReady();
+      } catch (err) {
+        console.warn("Change map style > re-adding layers failed:", err);
+      }
     };
     const onStyleData = () => {
       sawStyleData = true;
-      checkStyle();
+      tryFinish();
     };
-    map.once("style.load", finishStyle);
+    const onStyleLoad = () => {
+      sawStyleData = true;
+      tryFinish();
+    };
     map.on("styledata", onStyleData);
-    const stylePoll = setInterval(checkStyle, 100);
-    const styleTimer = setTimeout(finishStyle, 10000);
+    map.once("style.load", onStyleLoad);
+    const stylePoll = setInterval(tryFinish, 100);
+    const styleTimer = setTimeout(() => {
+      if (!styleSettled) console.warn("Change map style > style still not loaded after 10s, layers pending:", mapStyle);
+    }, 10000);
+    const stopWaiting = () => {
+      clearInterval(stylePoll);
+      clearTimeout(styleTimer);
+      map.off("styledata", onStyleData);
+      map.off("style.load", onStyleLoad);
+    };
+    // A second change before this one settled must not re-add layers twice.
+    return stopWaiting;
   }, [mapStyle, applyFeatureVisibility]);
 
   // Keep refs in sync with state
@@ -5622,7 +5656,7 @@ export default function Map() {
         if (collectionId === embedFeaturesIdRef.current) return;
         // Fetch first, swap second: a failed read must leave the map holding
         // the features it already has rather than emptying it.
-        getDoc(doc(db, "featuresCollections", collectionId))
+        readFeaturesCollection(collectionId)
           .then((snap) => {
             if (!snap.exists()) {
               console.warn("Embed > set-features: no collection", collectionId);
@@ -5690,6 +5724,23 @@ export default function Map() {
           return;
         }
         console.log(`Embed > set-camera: ${applied.lat}, ${applied.long} @ zoom ${applied.zoom}`);
+        return;
+      }
+
+      // Warm Firestore's persistent cache with collections the embedding page
+      // may switch to later - its other languages, say. Firestore can only
+      // serve offline what it has once read online, so without this a
+      // set-features with no network finds nothing, and a cold start in that
+      // collection shows an empty map. Nothing is put on the map here.
+      if (data.type === "prefetch-features") {
+        const ids = Array.isArray(data.collectionIds)
+          ? data.collectionIds
+          : data.collectionId ? [data.collectionId] : [];
+        ids.map(String).forEach((id) => {
+          getDoc(doc(db, "featuresCollections", id)).catch((err) =>
+            console.warn("Embed > prefetch-features failed:", id, err),
+          );
+        });
         return;
       }
 
@@ -6311,7 +6362,7 @@ export default function Map() {
     // Recreate markers from a Firebase features collection
     const featuresCollectionId = link.get("features_collection");
     if (featuresCollectionId) {
-      getDoc(doc(db, "featuresCollections", featuresCollectionId))
+      readFeaturesCollection(featuresCollectionId)
         .then((snap) => {
           if (!snap.exists()) {
             onLinkImportFailed();

@@ -2,6 +2,7 @@
 - After tracing complte records data of traced path: date and time of start, finish, duration.
 - Each record has a delete side action.
 - Path's with recorded tracing data can't be edited, show user msg that he need to delete tracing data first.
+* notifs when tracing path and navigation
 
 FEATURE COLLECTIONS
     - icon: folder-open
