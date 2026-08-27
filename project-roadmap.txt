@@ -1,8 +1,4 @@
-- Below decription of the path add tracing path as a text link, remoce as a side action.
-- After tracing complte records data of traced path: date and time of start, finish, duration.
-- Each record has a delete side action.
-- Path's with recorded tracing data can't be edited, show user msg that he need to delete tracing data first.
-* notifs when tracing path and navigation
+- notifs when tracing path and navigation
 
 FEATURE COLLECTIONS
     - icon: folder-open
@@ -182,6 +178,9 @@ NAVIGATION & TRACING PATH
       and the whole path is passed (unwalked path length is 0):
       show toast msg "Tracing completed.", the path returns to its normal look
       and user tracking bearing is stopped
+    - a completed tracing is recorded on the path (date, start time, finish time, duration);
+      the duration counts only the time spent tracing, paused time is not part of it
+    - a cancelled tracing records nothing
 
 FEATURE DETAIL PANEL
 - opening on left mouse click / tap on feature
@@ -221,6 +220,14 @@ FEATURE DETAIL PANEL
     - Delete - ion-icon name="trash-outline"
 - side actions for description showing on mouseover / long touch
     - Set description - ion-icon name="pencil-outline"
+- below the description of a path the title "Records of tracing path" and under it
+  the list of tracing records, one row per completed tracing - ion-icon name="ribbon-outline",
+  date of the start, start time - finish time, duration; the title shows only when there is a record
+- side action for a tracing record showing on mouseover / long touch
+    - Delete tracing record - ion-icon name="trash-outline" - deletes at once and
+      shows toast msg "Tracing record deleted" with undo option
+- a path with tracing records can not be edited: Edit path shows toast msg
+  "Delete tracing data before editing this path."
 
 FEATURES LIST PANEL
 - opening on menu option "Features list"

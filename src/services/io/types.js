@@ -35,7 +35,19 @@
  * @property {RontoSnappedSegment[]} [snappedSegments]
  * @property {RontoSight[]} [sights]
  * @property {string} [description]
+ * @property {RontoTrace[]} [traces] - persistence only; never emitted by collectFeatures
  * @property {string} [collectionId] - persistence only; never emitted by collectFeatures
+ */
+
+/**
+ * One completed trace of a path. durationMs is stored rather than derived: it
+ * excludes the time the trace spent paused, so it is not finishedAt - startedAt.
+ *
+ * @typedef {Object} RontoTrace
+ * @property {string} id
+ * @property {number} startedAt - epoch ms
+ * @property {number} finishedAt - epoch ms
+ * @property {number} durationMs
  */
 
 /**

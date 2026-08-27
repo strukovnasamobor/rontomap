@@ -658,6 +658,8 @@ export default function Map() {
   const [hoveredOfflineRowId, setHoveredOfflineRowId] = useState(null);
   const [detailsActionsOpen, setDetailsActionsOpen] = useState(false);
   const [descActionsOpen, setDescActionsOpen] = useState(false);
+  // Which tracing record row has its delete action revealed, by record id.
+  const [traceActionsOpenId, setTraceActionsOpenId] = useState(null);
   const listRestoreRef = useRef(null);
   // When going back from details to list we want the re-opening list panel
   // to appear instantly (no landscape slide-in). Stays true for the whole
@@ -769,6 +771,12 @@ export default function Map() {
   const traceLostPointRef = useRef(null);
   const routeTotalDistanceRef = useRef(null);
   const isTracingPathRef = useRef(false);
+  // A completed trace is recorded, and its duration counts only the time actually
+  // spent walking the path — a pause is not part of the trace. Same accumulator
+  // shape as a path recording.
+  const traceStartTimeRef = useRef(null);
+  const tracePauseAccumulatedRef = useRef(0);
+  const tracePauseStartRef = useRef(null);
 
 
   const [exportAlert, setExportAlert] = useState(null); // { data, scope, baseName }
@@ -1212,6 +1220,10 @@ export default function Map() {
   // it, so this must not slide across a timezone via toISOString().
   const formatDateDMY = (date) =>
     `${String(date.getDate()).padStart(2, "0")}-${String(date.getMonth() + 1).padStart(2, "0")}-${date.getFullYear()}`;
+
+  // Wall-clock time of day for a recorded trace's start and finish.
+  const formatClock = (ts) =>
+    new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
   const formatRecordingDuration = (seconds) => {
     const total = Math.max(0, Math.floor(seconds ?? 0));
@@ -5168,13 +5180,15 @@ export default function Map() {
   }, [showFeaturesList, showOfflineMapsPanel, featListSort, offlineSort, selectedFeature]);
 
   useEffect(() => {
-    if (!detailsActionsOpen && !descActionsOpen) return;
+    if (!detailsActionsOpen && !descActionsOpen && !traceActionsOpenId) return;
     const onDocDown = (e) => {
       const t = e.target;
       const inHeader = !!t.closest?.(".panel-list-item-header");
       const inDesc = !!t.closest?.(".panel-description");
+      const inTrace = !!t.closest?.(".panel-trace-record");
       if (!inHeader) setDetailsActionsOpen(false);
       if (!inDesc) setDescActionsOpen(false);
+      if (!inTrace) setTraceActionsOpenId(null);
     };
     document.addEventListener("mousedown", onDocDown);
     document.addEventListener("touchstart", onDocDown);
@@ -5182,7 +5196,7 @@ export default function Map() {
       document.removeEventListener("mousedown", onDocDown);
       document.removeEventListener("touchstart", onDocDown);
     };
-  }, [detailsActionsOpen, descActionsOpen]);
+  }, [detailsActionsOpen, descActionsOpen, traceActionsOpenId]);
 
   useEffect(() => {
     if (!selectedFeatureListRef) return;
@@ -6636,6 +6650,7 @@ export default function Map() {
         if (p.isTrack) pathData.isTrack = true;
         if (p._hidden) pathData.hidden = true;
         if (p._description) pathData.description = p._description;
+        if (p._traces?.length) pathData.traces = p._traces;
         if (p.sights && p.sights.length > 0) {
           pathData.sights = p.sights.map((s) => {
             const am = { segmentIndex: s._segmentIndex, t: s._t };
@@ -6765,6 +6780,7 @@ export default function Map() {
         if (entry?.id) p._id = entry.id;
         if (entry?.hidden) p._hidden = true;
         if (entry?.description) p._description = entry.description;
+        if (entry?.traces?.length) p._traces = entry.traces;
         restoreCollection(p, entry);
         if (entry?.sights && p.sights) {
           for (let j = 0; j < Math.min(entry.sights.length, p.sights.length); j++) {
@@ -7077,6 +7093,41 @@ export default function Map() {
     if (!pathArg) setSelectedFeature(null);
     // A trace keeps the path's own snapping — a free-drawn path is traced free.
     confirmTracePath(path.roadSnap ?? null, path);
+  };
+
+  // A tracing record is pure data — no map layers or markers to keep alive during
+  // a pending window — so unlike queueDelete this applies straight away and Undo
+  // puts the record back where it was. The __undo token stops a later delete's
+  // timeout from dismissing this delete's toast.
+  const deleteTraceRecord = (path, recId) => {
+    const list = path?._traces;
+    const idx = list ? list.findIndex((r) => r.id === recId) : -1;
+    if (idx < 0) return;
+    const [removed] = list.splice(idx, 1);
+    if (list.length === 0) delete path._traces;
+    setTraceActionsOpenId(null);
+    const save = () => {
+      if (isFeaturePersisted(path)) persistSavedFeatures();
+      bumpFeaturesVersion();
+    };
+    save();
+    const token = Symbol("undo");
+    setToastMsg({
+      text: "Tracing record deleted",
+      action: {
+        label: "Undo",
+        onClick: () => {
+          if (!path._traces) path._traces = [];
+          path._traces.splice(Math.min(idx, path._traces.length), 0, removed);
+          save();
+          setToastMsg(null);
+        },
+      },
+      __undo: token,
+    });
+    setTimeout(() => {
+      setToastMsg((cur) => (cur && typeof cur === "object" && cur.__undo === token ? null : cur));
+    }, UNDO_MS);
   };
 
   // === Features list handlers ===
@@ -8154,6 +8205,13 @@ export default function Map() {
     const path = pathArg || mapClickMenu?.path;
     if (!pathArg) setMapClickMenu(null);
     if (!path) return;
+    // A record describes a walk of this exact geometry, so the geometry is frozen
+    // while any record exists. Deleting the records unlocks editing again.
+    if (path._traces?.length) {
+      setToastMsg("Delete tracing data before editing this path.");
+      setTimeout(() => setToastMsg(null), 3000);
+      return;
+    }
     setSelectedFeature(null);
     setOpenFeaturesList(false);
     setDetailsOrigin(null);
@@ -8487,6 +8545,19 @@ export default function Map() {
     // A trace can only be joined where it left off (or at the path start).
     if (isTracingPathRef.current && !isUserNearTraceAnchor(path)) return;
 
+    // The recorded clock starts here, past the anchor guard that can still abort
+    // the start. Resuming folds the paused span into the accumulator instead.
+    if (isTracingPathRef.current) {
+      if (!resume || traceStartTimeRef.current == null) {
+        traceStartTimeRef.current = Date.now();
+        tracePauseAccumulatedRef.current = 0;
+        tracePauseStartRef.current = null;
+      } else if (tracePauseStartRef.current) {
+        tracePauseAccumulatedRef.current += Date.now() - tracePauseStartRef.current;
+        tracePauseStartRef.current = null;
+      }
+    }
+
     // Finish the path visually
     path.isFinished = true;
     pathHelpersRef.current.hideIntermediateVertices(path);
@@ -8559,6 +8630,9 @@ export default function Map() {
     traceLostPointRef.current = null;
     isRenavigatingRef.current = false;
     restoreRouteEditing(activePathRef.current);
+    if (isTracingPathRef.current && traceStartTimeRef.current != null && !tracePauseStartRef.current) {
+      tracePauseStartRef.current = Date.now();
+    }
     setIsNavigationTracking(false);
     isNavigationTrackingRef.current = false;
     setIsNavigationPaused(true);
@@ -8744,6 +8818,9 @@ export default function Map() {
     setIsNavigationTracking(false);
     isNavigationTrackingRef.current = false;
     isTracingPathRef.current = false;
+    traceStartTimeRef.current = null;
+    tracePauseAccumulatedRef.current = 0;
+    tracePauseStartRef.current = null;
     setIsNavigationPaused(false);
     setToastMsg(null);
     setSnapMode(null);
@@ -8772,7 +8849,25 @@ export default function Map() {
   // being an ordinary path and the user is told it is done. The toast is set
   // after the teardown, which clears any standing message.
   const completeTracing = () => {
+    // Read the path and the clock before the teardown, which clears both.
+    const path = activePathRef.current;
+    const startedAt = traceStartTimeRef.current;
+    if (path && startedAt != null) {
+      const finishedAt = Date.now();
+      const paused =
+        tracePauseAccumulatedRef.current +
+        (tracePauseStartRef.current ? finishedAt - tracePauseStartRef.current : 0);
+      if (!path._traces) path._traces = [];
+      path._traces.push({
+        id: generateFeatureId(),
+        startedAt,
+        finishedAt,
+        durationMs: Math.max(0, finishedAt - startedAt - paused),
+      });
+      if (isFeaturePersisted(path)) persistSavedFeatures();
+    }
     endNavigation();
+    bumpFeaturesVersion();
     setToastMsg("Tracing completed.");
     setTimeout(() => setToastMsg(null), 3000);
   };
@@ -11343,6 +11438,42 @@ export default function Map() {
                   </div>
                 );
               })()}
+              {selectedFeature.type === "path" && selectedFeature.path._traces?.length > 0 && (
+                <>
+                  <div className="panel-trace-title">Records of tracing path</div>
+                  {selectedFeature.path._traces.map((rec) => (
+                    <div
+                      key={rec.id}
+                      className="panel-list-item panel-trace-record"
+                      onPointerEnter={(e) => { if (e.pointerType === "mouse") setTraceActionsOpenId(rec.id); }}
+                      onPointerLeave={(e) => { if (e.pointerType === "mouse") setTraceActionsOpenId((cur) => (cur === rec.id ? null : cur)); }}
+                      onPointerDown={(e) => handleRowPointerDown(e, () => setTraceActionsOpenId(rec.id))}
+                      onPointerMove={handleRowPointerMove}
+                      onPointerUp={cancelRowPress}
+                      onPointerCancel={cancelRowPress}
+                      onContextMenu={(e) => e.preventDefault()}
+                    >
+                      <IonIcon icon={ribbonOutline} className="panel-list-icon panel-list-icon-path" />
+                      <div className="panel-list-text">
+                        <span className="panel-list-name">{formatDateDMY(new Date(rec.startedAt))}</span>
+                        <span className="panel-list-info">
+                          {`${formatClock(rec.startedAt)} \u2013 ${formatClock(rec.finishedAt)} \u00b7 ${formatDuration(rec.durationMs / 1000)}`}
+                        </span>
+                      </div>
+                      {traceActionsOpenId === rec.id && (
+                        <div className="panel-name-actions">
+                          <ActionIconButton
+                            label="Delete tracing record"
+                            onClick={(e) => { e.stopPropagation(); deleteTraceRecord(selectedFeature.path, rec.id); }}
+                          >
+                            <IonIcon icon={trashOutline} />
+                          </ActionIconButton>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </>
+              )}
             </div>
             </div>
           </div>

@@ -1110,6 +1110,26 @@ textarea.rename-modal-input {
   color: #4db8ff;
 }
 
+/* Heading over the tracing records. Only rendered when there is at least one
+   record, so it never stands alone. Same muted label treatment as the list
+   breadcrumb. */
+.panel-trace-title {
+  font-size: 12px;
+  color: #888;
+  padding: 10px 4px 4px;
+  font-weight: 600;
+}
+
+.panel-dark .panel-trace-title {
+  color: #999;
+}
+
+/* A recorded trace reuses the list-row shell for its icon, two-line text and
+   revealed delete action, but the row itself opens nothing. */
+.panel-trace-record {
+  cursor: default;
+}
+
 /* Dark mode */
 .panel-dark {
   background: #1a1a1a;
