@@ -1,5 +1,3 @@
-- notifs when tracing path and navigation
-
 FEATURE COLLECTIONS
     - icon: folder-open
     * main actions on folders: sort-dist (disabled), sort-name, filter, link, embedded, export, back
@@ -7,7 +5,7 @@ FEATURE COLLECTIONS
     - features collection are saved by default
     - remember sort after reopening feature list
     - remember the feature collection that is opened, when adding marker or creating path save at the opened feature collection
-    - row interaction: same as feature rows: mouse over / long press reveals the 4 side actions, click or tap opens the collection
+    - row interaction: same as feature rows: mouse over / first tap reveals the 4 side actions, click or second tap opens the collection
     - back affordance: Sticky ← <name> row at the top of the list — keeps all 7 toolbar buttons
     - new collection persistence: Session-only until its save action is used, like a new marker
     - nesting: One level. No collections inside collections
@@ -18,8 +16,6 @@ FEATURE COLLECTIONS
     - after stopped recording path name it "Path recorded on dd-mm-yyyy" and save it in the root
     * action button for import, imported features put in one folder and name it "Imported on dd-mm-yyyy"
 - side menu action review and project-roadmap
-
-- login - sync offline regions, route data, feature collections, traced paths
 
 PARALLEL ACTIONS - review
 - https://docs.google.com/spreadsheets/d/1no5W-1mDotm4eKghzjjsqetgft5C3l7uLmeSO7iH2jw/edit?gid=1762517575#gid=1762517575
@@ -60,6 +56,8 @@ id | action                         | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10| 11
  A | previous action is stopped with with alert
 =============================================================================================================================================
 - publish new version on Google Play
+
+- login - sync offline regions, route data, feature collections, traced paths
 
 CURRENT VERSION
 Ver. 1.3.0 (7)
@@ -158,6 +156,10 @@ NAVIGATION & TRACING PATH
 - path actions bar before start: Undo, Redo, Cancel, Start + snap toggle (Free/Foot/Bike/Car, Force)
 - while running only the data pill is shown (distance, duration, ETA for navigation),
   on start/resume show toast msg where to click to pause
+- while running (Android) a live notification shows the time passed hh:mm and the distance passed
+  along the route, titled "Navigating" / "Tracing path", "Navigation paused" / "Tracing paused" when paused;
+  it is removed on cancel or completion; it is separate from the path recording notification,
+  so recording and navigating/tracing at the same time show two notifications, each with its own time and distance
 - start/resume starts user tracking bearing, stop/cancel stops it
 - location control icons: track location - ion-icon name="locate-outline",
   start user tracking bearing - ion-icon name="navigate-outline",
@@ -198,32 +200,32 @@ FEATURE DETAIL PANEL
     - Close / Back to list (if origin is feature list) - ion-icon name="close-outline"/ion-icon name="arrow-back-outline"
 - show name of ther feature
 - show details for marker/sight - coordinates, for path - snapping, distance, duration (for snapped paths),
-  on mouse over the feature item (on touch devices: long press) the side action icons appears
+  on mouse over the feature item (on touch devices: a tap, a second tap hides them again) the side action icons appears
 - opening a feature that belongs to a feature collection opens that collection in the feature list,
   as if the user had opened the collection there
-- side actions for marker showing on mouseover / long touch
+- side actions for marker showing on mouseover / tap
     - Set name to marker - ion-icon name="pencil-outline"
     - Hide/Unhide marker - ion-icon name="eye-outline"/ion-icon name="eye-off-outline"
     - Save/Unsave marker - ion-icon name="save-outline"/ion-icon name="save"
     - Delete marker - ion-icon name="trash-outline"
-- side actions for sight showing on mouseover / long touch
+- side actions for sight showing on mouseover / tap
     - Set name to sight - ion-icon name="pencil-outline"
     - Hide/Unhide sight - ion-icon name="eye-outline"/ion-icon name="eye-off-outline"
     - Detach sight - ion-icon name="git-merge-outline"
     - Delete sight - ion-icon name="trash-outline"
--  side actions for path showing on mouseover / long touch
+-  side actions for path showing on mouseover / tap
     - Trace path - ion-icon name="ribbon-outline"
     - Edit path - ion-icon name="create-outline"
     - Set name to path - ion-icon name="pencil-outline"
     - Hide/Unhide path - ion-icon name="eye-outline"/ion-icon name="eye-off-outline"
     - Save/Unsave path - ion-icon name="save-outline"/ion-icon name="save"
     - Delete - ion-icon name="trash-outline"
-- side actions for description showing on mouseover / long touch
+- side actions for description showing on mouseover / tap
     - Set description - ion-icon name="pencil-outline"
 - below the description of a path the title "Records of tracing path" and under it
   the list of tracing records, one row per completed tracing - ion-icon name="ribbon-outline",
   date of the start, start time - finish time, duration; the title shows only when there is a record
-- side action for a tracing record showing on mouseover / long touch
+- side action for a tracing record showing on mouseover / tap
     - Delete tracing record - ion-icon name="trash-outline" - deletes at once and
       shows toast msg "Tracing record deleted" with undo option
 - a path with tracing records can not be edited: Edit path shows toast msg
@@ -248,8 +250,10 @@ FEATURES LIST PANEL
     - bike - ion-icon name="bicycle-outline"
     - car - ion-icon name="car-outline"
 - sights show nested in there paths and implicitly save/unsave sync with the path, so no save/unsave side icon
-- side actions icons showing on mouseover / long touch and the feature glows on the map (no camera move)
-- left click / tap on the feature opens the feature details panel (zooming out there if it falls in the obstructed area)
+- side actions icons showing on mouseover / first tap and the feature glows on the map (no camera move)
+- left click / second tap on the feature opens the feature details panel (zooming out there if it falls in the obstructed area);
+  on touch devices there is no long press on rows - the first tap reveals, the second tap opens, and
+  on rows that open nothing (detail header, description, tracing record) the second tap hides the actions again
 - when feature detail panel closes then feature list panel reopens (in same height level and same collection) 
 - when user click on feature while feature list is opened then closing feature detail panel it will reopen feature list
 
@@ -267,10 +271,10 @@ OFFLINE MAPS PANEL
     - Close - ion-icon name="close-outline"
 - showing base map if is it downloaded with number of tiles and size with
 - list of offline regions with number of tiles, size and date of download/update
-- side action for base map showing on mouseover / long touch
+- side action for base map showing on mouseover / tap
     - Update - ion-icon name="refresh-outline" - when clicked show downloading circle
     - Delete - ion-icon name="trash-outline"
-- side icons actions for offline regions showing on mouseover / long touch
+- side icons actions for offline regions showing on mouseover / tap
     - Rename - ion-icon name="pencil-outline"
     - Update - ion-icon name="refresh-outline" - when clicked show downloading circle
     - Delete - ion-icon name="trash-outline"
@@ -280,7 +284,7 @@ OFFLINE MAPS PANEL
 - when close is clicked on creating new offline region show offline maps panel
 - only on Android: show Routings data with search icon that suggests data for current view
   and list of suggested regions (side action: install) and then installed routing data
-  (side actions on mouse over / long press: update, delete)
+  (side actions on mouse over / first tap: update, delete)
 - when trying to snap the path to the road
     - on web if it fails because of device is offline then show toast msg
     - on Android first try using offline routing, if fails try online, if that fails then show toast msg

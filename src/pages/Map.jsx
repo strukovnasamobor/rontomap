@@ -653,8 +653,8 @@ export default function Map() {
   const [featuresVersion, setFeaturesVersion] = useState(0);
   const bumpFeaturesVersion = useCallback(() => setFeaturesVersion((v) => v + 1), []);
   const [detailsOrigin, setDetailsOrigin] = useState(null);
-  // Action icons inside the details header row start hidden; revealed when the
-  // user clicks the header — mirrors the feature-list row pattern.
+  // Action icons inside the details header row start hidden; revealed on hover
+  // or on the first tap — mirrors the feature-list row pattern.
   const [hoveredOfflineRowId, setHoveredOfflineRowId] = useState(null);
   const [detailsActionsOpen, setDetailsActionsOpen] = useState(false);
   const [descActionsOpen, setDescActionsOpen] = useState(false);
@@ -770,6 +770,9 @@ export default function Map() {
   // there: the user has to rejoin near it before the trace advances again.
   const traceLostPointRef = useRef(null);
   const routeTotalDistanceRef = useRef(null);
+  // A trace follows the path as it is, so unlike a navigation route it is never
+  // editable; the state twin lets the actions bar drop the editing controls.
+  const [isTracingPath, setIsTracingPath] = useState(false);
   const isTracingPathRef = useRef(false);
   // A completed trace is recorded, and its duration counts only the time actually
   // spent walking the path — a pause is not part of the trace. Same accumulator
@@ -3250,6 +3253,10 @@ export default function Map() {
             }
             passedPathCoordsRef.current = passedCoords;
             h.updatePassedPathLine(passedCoords, path.roadSnap);
+            const passedDist = haversineDistance(passedCoords);
+            // Feed the live distance to the route notification (it ticks the
+            // time itself).
+            RecordingNotification.setStats({ slot: "route", distanceText: formatDistance(passedDist) }).catch(() => {});
 
             // Update sight colors for passed sights
             if (path.sights) {
@@ -3272,7 +3279,6 @@ export default function Map() {
 
             // Update remaining distance/duration display
             if (routeTotalDistanceRef.current != null) {
-              const passedDist = haversineDistance(passedCoords);
               const remaining = Math.max(0, routeTotalDistanceRef.current - passedDist);
               setNavRouteDistance(remaining);
               if (path.routeDuration != null && routeTotalDistanceRef.current > 0) {
@@ -3282,18 +3288,18 @@ export default function Map() {
 
             // A trace completes only when both hold: the user is standing at the
             // end point, and the whole line has actually been passed — the split
-            // has reached the last vertex, with nothing left ahead of it. Either
-            // one alone is not enough: on a circuit path the end point is the
-            // start point, and being on the last segment still leaves the rest of
-            // that segment unwalked.
+            // has come within the same tolerance of the end, measured along the
+            // line. Either one alone is not enough: on a circuit path the end
+            // point is the start point, and being on the last segment still
+            // leaves the rest of that segment unwalked. The along-line tolerance
+            // matters: demanding the split land exactly on the last vertex never
+            // fires when the user stops a couple of metres short of it, and never
+            // fires at all when the line ends in a zero-length segment, which the
+            // closest-point search cannot select.
             if (isTracingPathRef.current) {
               const end = renderedLine[renderedLine.length - 1];
-              // Nothing left ahead of the split, exactly: t is clamped to 1 once
-              // the user draws level with the last vertex, which puts the split
-              // on that vertex and leaves zero unwalked length. Read off the
-              // split rather than a distance, so no epsilon can creep in.
-              const allPassed = si >= renderedLine.length - 2 && st >= 1;
-              const atEnd = allPassed && haversineDistance([userPos, end]) <= TRACE_NEAR_M;
+              const unwalked = haversineDistance([passedCoords[passedCoords.length - 1], ...renderedLine.slice(si + 1)]);
+              const atEnd = unwalked <= TRACE_NEAR_M && haversineDistance([userPos, end]) <= TRACE_NEAR_M;
               if (atEnd) completeTracingRef.current?.();
             }
           }
@@ -3609,6 +3615,9 @@ export default function Map() {
 
         // Path mode: add vertex or start new path
         if (isPathModeRef.current) {
+          // A trace is not edited: no vertex is added and, the traced path being
+          // finished, no new path is started in its place either.
+          if (isTracingPathRef.current) return;
           let path = activePathRef.current;
           if (!path || path.isFinished) {
             // Start a new path at the click location
@@ -5065,8 +5074,8 @@ export default function Map() {
     }
   }, [showOfflineMapsPanel]);
 
-  // A long press revealed the actions on a touch device; a tap anywhere off the
-  // rows puts them away again. Mirrors the feature-list rule.
+  // A tap revealed the actions on a touch device; a tap anywhere off the rows
+  // puts them away again. Mirrors the feature-list rule.
   useEffect(() => {
     if (!hoveredOfflineRowId) return;
     const onDocDown = (e) => {
@@ -7066,8 +7075,8 @@ export default function Map() {
     return { pos: path?.vertices?.[0]?.lngLat ?? null, resuming: false };
   };
 
-  // Guard shared by entering trace mode and by Start/Resume. Returns true when the
-  // user is close enough, and toasts the reason when they are not.
+  // Guard for Start/Resume. Returns true when the user is close enough, and
+  // toasts the reason when they are not.
   const isUserNearTraceAnchor = (path) => {
     const ctrl = locationControlRef.current;
     if (!ctrl || ctrl._lastPostionLat == null || ctrl._lastPostionLong == null) {
@@ -7086,11 +7095,17 @@ export default function Map() {
     return true;
   };
 
+  // Entering trace mode asks nothing of the user's position: the trace can be
+  // laid out from anywhere and walked to. Only Start checks that the user is at
+  // the start point, and says so if they are not.
   const handleFeatureTrace = (pathArg) => {
     const path = pathArg ?? (selectedFeature?.type === "path" ? selectedFeature.path : null);
     if (!path || path.vertices.length < 2) return;
-    if (!isUserNearTraceAnchor(path)) return;
-    if (!pathArg) setSelectedFeature(null);
+    // The trace takes over the map: both panels go, and the details panel must
+    // not hand back to the list on its way out — same as entering path editing.
+    setSelectedFeature(null);
+    setOpenFeaturesList(false);
+    setDetailsOrigin(null);
     // A trace keeps the path's own snapping — a free-drawn path is traced free.
     confirmTracePath(path.roadSnap ?? null, path);
   };
@@ -7279,8 +7294,9 @@ export default function Map() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [featListFilter, featListSort, mapCenterTick, featuresVersion, openCollectionId]);
 
-  // A tap or click on a row opens it: a feature opens its details panel, a
-  // collection is entered. The list stays mounted (hidden via CSS) so its
+  // Opening a row: a feature opens its details panel, a collection is entered.
+  // A mouse click opens at once; on touch it is the second tap, the first having
+  // revealed the row's actions. The list stays mounted (hidden via CSS) so its
   // scroll position is preserved, and the details panel inherits the current
   // sheet level.
   const openFeatureListItem = (item) => {
@@ -7306,10 +7322,10 @@ export default function Map() {
     }
   };
 
-  // The side actions are revealed by hovering the row with a mouse or by a long
-  // press on touch — never by the tap that opens it. The revealed row also glows
-  // its feature on the map, but deliberately moves no camera: a mouse sweeping
-  // down the list would otherwise fly the map around.
+  // The side actions are revealed by hovering the row with a mouse or by the
+  // first tap on touch — the tap that opens a row is always the second one. The
+  // revealed row also glows its feature on the map, but deliberately moves no
+  // camera: a mouse sweeping down the list would otherwise fly the map around.
   const revealFeatureListActions = (item) => {
     if (selectedFeatureListRef === item.ref) return;
     setSelectedFeatureListRef(item.ref);
@@ -7378,64 +7394,50 @@ export default function Map() {
     }
   };
 
-  // Touch has no hover, so a press held past LONG_PRESS_MS reveals the actions
-  // instead. `fired` then swallows the click that ends the press, so revealing
-  // never doubles as opening. A drag past LONG_PRESS_SLOP_PX is the user
-  // scrolling the list, not pressing a row.
-  const LONG_PRESS_MS = 450;
-  const LONG_PRESS_SLOP_PX = 10;
-  const rowPressRef = useRef({ timer: null, x: 0, y: 0, fired: false });
+  // Touch has no hover, so the first tap on a row reveals its side actions and
+  // only a tap on an already revealed row does what a click does. A scroll never
+  // gets this far — the browser fires no click after a drag — so a tap needs no
+  // slop or timer of its own. The click handler tells the two input kinds apart
+  // by the pointer that went down last: a mouse click always acts at once, its
+  // hover having revealed the row already.
+  const lastPointerTypeRef = useRef("mouse");
+  const noteRowPointer = (e) => { lastPointerTypeRef.current = e.pointerType; };
 
-  const cancelRowPress = () => {
-    const lp = rowPressRef.current;
-    if (lp.timer) {
-      clearTimeout(lp.timer);
-      lp.timer = null;
-    }
+  // True when the click was the touch tap that revealed the row, in which case
+  // it has done its job and the row's own action must not run.
+  const consumeRevealTap = (revealed, reveal) => {
+    if (lastPointerTypeRef.current === "mouse" || revealed) return false;
+    reveal();
+    return true;
   };
 
-  const handleRowPointerDown = (e, onLongPress) => {
-    const lp = rowPressRef.current;
-    cancelRowPress();
-    lp.fired = false;
-    if (e.pointerType === "mouse") return;
-    lp.x = e.clientX;
-    lp.y = e.clientY;
-    lp.timer = setTimeout(() => {
-      lp.timer = null;
-      lp.fired = true;
-      onLongPress();
-    }, LONG_PRESS_MS);
+  // For rows that reveal but open nothing: on touch the tap toggles the actions,
+  // so the one that showed them can also put them away. A mouse click does
+  // nothing — hover already owns the reveal.
+  const toggleOnTap = (toggle) => () => {
+    if (lastPointerTypeRef.current === "mouse") return;
+    toggle();
   };
 
-  const handleRowPointerMove = (e) => {
-    const lp = rowPressRef.current;
-    if (!lp.timer) return;
-    if (Math.abs(e.clientX - lp.x) > LONG_PRESS_SLOP_PX || Math.abs(e.clientY - lp.y) > LONG_PRESS_SLOP_PX) {
-      cancelRowPress();
-    }
-  };
-
-  // Offline rows reveal their side actions on hover / long press like feature
+  // Offline rows reveal their side actions on hover / first tap like feature
   // rows do. Kept separate from shownRegionId and selectedRoutingSubId, which
   // still mean "highlighted on the map" and "selected routing row" — a click on
   // an offline row keeps flying to its region or expanding its list.
   const offlineRowRevealProps = (id) => ({
     onPointerEnter: (e) => { if (e.pointerType === "mouse") setHoveredOfflineRowId(id); },
     onPointerLeave: (e) => { if (e.pointerType === "mouse") setHoveredOfflineRowId((cur) => (cur === id ? null : cur)); },
-    onPointerDown: (e) => handleRowPointerDown(e, () => setHoveredOfflineRowId(id)),
-    onPointerMove: handleRowPointerMove,
-    onPointerUp: cancelRowPress,
-    onPointerCancel: cancelRowPress,
+    onPointerDown: noteRowPointer,
     onContextMenu: (e) => e.preventDefault(),
   });
 
+  // An offline row's click, gated so that on touch the first tap only reveals.
+  const offlineRowClick = (id, run) => () => {
+    if (consumeRevealTap(hoveredOfflineRowId === id, () => setHoveredOfflineRowId(id))) return;
+    run();
+  };
+
   const handleRowClick = (row) => {
-    const lp = rowPressRef.current;
-    if (lp.fired) {
-      lp.fired = false;
-      return;
-    }
+    if (consumeRevealTap(selectedFeatureListRef === row.ref, () => revealFeatureListActions(row))) return;
     openFeatureListItem(row);
   };
 
@@ -8034,11 +8036,20 @@ export default function Map() {
       map.setPaintProperty(path._arrowLayerId, "text-color", "#ff6f00");
     }
 
-    // Stop background watcher on native platforms
+    // Stop background watcher on native platforms. The notification is the
+    // location service's own, and removing the watcher takes it down — so the
+    // ticker has to be silent BEFORE that: a tick landing after the service is
+    // gone would put the notification back as a plain one nothing ever clears.
+    // The final clear is for whatever slipped through regardless.
     if (bgWatcherIdRef.current != null) {
-      BackgroundGeolocation.removeWatcher({ id: bgWatcherIdRef.current });
+      const watcherId = bgWatcherIdRef.current;
       bgWatcherIdRef.current = null;
-      RecordingNotification.stop().catch(() => {});
+      RecordingNotification.stop()
+        .catch(() => {})
+        .then(() => BackgroundGeolocation.removeWatcher({ id: watcherId }))
+        .catch(() => {})
+        .then(() => RecordingNotification.stop({ clear: true }))
+        .catch(() => {});
     }
 
     // Bearing tracking is independent of recording — leave it as the user set it,
@@ -8376,14 +8387,17 @@ export default function Map() {
       map.setPaintProperty(path._arrowLayerId, "text-color", "#0091ff");
     }
 
-    // Enter navigation-like mode (but don't start tracking yet — user clicks "Start")
+    // Enter navigation-like mode (but don't start tracking yet — user clicks "Start").
+    // The path is left finished: every editing affordance — midpoints, vertex
+    // drag and removal, click-to-add, the style-reload re-enabling drag — keys
+    // off an unfinished path, and a trace must not offer any of them.
     activePathRef.current = path;
-    path.isFinished = false;
     isPathModeRef.current = true;
     setIsPathMode(true);
     isNavigationModeRef.current = true;
     setIsNavigationMode(true);
     isTracingPathRef.current = true;
+    setIsTracingPath(true);
     setIsNavigationPaused(false);
     setSnapMode(mode);
     setForceMode(false);
@@ -8539,6 +8553,15 @@ export default function Map() {
     setTimeout(() => setToastMsg(null), 3000);
   };
 
+  // The live notification while a route is followed: elapsed hh:mm, ticked
+  // natively, plus the distance passed along the route. It is the "route" slot,
+  // a notification of its own, so a track recording running at the same time
+  // keeps its own one alongside.
+  const navNotifTitle = (paused) =>
+    isTracingPathRef.current
+      ? (paused ? "Tracing paused" : "Tracing path")
+      : (paused ? "Navigation paused" : "Navigating");
+
   const handleStartNavigation = ({ resume = false, startBearing = true } = {}) => {
     const path = activePathRef.current;
     if (!path || path.vertices.length < 2) return;
@@ -8584,7 +8607,21 @@ export default function Map() {
     isRenavigatingRef.current = false;
     offPathTimerRef.current = null;
     offPathVertexSegRef.current = 0;
-    routeTotalDistanceRef.current = path.routeDistance ?? null;
+    // The total the remaining distance counts down from. A snapped route has the
+    // router's distance; a free path has none, so it is measured along the line
+    // as drawn — the same line the passed distance is measured on, so the two
+    // agree and the count-down ends at zero.
+    routeTotalDistanceRef.current =
+      path.routeDistance ?? haversineDistance(pathHelpersRef.current.getRenderedLine(path));
+
+    (resume
+      ? RecordingNotification.resume({ slot: "route", title: navNotifTitle(false) })
+      : RecordingNotification.start({
+          slot: "route",
+          title: navNotifTitle(false),
+          distanceText: formatDistance(haversineDistance(passedPathCoordsRef.current)),
+        })
+    ).catch(() => {});
 
     // Start bearing tracking, unless the bearing control is what got us here.
     if (startBearing) {
@@ -8619,9 +8656,10 @@ export default function Map() {
   };
 
   // Pause stops following the route but keeps everything else: the traced overlay
-  // stays on the map and the route becomes editable again, with the start button
-  // now reading Resume. Bearing tracking is left as the user set it — it is an
-  // independent control, same as during a path recording.
+  // stays on the map and a navigation route becomes editable again, with the start
+  // button now reading Resume. A trace is never editable, so it is left exactly as
+  // it is. Bearing tracking is left as the user set it — it is an independent
+  // control, same as during a path recording.
   const handlePauseNavigation = () => {
     if (!isNavigationTrackingRef.current) return;
     if (offPathTimerRef.current) { clearTimeout(offPathTimerRef.current); offPathTimerRef.current = null; }
@@ -8629,10 +8667,11 @@ export default function Map() {
     offPathCoordsRef.current = [];
     traceLostPointRef.current = null;
     isRenavigatingRef.current = false;
-    restoreRouteEditing(activePathRef.current);
+    if (!isTracingPathRef.current) restoreRouteEditing(activePathRef.current);
     if (isTracingPathRef.current && traceStartTimeRef.current != null && !tracePauseStartRef.current) {
       tracePauseStartRef.current = Date.now();
     }
+    RecordingNotification.pause({ slot: "route", title: navNotifTitle(true) }).catch(() => {});
     setIsNavigationTracking(false);
     isNavigationTrackingRef.current = false;
     setIsNavigationPaused(true);
@@ -8754,6 +8793,7 @@ export default function Map() {
   // cancelling and by a trace that reached its end point.
   const endNavigation = () => {
     if (offPathTimerRef.current) { clearTimeout(offPathTimerRef.current); offPathTimerRef.current = null; }
+    RecordingNotification.stop({ slot: "route", clear: true }).catch(() => {});
     pathHelpersRef.current.removePassedPathLayer();
 
     const path = activePathRef.current;
@@ -8818,6 +8858,7 @@ export default function Map() {
     setIsNavigationTracking(false);
     isNavigationTrackingRef.current = false;
     isTracingPathRef.current = false;
+    setIsTracingPath(false);
     traceStartTimeRef.current = null;
     tracePauseAccumulatedRef.current = 0;
     tracePauseStartRef.current = null;
@@ -8864,9 +8905,12 @@ export default function Map() {
         finishedAt,
         durationMs: Math.max(0, finishedAt - startedAt - paused),
       });
-      if (isFeaturePersisted(path)) persistSavedFeatures();
     }
     endNavigation();
+    // Persist only now: the teardown has just put the path back to its
+    // pre-trace self. Doing it before would save the trace's route styling
+    // and snapping, and the path would come back blue on the next start.
+    if (path && isFeaturePersisted(path)) persistSavedFeatures();
     bumpFeaturesVersion();
     setToastMsg("Tracing completed.");
     setTimeout(() => setToastMsg(null), 3000);
@@ -10373,12 +10417,16 @@ export default function Map() {
           {!isNavigationTracking && (
             <>
               <div className="actions-group">
-                <button className="undo-btn" disabled={!canUndo} onClick={undoPath}>
-                  Undo
-                </button>
-                <button className="redo-btn" disabled={!canRedo} onClick={redoPath}>
-                  Redo
-                </button>
+                {!isTracingPath && (
+                  <>
+                    <button className="undo-btn" disabled={!canUndo} onClick={undoPath}>
+                      Undo
+                    </button>
+                    <button className="redo-btn" disabled={!canRedo} onClick={redoPath}>
+                      Redo
+                    </button>
+                  </>
+                )}
                 <button className="cancel-btn" onClick={isNavigationMode ? handleCancelNavigation : handleCancelPathRequest}>
                   Cancel
                 </button>
@@ -10418,49 +10466,51 @@ export default function Map() {
                   </button>
                 )}
               </div>
-              <div className={`snap-toggle${isNavigationMode ? " route-snap-toggle" : ""}`}>
-                {[null, "foot", "bike", "car"].map((mode) => (
-                  <button
-                    key={mode ?? "none"}
-                    className={snapMode === mode ? "active" : ""}
-                    onClick={() => {
-                      setSnapMode(mode);
-                      setForceMode(false);
-                      const path = activePathRef.current;
-                      if (!path) return;
-                      pushPathSnapshot(path);
-                      path.roadSnap = mode;
-                      if (mode) {
-                        pathHelpersRef.current.fetchRoadSnap(path);
-                      } else {
-                        path.snappedSegments = null;
-                        pathHelpersRef.current.updatePathLine(path);
-                        pathHelpersRef.current.updateSights(path);
-                        if (!path.isFinished) pathHelpersRef.current.rebuildMidpoints(path);
-                        if (path.isRoute && mapRef.current) {
-                          const b = new mapboxgl.LngLatBounds();
-                          path.vertices.forEach((v) => b.extend(v.lngLat));
-                          mapRef.current.fitBounds(b, {
-                            padding: 80,
-                            bearing: mapRef.current.getBearing(),
-                            pitch: mapRef.current.getPitch(),
-                            duration: 1000,
-                          });
+              {!isTracingPath && (
+                <div className={`snap-toggle${isNavigationMode ? " route-snap-toggle" : ""}`}>
+                  {[null, "foot", "bike", "car"].map((mode) => (
+                    <button
+                      key={mode ?? "none"}
+                      className={snapMode === mode ? "active" : ""}
+                      onClick={() => {
+                        setSnapMode(mode);
+                        setForceMode(false);
+                        const path = activePathRef.current;
+                        if (!path) return;
+                        pushPathSnapshot(path);
+                        path.roadSnap = mode;
+                        if (mode) {
+                          pathHelpersRef.current.fetchRoadSnap(path);
+                        } else {
+                          path.snappedSegments = null;
+                          pathHelpersRef.current.updatePathLine(path);
+                          pathHelpersRef.current.updateSights(path);
+                          if (!path.isFinished) pathHelpersRef.current.rebuildMidpoints(path);
+                          if (path.isRoute && mapRef.current) {
+                            const b = new mapboxgl.LngLatBounds();
+                            path.vertices.forEach((v) => b.extend(v.lngLat));
+                            mapRef.current.fitBounds(b, {
+                              padding: 80,
+                              bearing: mapRef.current.getBearing(),
+                              pitch: mapRef.current.getPitch(),
+                              duration: 1000,
+                            });
+                          }
                         }
-                      }
-                    }}
+                      }}
+                    >
+                      {mode === null ? "Free" : mode === "foot" ? "Foot" : mode === "bike" ? "Bike" : "Car"}
+                    </button>
+                  ))}
+                  <div className="force-divider" />
+                  <button
+                    className={forceMode ? "force-active" : ""}
+                    onClick={() => setForceMode((f) => !f)}
                   >
-                    {mode === null ? "Free" : mode === "foot" ? "Foot" : mode === "bike" ? "Bike" : "Car"}
+                    Force
                   </button>
-                ))}
-                <div className="force-divider" />
-                <button
-                  className={forceMode ? "force-active" : ""}
-                  onClick={() => setForceMode((f) => !f)}
-                >
-                  Force
-                </button>
-              </div>
+                </div>
+              )}
             </>
           )}
           {routeDistance != null && (
@@ -10578,10 +10628,7 @@ export default function Map() {
                       style={nested ? { paddingLeft: 28 } : undefined}
                       onPointerEnter={(e) => { if (e.pointerType === "mouse") revealFeatureListActions(row); }}
                       onPointerLeave={(e) => { if (e.pointerType === "mouse") clearFeatureListActions(row); }}
-                      onPointerDown={(e) => handleRowPointerDown(e, () => revealFeatureListActions(row))}
-                      onPointerMove={handleRowPointerMove}
-                      onPointerUp={cancelRowPress}
-                      onPointerCancel={cancelRowPress}
+                      onPointerDown={noteRowPointer}
                       onContextMenu={(e) => e.preventDefault()}
                       onClick={() => handleRowClick(row)}
                     >
@@ -10772,11 +10819,11 @@ export default function Map() {
             key="base"
             className={`panel-list-item panel-list-item-base${shownRegionId === "__base__" ? " panel-list-item-active" : ""}`}
             {...offlineRowRevealProps("__base__")}
-            onClick={() => {
+            onClick={offlineRowClick("__base__", () => {
               setSelectedRoutingSubId(null);
               setRoutingExpanded(false);
               setShownRegionId((id) => (id === "__base__" ? null : "__base__"));
-            }}
+            })}
           >
             <IonIcon icon={globeOutline} className="panel-list-icon" />
             <div className="panel-list-text">
@@ -10900,7 +10947,7 @@ export default function Map() {
                       key={r.id}
                       className={`panel-list-item${shownRegionId === r.id ? " panel-list-item-active" : ""}`}
                       {...offlineRowRevealProps(r.id)}
-                      onClick={() => handleOfflineRegionClick(r)}
+                      onClick={offlineRowClick(r.id, () => handleOfflineRegionClick(r))}
                     >
                       <IonIcon icon={mapOutline} className="panel-list-icon" />
                       <div className="panel-list-text">
@@ -11042,10 +11089,10 @@ export default function Map() {
                         className={`panel-list-item${expanded ? " panel-list-item-active" : ""}`}
                         style={{ paddingLeft: 34 }}
                         {...offlineRowRevealProps(subKey)}
-                        onClick={() => {
+                        onClick={offlineRowClick(subKey, () => {
                           if (shownRegionId) clearOfflineRegionHighlight();
                           setSelectedRoutingSubId((cur) => (cur === subKey ? null : subKey));
-                        }}
+                        })}
                       >
                         <div className="panel-list-text">
                           <span className="panel-list-name">{r.name || r.id}</span>
@@ -11339,10 +11386,8 @@ export default function Map() {
                   className="panel-list-item panel-list-item-header"
                   onPointerEnter={(e) => { if (e.pointerType === "mouse") setDetailsActionsOpen(true); }}
                   onPointerLeave={(e) => { if (e.pointerType === "mouse") setDetailsActionsOpen(false); }}
-                  onPointerDown={(e) => handleRowPointerDown(e, () => setDetailsActionsOpen(true))}
-                  onPointerMove={handleRowPointerMove}
-                  onPointerUp={cancelRowPress}
-                  onPointerCancel={cancelRowPress}
+                  onPointerDown={noteRowPointer}
+                  onClick={toggleOnTap(() => setDetailsActionsOpen((open) => !open))}
                   onContextMenu={(e) => e.preventDefault()}
                 >
                   <IonIcon icon={headerIcon} className={`panel-list-icon panel-list-icon-${headerTypeClass}`} />
@@ -11412,10 +11457,8 @@ export default function Map() {
                     className="panel-description"
                     onPointerEnter={(e) => { if (e.pointerType === "mouse") setDescActionsOpen(true); }}
                     onPointerLeave={(e) => { if (e.pointerType === "mouse") setDescActionsOpen(false); }}
-                    onPointerDown={(e) => handleRowPointerDown(e, () => setDescActionsOpen(true))}
-                    onPointerMove={handleRowPointerMove}
-                    onPointerUp={cancelRowPress}
-                    onPointerCancel={cancelRowPress}
+                    onPointerDown={noteRowPointer}
+                    onClick={toggleOnTap(() => setDescActionsOpen((open) => !open))}
                     onContextMenu={(e) => e.preventDefault()}
                   >
                     <span className={`panel-description-text${desc ? "" : " empty"}`}>
@@ -11447,10 +11490,8 @@ export default function Map() {
                       className="panel-list-item panel-trace-record"
                       onPointerEnter={(e) => { if (e.pointerType === "mouse") setTraceActionsOpenId(rec.id); }}
                       onPointerLeave={(e) => { if (e.pointerType === "mouse") setTraceActionsOpenId((cur) => (cur === rec.id ? null : cur)); }}
-                      onPointerDown={(e) => handleRowPointerDown(e, () => setTraceActionsOpenId(rec.id))}
-                      onPointerMove={handleRowPointerMove}
-                      onPointerUp={cancelRowPress}
-                      onPointerCancel={cancelRowPress}
+                      onPointerDown={noteRowPointer}
+                      onClick={toggleOnTap(() => setTraceActionsOpenId((cur) => (cur === rec.id ? null : rec.id)))}
                       onContextMenu={(e) => e.preventDefault()}
                     >
                       <IonIcon icon={ribbonOutline} className="panel-list-icon panel-list-icon-path" />
