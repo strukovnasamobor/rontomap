@@ -36,6 +36,9 @@
  * @property {RontoSight[]} [sights]
  * @property {string} [description]
  * @property {RontoTrace[]} [traces] - persistence only; never emitted by collectFeatures
+ * @property {"car"|"bike"|"foot"} [pathRecordingMode] - the mode a track was recorded in. A
+ *   label for the icon and info line only, never routed geometry — unlike roadSnap.
+ *   Persistence only; never emitted by collectFeatures
  * @property {string} [collectionId] - persistence only; never emitted by collectFeatures
  */
 

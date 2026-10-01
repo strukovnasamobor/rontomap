@@ -119,6 +119,11 @@ const pathIconFor = (snap) =>
   : snap === "car" ? carOutline
   : analyticsOutline;
 
+// The mode shown for a path — its icon and its info line. A recording's mode is
+// a label only, kept out of roadSnap so nothing ever routes the trail that was
+// actually walked — roadSnap still means "this geometry is routed".
+const pathDisplayMode = (p) => p?.roadSnap ?? p?._pathRecordingMode ?? null;
+
 /**
  * One share link's worth of URL, decoupled from window.location so the same
  * import code can run for the boot URL and for a deep link handed to a live
@@ -752,6 +757,10 @@ export default function Map() {
   const recordingTimerRef = useRef(null);
   const [recordingDistance, setRecordingDistance] = useState(0);
   const [stopRecordingAlert, setStopRecordingAlert] = useState(false);
+  // How the path is being recorded. A label on the saved path, never routing —
+  // see _pathRecordingMode. null is Free.
+  const [recordModeAlert, setRecordModeAlert] = useState(false);
+  const recordModeRef = useRef(null);
   const [routeDistance, setNavRouteDistance] = useState(null);
   const [routeDuration, setNavRouteDuration] = useState(null);
   const [cancelNavigationAlert, setCancelNavigationAlert] = useState(false);
@@ -6660,6 +6669,7 @@ export default function Map() {
         if (p._hidden) pathData.hidden = true;
         if (p._description) pathData.description = p._description;
         if (p._traces?.length) pathData.traces = p._traces;
+        if (p._pathRecordingMode) pathData.pathRecordingMode = p._pathRecordingMode;
         if (p.sights && p.sights.length > 0) {
           pathData.sights = p.sights.map((s) => {
             const am = { segmentIndex: s._segmentIndex, t: s._t };
@@ -6790,6 +6800,7 @@ export default function Map() {
         if (entry?.hidden) p._hidden = true;
         if (entry?.description) p._description = entry.description;
         if (entry?.traces?.length) p._traces = entry.traces;
+        if (entry?.pathRecordingMode) p._pathRecordingMode = entry.pathRecordingMode;
         restoreCollection(p, entry);
         if (entry?.sights && p.sights) {
           for (let j = 0; j < Math.min(entry.sights.length, p.sights.length); j++) {
@@ -7241,7 +7252,7 @@ export default function Map() {
           lngLat: c,
           dist: haversinePoint(refLat, refLng, c.lat, c.lng),
           length: dist || 0,
-          snap: p.roadSnap,
+          snap: pathDisplayMode(p),
           duration: p.routeDuration,
           ref: p,
           _saved: !!p._saved,
@@ -7734,8 +7745,15 @@ export default function Map() {
     }, 2000);
   };
 
-  const handleRecordPath = async () => {
+  // The path mode is asked for before anything starts, so the dock and the
+  // saved path carry it from the first point.
+  const handleRecordPath = () => {
     setMapClickMenu(null);
+    setRecordModeAlert(true);
+  };
+
+  const startRecordingWithMode = async (mode) => {
+    recordModeRef.current = mode;
 
     // Finish any active unfinished path
     if (activePathRef.current && !activePathRef.current.isFinished) {
@@ -7832,6 +7850,8 @@ export default function Map() {
       midpoints: [],
       isFinished: false,
       isTrack: true,
+      // Deliberately not roadSnap: the recorded trail is measured, never routed.
+      ...(recordModeRef.current ? { _pathRecordingMode: recordModeRef.current } : {}),
     };
     pathsRef.current.push(newPath);
     trackPathRef.current = newPath;
@@ -7994,6 +8014,15 @@ export default function Map() {
     const h = pathHelpersRef.current;
     const coords = trackCoordsRef.current;
 
+    // Read the clock before the teardown below nulls it. The recording becomes a
+    // record on the path, the same one a completed trace leaves — so the walk
+    // that created the geometry is kept alongside later walks of it.
+    const startedAt = recordingStartTimeRef.current;
+    const finishedAt = Date.now();
+    const pausedMs =
+      recordingPauseAccumulatedRef.current +
+      (recordingPauseStartRef.current ? finishedAt - recordingPauseStartRef.current : 0);
+
     // Remove live start/end markers from recording
     path.vertices.forEach((v) => v.marker.remove());
     path.vertices = [];
@@ -8025,7 +8054,7 @@ export default function Map() {
     // A recording is started from the map, not from inside a folder, so it is
     // filed at the root regardless of which collection the list is showing —
     // and it names itself, since there is no naming step when a recording ends.
-    if (!path.name) path.name = `Path recorded on ${formatDateDMY(new Date())}`;
+    if (!path.name) path.name = `Path created at ${formatDateDMY(new Date())}`;
     delete path._collectionId;
     h.updatePathLine(path);
     h.updateVertexStyles(path);
@@ -8093,6 +8122,17 @@ export default function Map() {
       if (!path._saved) {
         path._saved = true;
         if (!path._id) path._id = generateFeatureId();
+      }
+      // The record goes on with the save, after the path is back to its finished
+      // shape, so nothing transient reaches storage.
+      if (startedAt != null) {
+        if (!path._traces) path._traces = [];
+        path._traces.push({
+          id: generateFeatureId(),
+          startedAt,
+          finishedAt,
+          durationMs: Math.max(0, finishedAt - startedAt - pausedMs),
+        });
       }
       persistSavedFeatures();
       bumpFeaturesVersion();
@@ -10210,6 +10250,24 @@ export default function Map() {
         }}
       />
       <IonAlert
+        isOpen={recordModeAlert}
+        cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
+        onDidDismiss={() => setRecordModeAlert(false)}
+        header="Record path"
+        inputs={[
+          // "free" rather than null: a radio with a null value cannot be
+          // pre-checked, and Free is the default.
+          { type: "radio", label: "Free", value: "free", checked: true },
+          { type: "radio", label: "Foot", value: "foot" },
+          { type: "radio", label: "Bike", value: "bike" },
+          { type: "radio", label: "Car", value: "car" },
+        ]}
+        buttons={[
+          { text: "Cancel", role: "cancel" },
+          { text: "Start", handler: (value) => startRecordingWithMode(value === "free" ? null : value) },
+        ]}
+      />
+      <IonAlert
         isOpen={stopRecordingAlert}
         cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
         onDidDismiss={() => setStopRecordingAlert(false)}
@@ -11355,7 +11413,7 @@ export default function Map() {
                 : isSight
                   ? !!selectedFeature.marker._sightPath?._saved
                   : !!selectedFeature.marker._saved;
-              const headerIcon = isPath ? pathIconFor(selectedFeature.path.roadSnap) : isSight ? pinOutline : locationOutline;
+              const headerIcon = isPath ? pathIconFor(pathDisplayMode(selectedFeature.path)) : isSight ? pinOutline : locationOutline;
               const headerTypeClass = isPath ? "path" : isSight ? "sight" : "marker";
               const headerName = selectedFeature.type === "marker"
                 ? selectedFeature.marker._markerName || (isSight ? "Sight" : "Marker")
@@ -11367,10 +11425,11 @@ export default function Map() {
                 if (dist == null && p.vertices && p.vertices.length >= 2) {
                   dist = haversineDistance(p.vertices.map((v) => v.lngLat));
                 }
+                const mode = pathDisplayMode(p);
                 const snapLabel =
-                  p.roadSnap === "foot" ? "Foot"
-                  : p.roadSnap === "bike" ? "Bike"
-                  : p.roadSnap === "car" ? "Car"
+                  mode === "foot" ? "Foot"
+                  : mode === "bike" ? "Bike"
+                  : mode === "car" ? "Car"
                   : "Free";
                 headerInfo = [
                   snapLabel,

@@ -13,7 +13,7 @@ FEATURE COLLECTIONS
     - show/hide + save/unsave: Cascade to contents
     - delete: Ask delete with features, or keep features (root); skip the dialog when the collection is empty
     * to paths, sights and markers add cut-icon to move them in another collection or as a side action and selecting features to be added, info in which collection belongs
-    - after stopped recording path name it "Path recorded on dd-mm-yyyy" and save it in the root
+    - after stopped recording path name it "Path created at dd-mm-yyyy" and save it in the root
     * action button for import, imported features put in one folder and name it "Imported on dd-mm-yyyy"
 - side menu action review and project-roadmap
 
@@ -128,6 +128,8 @@ SIDE MENU
     - Add marker
     - Create path
     - Record path
+        - before it starts, a dialog asks how the user for path recording mode: Free, Foot, Bike or Car (Free preselected);
+          the mode is only a label for the path icon and info line, the recorded trail is never snapped to roads
         - recording pill (elapsed & distance) actions, left to right
             - Show/Hide recording path - ion-icon name="eye-outline"/ion-icon name="eye-off-outline"
             - Pause recording - ion-icon name="pause-outline"
@@ -183,6 +185,8 @@ NAVIGATION & TRACING PATH
     - a completed tracing is recorded on the path (date, start time, finish time, duration);
       the duration counts only the time spent tracing, paused time is not part of it
     - a cancelled tracing records nothing
+    - a finished path recording leaves the same kind of record on the path it creates,
+      for the walk that recorded it; paused time is not part of its duration either
 
 FEATURE DETAIL PANEL
 - opening on left mouse click / tap on feature
@@ -225,6 +229,7 @@ FEATURE DETAIL PANEL
 - below the description of a path the title "Records of tracing path" and under it
   the list of tracing records, one row per completed tracing - ion-icon name="ribbon-outline",
   date of the start, start time - finish time, duration; the title shows only when there is a record
+  (a recorded path arrives with one record already, for the walk that recorded it)
 - side action for a tracing record showing on mouseover / tap
     - Delete tracing record - ion-icon name="trash-outline" - deletes at once and
       shows toast msg "Tracing record deleted" with undo option
