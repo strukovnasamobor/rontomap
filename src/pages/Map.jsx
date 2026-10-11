@@ -11508,6 +11508,36 @@ export default function Map() {
               );
             })()}
             <div className="panel-details">
+              {selectedFeature.type === "path" &&
+                (selectedFeature.path._traces || []).map((rec) => (
+                  <div
+                    key={rec.id}
+                    className="panel-list-item panel-trace-record"
+                    onPointerEnter={(e) => { if (e.pointerType === "mouse") setTraceActionsOpenId(rec.id); }}
+                    onPointerLeave={(e) => { if (e.pointerType === "mouse") setTraceActionsOpenId((cur) => (cur === rec.id ? null : cur)); }}
+                    onPointerDown={noteRowPointer}
+                    onClick={toggleOnTap(() => setTraceActionsOpenId((cur) => (cur === rec.id ? null : rec.id)))}
+                    onContextMenu={(e) => e.preventDefault()}
+                  >
+                    <IonIcon icon={ribbonOutline} className="panel-list-icon panel-list-icon-path" />
+                    <div className="panel-list-text">
+                      <span className="panel-list-name">{formatDateDMY(new Date(rec.startedAt))}</span>
+                      <span className="panel-list-info">
+                        {`${formatClock(rec.startedAt)} \u2013 ${formatClock(rec.finishedAt)} \u00b7 ${formatDuration(rec.durationMs / 1000)}`}
+                      </span>
+                    </div>
+                    {traceActionsOpenId === rec.id && (
+                      <div className="panel-name-actions">
+                        <ActionIconButton
+                          label="Delete tracing record"
+                          onClick={(e) => { e.stopPropagation(); deleteTraceRecord(selectedFeature.path, rec.id); }}
+                        >
+                          <IonIcon icon={trashOutline} />
+                        </ActionIconButton>
+                      </div>
+                    )}
+                  </div>
+                ))}
               {(() => {
                 const target = selectedFeature.type === "path" ? selectedFeature.path : selectedFeature.marker;
                 const desc = target?._description || "";
@@ -11540,40 +11570,6 @@ export default function Map() {
                   </div>
                 );
               })()}
-              {selectedFeature.type === "path" && selectedFeature.path._traces?.length > 0 && (
-                <>
-                  <div className="panel-trace-title">Records of tracing path</div>
-                  {selectedFeature.path._traces.map((rec) => (
-                    <div
-                      key={rec.id}
-                      className="panel-list-item panel-trace-record"
-                      onPointerEnter={(e) => { if (e.pointerType === "mouse") setTraceActionsOpenId(rec.id); }}
-                      onPointerLeave={(e) => { if (e.pointerType === "mouse") setTraceActionsOpenId((cur) => (cur === rec.id ? null : cur)); }}
-                      onPointerDown={noteRowPointer}
-                      onClick={toggleOnTap(() => setTraceActionsOpenId((cur) => (cur === rec.id ? null : rec.id)))}
-                      onContextMenu={(e) => e.preventDefault()}
-                    >
-                      <IonIcon icon={ribbonOutline} className="panel-list-icon panel-list-icon-path" />
-                      <div className="panel-list-text">
-                        <span className="panel-list-name">{formatDateDMY(new Date(rec.startedAt))}</span>
-                        <span className="panel-list-info">
-                          {`${formatClock(rec.startedAt)} \u2013 ${formatClock(rec.finishedAt)} \u00b7 ${formatDuration(rec.durationMs / 1000)}`}
-                        </span>
-                      </div>
-                      {traceActionsOpenId === rec.id && (
-                        <div className="panel-name-actions">
-                          <ActionIconButton
-                            label="Delete tracing record"
-                            onClick={(e) => { e.stopPropagation(); deleteTraceRecord(selectedFeature.path, rec.id); }}
-                          >
-                            <IonIcon icon={trashOutline} />
-                          </ActionIconButton>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </>
-              )}
             </div>
             </div>
           </div>

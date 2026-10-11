@@ -226,9 +226,8 @@ FEATURE DETAIL PANEL
     - Delete - ion-icon name="trash-outline"
 - side actions for description showing on mouseover / tap
     - Set description - ion-icon name="pencil-outline"
-- below the description of a path the title "Records of tracing path" and under it
-  the list of tracing records, one row per completed tracing - ion-icon name="ribbon-outline",
-  date of the start, start time - finish time, duration; the title shows only when there is a record
+- above the description the list of tracing records, one row per completed tracing - ion-icon name="ribbon-outline",
+  date of the start, start time - finish time, duration
   (a recorded path arrives with one record already, for the walk that recorded it)
 - side action for a tracing record showing on mouseover / tap
     - Delete tracing record - ion-icon name="trash-outline" - deletes at once and
