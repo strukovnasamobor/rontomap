@@ -39,7 +39,6 @@ import {
   pencilOutline,
   save,
   saveOutline,
-  ribbonOutline,
   walkOutline,
   bicycleOutline,
   carOutline,
@@ -665,6 +664,8 @@ export default function Map() {
   const [descActionsOpen, setDescActionsOpen] = useState(false);
   // Which tracing record row has its delete action revealed, by record id.
   const [traceActionsOpenId, setTraceActionsOpenId] = useState(null);
+  // The path whose whole tracing history is about to be dropped, pending confirm.
+  const [deleteTracesAlert, setDeleteTracesAlert] = useState(null);
   const listRestoreRef = useRef(null);
   // When going back from details to list we want the re-opening list panel
   // to appear instantly (no landscape slide-in). Stays true for the whole
@@ -7109,8 +7110,10 @@ export default function Map() {
   // Entering trace mode asks nothing of the user's position: the trace can be
   // laid out from anywhere and walked to. Only Start checks that the user is at
   // the start point, and says so if they are not.
-  const handleFeatureTrace = (pathArg) => {
-    const path = pathArg ?? (selectedFeature?.type === "path" ? selectedFeature.path : null);
+  // Started from the "Trace this path" link in the detail panel, so the path is
+  // always the selected one.
+  const handleFeatureTrace = () => {
+    const path = selectedFeature?.type === "path" ? selectedFeature.path : null;
     if (!path || path.vertices.length < 2) return;
     // The trace takes over the map: both panels go, and the details panel must
     // not hand back to the list on its way out — same as entering path editing.
@@ -7154,6 +7157,20 @@ export default function Map() {
     setTimeout(() => {
       setToastMsg((cur) => (cur && typeof cur === "object" && cur.__undo === token ? null : cur));
     }, UNDO_MS);
+  };
+
+  // Clearing the whole history is the one way back to editing a path that has
+  // been traced, so it asks first rather than offering an undo afterwards.
+  const confirmDeleteAllTraces = () => {
+    const path = deleteTracesAlert;
+    setDeleteTracesAlert(null);
+    if (!path?._traces?.length) return;
+    delete path._traces;
+    setTraceActionsOpenId(null);
+    if (isFeaturePersisted(path)) persistSavedFeatures();
+    bumpFeaturesVersion();
+    setToastMsg("Tracing data deleted.");
+    setTimeout(() => setToastMsg(null), 2000);
   };
 
   // === Features list handlers ===
@@ -10279,6 +10296,20 @@ export default function Map() {
         ]}
       />
       <IonAlert
+        isOpen={!!deleteTracesAlert}
+        cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
+        onDidDismiss={() => setDeleteTracesAlert(null)}
+        header="Delete all tracing data"
+        message={(() => {
+          const n = deleteTracesAlert?._traces?.length ?? 0;
+          return `Are you sure you want to delete all ${n} tracing record${n === 1 ? "" : "s"} of this path?`;
+        })()}
+        buttons={[
+          { text: "Cancel", role: "cancel" },
+          { text: "Delete", role: "destructive", handler: confirmDeleteAllTraces },
+        ]}
+      />
+      <IonAlert
         isOpen={deleteAllAlert}
         cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
         onDidDismiss={() => setDeleteAllAlert(false)}
@@ -10710,14 +10741,6 @@ export default function Map() {
                       )}
                       {selected && (
                         <>
-                          {row.type === "path" && (
-                            <ActionIconButton
-                              label="Trace path"
-                              onClick={(e) => { e.stopPropagation(); handleFeatureTrace(row.ref); }}
-                            >
-                              <IonIcon icon={ribbonOutline} />
-                            </ActionIconButton>
-                          )}
                           {row.type === "path" && (
                             <ActionIconButton
                               label="Edit path"
@@ -11460,11 +11483,6 @@ export default function Map() {
                   {detailsActionsOpen && (
                     <div className="panel-name-actions">
                       {isPath && (
-                        <ActionIconButton label="Trace path" onClick={(e) => { e.stopPropagation(); handleFeatureTrace(); }}>
-                          <IonIcon icon={ribbonOutline} />
-                        </ActionIconButton>
-                      )}
-                      {isPath && (
                         <ActionIconButton label="Edit path" onClick={(e) => { e.stopPropagation(); handleEditPath(selectedFeature.path); }}>
                           <IonIcon icon={createOutline} />
                         </ActionIconButton>
@@ -11508,6 +11526,21 @@ export default function Map() {
               );
             })()}
             <div className="panel-details">
+              {selectedFeature.type === "path" && (
+                <div className="panel-trace-links">
+                  <span className="panel-trace-link" onClick={handleFeatureTrace}>
+                    Trace this path
+                  </span>
+                  {selectedFeature.path._traces?.length > 0 && (
+                    <span
+                      className="panel-trace-link panel-trace-link-danger"
+                      onClick={() => setDeleteTracesAlert(selectedFeature.path)}
+                    >
+                      Delete all tracing data
+                    </span>
+                  )}
+                </div>
+              )}
               {selectedFeature.type === "path" &&
                 (selectedFeature.path._traces || []).map((rec) => (
                   <div
@@ -11519,7 +11552,6 @@ export default function Map() {
                     onClick={toggleOnTap(() => setTraceActionsOpenId((cur) => (cur === rec.id ? null : rec.id)))}
                     onContextMenu={(e) => e.preventDefault()}
                   >
-                    <IonIcon icon={ribbonOutline} className="panel-list-icon panel-list-icon-path" />
                     <div className="panel-list-text">
                       <span className="panel-list-name">{formatDateDMY(new Date(rec.startedAt))}</span>
                       <span className="panel-list-info">

@@ -55,9 +55,9 @@ id | action                         | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10| 11
  S | previous action is stopped with no alert
  A | previous action is stopped with with alert
 =============================================================================================================================================
-- publish new version on Google Play
 
 - login - sync offline regions, route data, feature collections, traced paths
+- publish new version on Google Play
 
 CURRENT VERSION
 Ver. 1.3.0 (7)
@@ -218,7 +218,6 @@ FEATURE DETAIL PANEL
     - Detach sight - ion-icon name="git-merge-outline"
     - Delete sight - ion-icon name="trash-outline"
 -  side actions for path showing on mouseover / tap
-    - Trace path - ion-icon name="ribbon-outline"
     - Edit path - ion-icon name="create-outline"
     - Set name to path - ion-icon name="pencil-outline"
     - Hide/Unhide path - ion-icon name="eye-outline"/ion-icon name="eye-off-outline"
@@ -226,7 +225,10 @@ FEATURE DETAIL PANEL
     - Delete - ion-icon name="trash-outline"
 - side actions for description showing on mouseover / tap
     - Set description - ion-icon name="pencil-outline"
-- above the description the list of tracing records, one row per completed tracing - ion-icon name="ribbon-outline",
+- above the description of a path the text link "Trace this path", it starts the tracing;
+  on the right of the same row the text link "Delete all tracing data" (only when there is a record),
+  it asks to confirm and then drops the whole tracing history of that path, which unlocks editing again
+- under the links the list of tracing records, one row per completed tracing (no icon),
   date of the start, start time - finish time, duration
   (a recorded path arrives with one record already, for the walk that recorded it)
 - side action for a tracing record showing on mouseover / tap
