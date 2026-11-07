@@ -716,6 +716,27 @@ export default function Map() {
   const pathUndoStackRef = useRef([]);
   const pathRedoStackRef = useRef([]);
   const [toastMsg, setToastMsg] = useState(null);
+  // One timer for the toast, so a slow message can never clear a newer one:
+  // showing a toast always cancels the pending clear first. Callers that own
+  // their own lifetime (the undo windows) pass ms = 0 and clear it themselves.
+  const toastTimerRef = useRef(null);
+  const showToast = useCallback((msg, ms = 2000) => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = null;
+    setToastMsg(msg);
+    if (ms > 0) {
+      toastTimerRef.current = setTimeout(() => {
+        toastTimerRef.current = null;
+        setToastMsg(null);
+      }, ms);
+    }
+  }, []);
+  const dismissToast = useCallback(() => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = null;
+    setToastMsg(null);
+  }, []);
+  useEffect(() => () => { if (toastTimerRef.current) clearTimeout(toastTimerRef.current); }, []);
   const [snapMode, setSnapMode] = useState(null);
   const [forceMode, setForceMode] = useState(false);
   const forceModeRef = useRef(false);
@@ -862,7 +883,6 @@ export default function Map() {
   // started on top of it would double the work and the progress numbers.
   const embedOfflineBusyRef = useRef(false);
   const embeddedFocusedRef = useRef(false);
-  const embeddedToastTimerRef = useRef(null);
   // Re-applies the embed interaction policy; assigned in the map-init effect.
   const applyEmbedInteractionPolicyRef = useRef(null);
 
@@ -874,6 +894,44 @@ export default function Map() {
     embedReadySentRef.current = true;
     postEmbeddedEvent("ready", { styleId: idMapStyleRef.current });
   };
+
+  // A toast can be flicked away in any direction — it is a small target and the
+  // user has no reason to aim. The pill follows the finger, then either leaves
+  // or springs back, like the side menu and the panel.
+  const toastRef = useRef(null);
+  // A new message can land on the same pill mid-swipe, so clear whatever offset
+  // and fade the gesture left behind before it is shown.
+  useEffect(() => {
+    const el = toastRef.current;
+    if (!el) return;
+    el.style.transition = "";
+    el.style.transform = "";
+    el.style.opacity = "";
+  }, [toastMsg]);
+
+  const toastSwipe = useSwipeable({
+    onSwiping: (e) => {
+      const el = toastRef.current;
+      if (!el) return;
+      el.style.transition = "none";
+      el.style.transform = `translateX(calc(-50% + ${e.deltaX}px)) translateY(${Math.max(0, e.deltaY)}px)`;
+      el.style.opacity = String(Math.max(0, 1 - Math.max(Math.abs(e.deltaX), Math.max(0, e.deltaY)) / 160));
+    },
+    onSwiped: (e) => {
+      const el = toastRef.current;
+      if (!el) return;
+      const far = Math.abs(e.deltaX) > 60 || e.deltaY > 60 || e.velocity > 0.5;
+      if (far) {
+        dismissToast();
+        return;
+      }
+      el.style.transition = "transform 0.2s ease, opacity 0.2s ease";
+      el.style.transform = "";
+      el.style.opacity = "";
+    },
+    trackTouch: true,
+    trackMouse: true,
+  });
 
   // Refs for finger-following swipe gestures
   const sideMenuRef = useRef(null);
@@ -1750,8 +1808,7 @@ export default function Map() {
         }
         if (snapFailReason) {
           const msg = "Couldn't snap path to road.";
-          setToastMsg(msg);
-          setTimeout(() => setToastMsg(null), 3000);
+          showToast(msg, 3000);
         }
         path.snappedSegments = segments;
         path.routeDistance = pathDistance;
@@ -2118,10 +2175,7 @@ export default function Map() {
       setPathVertexCount(path.vertices.length);
       if (!pathPointToastShownRef.current) {
         pathPointToastShownRef.current = true;
-        setToastMsg("Click a point to remove, or drag to move.");
-        setTimeout(() => {
-          setToastMsg(null);
-        }, 3000);
+        showToast("Click a point to remove, or drag to move.", 3000);
       }
       attachVertexDragHandler(newVertex);
       attachFinishHandler(newVertex);
@@ -2712,10 +2766,7 @@ export default function Map() {
               });
             delete path._wasLocked;
           }
-          setToastMsg("Path saved. You can edit it after stopping bearing tracking.");
-          setTimeout(() => {
-            setToastMsg(null);
-          }, 3000);
+          showToast("Path saved. You can edit it after stopping bearing tracking.", 3000);
         }
       }
 
@@ -3357,8 +3408,7 @@ export default function Map() {
       if (!ctrl || ctrl.isTrackingLocation() || ctrl.isTrackingBearing()) return;
       ctrl.showTrackingLocationIcon();
       if (err?.code === 1) {
-        setToastMsg("Location permission denied.");
-        setTimeout(() => setToastMsg(null), 2000);
+        showToast("Location permission denied.", 2000);
       }
     });
 
@@ -3656,10 +3706,7 @@ export default function Map() {
           setPathVertexCount(path.vertices.length);
           if (!pathPointToastShownRef.current) {
             pathPointToastShownRef.current = true;
-            setToastMsg("Click a point to remove, or drag to move.");
-            setTimeout(() => {
-              setToastMsg(null);
-            }, 3000);
+            showToast("Click a point to remove, or drag to move.", 3000);
           }
           h.attachVertexDragHandler(vertex);
           h.attachFinishHandler(vertex);
@@ -4189,13 +4236,7 @@ export default function Map() {
       const map = mapRef.current;
       const container = map.getContainer();
 
-      const showEmbeddedToast = (msg) => {
-        clearTimeout(embeddedToastTimerRef.current);
-        setToastMsg(msg);
-        embeddedToastTimerRef.current = setTimeout(() => {
-          setToastMsg(null);
-        }, 2000);
-      };
+      const showEmbeddedToast = (msg) => showToast(msg, 2000);
 
       // Re-applies the handler state for the current embed mode and focus.
       // Kept in a ref so LocationControl.enableUserInteractions() can restore
@@ -4430,8 +4471,7 @@ export default function Map() {
         const diff = captureImportDiff(beforeM, beforeP);
         queueImportUndo({ ...diff, lockToggled: false, text: msg });
       } catch (e) {
-        setToastMsg(e.message);
-        setTimeout(() => setToastMsg(null), 3000);
+        showToast(e.message, 3000);
       }
     };
 
@@ -4463,8 +4503,7 @@ export default function Map() {
       // the path being drawn, and a camera fly would yank them off a recording
       // or an active navigation. Refuse and say so instead.
       if (isPathModeRef.current || isRecordingTrackRef.current || isNavigationModeRef.current) {
-        setToastMsg("Finish what you're doing first, then open the link again.");
-        setTimeout(() => setToastMsg(null), 3000);
+        showToast("Finish what you're doing first, then open the link again.", 3000);
         return;
       }
       importFromLinkRef.current?.({
@@ -4479,7 +4518,7 @@ export default function Map() {
     if (window.__rontoLinkOpen) handleLinkOpen();
 
     return () => window.removeEventListener("rontomap-link-open", handleLinkOpen);
-  }, []);
+  }, [showToast]);
 
   // Apply the feature-list filter to the map itself: hidden types disappear
   // from the map, not just the list. Sights also hide when their parent path
@@ -5356,8 +5395,7 @@ export default function Map() {
     } catch {
       // Clipboard may be unavailable in some embedded contexts.
     }
-    setToastMsg(`${kind} copied.`);
-    setTimeout(() => setToastMsg(null), 2000);
+    showToast(`${kind} copied.`, 2000);
   };
 
   const handleCopyLinkMarker = () => {
@@ -5821,8 +5859,7 @@ export default function Map() {
       queueImportUndo({ ...diff, lockToggled: false, text: msg });
     } catch (e) {
       if (e.message === "No file selected.") return;
-      setToastMsg(e.message);
-      setTimeout(() => setToastMsg(null), 3000);
+      showToast(e.message, 3000);
     }
   };
 
@@ -5830,8 +5867,7 @@ export default function Map() {
     setMapClickMenu(null);
     const data = collectFeatures(markersRef, pathsRef, serializeSnappedSegments, captureCamera());
     if (data.markers.length === 0 && data.paths.length === 0) {
-      setToastMsg("No features to export.");
-      setTimeout(() => setToastMsg(null), 2000);
+      showToast("No features to export.", 2000);
       return;
     }
     setExportAlert({ data, scope: { type: "all" }, baseName: "rontomap" });
@@ -5862,12 +5898,10 @@ export default function Map() {
     try {
       const savedName = await exportFeatures(data, format, scope, baseName);
       if (savedName) {
-        setToastMsg(`Saved to Downloads/${savedName}`);
-        setTimeout(() => setToastMsg(null), 3000);
+        showToast(`Saved to Downloads/${savedName}`, 3000);
       }
     } catch (e) {
-      setToastMsg(e.message);
-      setTimeout(() => setToastMsg(null), 3000);
+      showToast(e.message, 3000);
     }
   };
 
@@ -6021,11 +6055,13 @@ export default function Map() {
       : type === "sight" ? "Sight"
       : type === "collection" ? "Collection"
       : "Marker";
-    setToastMsg({
+    // ms = 0: the pending-delete timer above owns this toast's lifetime, but it
+    // still has to cancel any auto-clear left over from an earlier message.
+    showToast({
       text: `${label} deleted`,
       action: { label: "Undo", onClick: undoPendingDelete },
       __undo: token,
-    });
+    }, 0);
   };
 
   const pendingImportRef = useRef(null);
@@ -6106,11 +6142,11 @@ export default function Map() {
       setToastMsg((cur) => (cur && typeof cur === "object" && cur.__undo === token ? null : cur));
     }, UNDO_MS);
     pendingSaveRef.current = { target, timerId, token };
-    setToastMsg({
+    showToast({
       text: `${label} saved.`,
       action: { label: "Undo", onClick: undoPendingSave },
       __undo: token,
-    });
+    }, 0);
   };
 
   useEffect(() => () => {
@@ -6137,11 +6173,11 @@ export default function Map() {
     const canSave = markers.length > 0 || paths.length > 0;
     const actions = [{ label: "Undo", onClick: undoPendingImport }];
     if (canSave) actions.push({ label: "Save", onClick: saveImportedFeatures });
-    setToastMsg({
+    showToast({
       text,
       actions,
       __undo: token,
-    });
+    }, 0);
   };
 
   /**
@@ -6169,8 +6205,7 @@ export default function Map() {
     // Suppressed in embedded mode.
     const onLinkImportFailed = () => {
       if (isEmbeddedRef.current) return;
-      setToastMsg("Failed to import from link.");
-      setTimeout(() => setToastMsg(null), 3000);
+      showToast("Failed to import from link.", 3000);
     };
 
     // "style.load" rather than "load": the app calls setStyle during startup and
@@ -7092,16 +7127,14 @@ export default function Map() {
   const isUserNearTraceAnchor = (path) => {
     const ctrl = locationControlRef.current;
     if (!ctrl || ctrl._lastPostionLat == null || ctrl._lastPostionLong == null) {
-      setToastMsg("Enable location to trace path.");
-      setTimeout(() => setToastMsg(null), 3000);
+      showToast("Enable location to trace path.", 3000);
       return false;
     }
     const { pos: anchor, resuming } = traceAnchorPos(path);
     if (!anchor) return false;
     const userPos = [ctrl._lastPostionLong, ctrl._lastPostionLat];
     if (haversineDistance([userPos, anchor]) > TRACE_NEAR_M) {
-      setToastMsg(resuming ? "You need to be near the last traced point." : "You need to be near the path start point.");
-      setTimeout(() => setToastMsg(null), 3000);
+      showToast(resuming ? "You need to be near the last traced point." : "You need to be near the path start point.", 3000);
       return false;
     }
     return true;
@@ -7140,8 +7173,7 @@ export default function Map() {
       bumpFeaturesVersion();
     };
     save();
-    const token = Symbol("undo");
-    setToastMsg({
+    showToast({
       text: "Tracing record deleted",
       action: {
         label: "Undo",
@@ -7152,10 +7184,6 @@ export default function Map() {
           setToastMsg(null);
         },
       },
-      __undo: token,
-    });
-    setTimeout(() => {
-      setToastMsg((cur) => (cur && typeof cur === "object" && cur.__undo === token ? null : cur));
     }, UNDO_MS);
   };
 
@@ -7169,8 +7197,7 @@ export default function Map() {
     setTraceActionsOpenId(null);
     if (isFeaturePersisted(path)) persistSavedFeatures();
     bumpFeaturesVersion();
-    setToastMsg("Tracing data deleted.");
-    setTimeout(() => setToastMsg(null), 2000);
+    showToast("Tracing data deleted.", 2000);
   };
 
   // === Features list handlers ===
@@ -7756,10 +7783,7 @@ export default function Map() {
       setPathVertexCount(0);
     }
 
-    setToastMsg("Click on map to add path points.");
-    setTimeout(() => {
-      setToastMsg(null);
-    }, 2000);
+    showToast("Click on map to add path points.", 2000);
   };
 
   // The path mode is asked for before anything starts, so the dock and the
@@ -7818,8 +7842,7 @@ export default function Map() {
       if (permissionStatus.location !== "granted") {
         const permissions = await Geolocation.requestPermissions();
         if (permissions.location !== "granted" && permissions.location !== "limited") {
-          setToastMsg("Location permission denied.");
-          setTimeout(() => setToastMsg(null), 2000);
+          showToast("Location permission denied.", 2000);
           handleStopPathRecording();
           return;
         }
@@ -7831,7 +7854,7 @@ export default function Map() {
     let userLat = ctrl._lastPostionLat;
 
     if (userLat == null || userLng == null) {
-      setToastMsg("Getting your location...");
+      showToast("Getting your location...", 0);
       try {
         ctrl._geolocate.trigger();
         const pos = await new Promise((resolve, reject) => {
@@ -7846,8 +7869,7 @@ export default function Map() {
         ctrl._lastPostionLong = userLng;
         ctrl._lastPostionLat = userLat;
       } catch (err) {
-        setToastMsg("Could not get your location.");
-        setTimeout(() => setToastMsg(null), 2000);
+        showToast("Could not get your location.", 2000);
         handleStopPathRecording();
         return;
       }
@@ -7957,8 +7979,7 @@ export default function Map() {
       }).catch(() => {});
     }
 
-    setToastMsg("Recording path is started.");
-    setTimeout(() => setToastMsg(null), 2000);
+    showToast("Recording path is started.", 2000);
   };
 
   // The end vertex follows the user's live position while recording, where it would
@@ -7986,8 +8007,7 @@ export default function Map() {
     recordingPauseStartRef.current = Date.now();
     RecordingNotification.pause().catch(() => {});
     setRecordingEndVertexVisible(true);
-    setToastMsg("Recording path is paused.");
-    setTimeout(() => setToastMsg(null), 2000);
+    showToast("Recording path is paused.", 2000);
   };
 
   const handleResumeRecording = () => {
@@ -7999,8 +8019,7 @@ export default function Map() {
     isRecordingPausedRef.current = false;
     RecordingNotification.resume().catch(() => {});
     setRecordingEndVertexVisible(false);
-    setToastMsg("Recording path is resumed.");
-    setTimeout(() => setToastMsg(null), 2000);
+    showToast("Recording path is resumed.", 2000);
   };
 
   const handleStopPathRecording = () => {
@@ -8155,8 +8174,7 @@ export default function Map() {
       bumpFeaturesVersion();
       queueSaveUndo(path, "Track");
     } else {
-      setToastMsg("Track recorded.");
-      setTimeout(() => setToastMsg(null), 3000);
+      showToast("Track recorded.", 3000);
     }
   };
 
@@ -8195,8 +8213,7 @@ export default function Map() {
         // bookmarked, so there is no save to undo either.
         if (isFeaturePersisted(path)) persistSavedFeatures();
         bumpFeaturesVersion();
-        setToastMsg("Path is changed.");
-        setTimeout(() => setToastMsg(null), 3000);
+        showToast("Path is changed.", 3000);
       } else {
         // Saving a new path also bookmarks it, so it survives a reload.
         if (!path._saved) {
@@ -8276,8 +8293,7 @@ export default function Map() {
     // A record describes a walk of this exact geometry, so the geometry is frozen
     // while any record exists. Deleting the records unlocks editing again.
     if (path._traces?.length) {
-      setToastMsg("Delete tracing data before editing this path.");
-      setTimeout(() => setToastMsg(null), 3000);
+      showToast("Delete tracing data before editing this path.", 3000);
       return;
     }
     setSelectedFeature(null);
@@ -8353,10 +8369,7 @@ export default function Map() {
       setNavRouteDistance(null);
       setNavRouteDuration(null);
     }
-    setToastMsg("Click on map to add path points.");
-    setTimeout(() => {
-      setToastMsg(null);
-    }, 2000);
+    showToast("Click on map to add path points.", 2000);
   };
 
   const handleDeletePath = (pathArg) => {
@@ -8503,15 +8516,14 @@ export default function Map() {
 
     // If no position available, request it
     if (userLat == null || userLng == null) {
-      setToastMsg("Getting your location...");
+      showToast("Getting your location...", 0);
       try {
         if (Capacitor.isNativePlatform()) {
           const permissionStatus = await Geolocation.checkPermissions();
           if (permissionStatus.location !== "granted") {
             const permissions = await Geolocation.requestPermissions();
             if (permissions.location !== "granted" && permissions.location !== "limited") {
-              setToastMsg("Location permission denied.");
-              setTimeout(() => setToastMsg(null), 2000);
+              showToast("Location permission denied.", 2000);
               return;
             }
           }
@@ -8531,8 +8543,7 @@ export default function Map() {
         ctrl._lastPostionLat = userLat;
         if (pos.coords.heading) ctrl._lastPositionBearing = pos.coords.heading;
       } catch (err) {
-        setToastMsg("Could not get your location.");
-        setTimeout(() => setToastMsg(null), 2000);
+        showToast("Could not get your location.", 2000);
         return;
       }
     } else {
@@ -8606,8 +8617,7 @@ export default function Map() {
       duration: 1000,
     });
 
-    setToastMsg("Adjust route or press Start to navigate.");
-    setTimeout(() => setToastMsg(null), 3000);
+    showToast("Adjust route or press Start to navigate.", 3000);
   };
 
   // The live notification while a route is followed: elapsed hh:mm, ticked
@@ -8687,8 +8697,7 @@ export default function Map() {
       ctrl._handleTrackBearing();
     }
 
-    setToastMsg(isTracingPathRef.current ? "Click pause icon to pause tracing." : "Click pause icon to pause navigation.");
-    setTimeout(() => setToastMsg(null), 3000);
+    showToast(isTracingPathRef.current ? "Click pause icon to pause tracing." : "Click pause icon to pause navigation.", 3000);
   };
 
   // Put the route back into its editable state — the shape the bar is in before
@@ -8732,8 +8741,7 @@ export default function Map() {
     setIsNavigationTracking(false);
     isNavigationTrackingRef.current = false;
     setIsNavigationPaused(true);
-    setToastMsg(isTracingPathRef.current ? "Tracing is paused." : "Navigation is paused.");
-    setTimeout(() => setToastMsg(null), 2000);
+    showToast(isTracingPathRef.current ? "Tracing is paused." : "Navigation is paused.", 2000);
   };
   // Reached from the stop-bearing control, which is wired up once at map setup.
   pauseNavigationRef.current = handlePauseNavigation;
@@ -8969,8 +8977,7 @@ export default function Map() {
     // and snapping, and the path would come back blue on the next start.
     if (path && isFeaturePersisted(path)) persistSavedFeatures();
     bumpFeaturesVersion();
-    setToastMsg("Tracing completed.");
-    setTimeout(() => setToastMsg(null), 3000);
+    showToast("Tracing completed.", 3000);
   };
   // Reached from the geolocate handler, which is wired up once at map setup.
   completeTracingRef.current = completeTracing;
@@ -9330,8 +9337,7 @@ export default function Map() {
             setDownloadProgress(null);
             setCurrentDownloadRegionId(null);
             setDownloadingRegion(null);
-            setToastMsg("Offline map ready.");
-            setTimeout(() => setToastMsg(null), 3000);
+            showToast("Offline map ready.", 3000);
             refreshOfflineRegions().then(() => setShowOfflineMapsPanel(true));
           }
         }
@@ -9354,8 +9360,7 @@ export default function Map() {
         setCurrentDownloadRegionId(null);
         setDownloadingRegion(null);
         resolveBase(false);
-        setToastMsg("Download failed.");
-        setTimeout(() => setToastMsg(null), 3000);
+        showToast("Download failed.", 3000);
       } else if (data.type === "REGION_DELETED") {
         console.info(`[offline] region deleted id=${data.regionId}`);
         refreshOfflineRegions();
@@ -9366,8 +9371,7 @@ export default function Map() {
         refreshOfflineRegions();
       } else if (data.type === "RENAME_ERROR") {
         console.warn(`[offline] rename failed id=${data.regionId}: ${data.message}`);
-        setToastMsg("Rename failed.");
-        setTimeout(() => setToastMsg(null), 3000);
+        showToast("Rename failed.", 3000);
       }
     };
 
@@ -9385,7 +9389,7 @@ export default function Map() {
       if (hasSW) navigator.serviceWorker.removeEventListener("message", swHandler);
       if (nativeListener) nativeListener.remove();
     };
-  }, [refreshOfflineRegions]);
+  }, [refreshOfflineRegions, showToast]);
 
   // ---- Offline routing (Android-only) ----
   const refreshRoutingRegions = useCallback(async () => {
@@ -9414,19 +9418,17 @@ export default function Map() {
             setRoutingProgress(null);
           }, 600);
         } else if (ev?.phase === "error") {
-          setToastMsg(`Routing import failed: ${ev.message || "unknown error"}`);
-          setTimeout(() => setToastMsg(null), 15000);
+          showToast(`Routing import failed: ${ev.message || "unknown error"}`, 15000);
           setTimeout(() => setRoutingProgress(null), 1500);
         } else if (ev?.phase === "cancelled") {
-          setToastMsg("Routing download cancelled.");
-          setTimeout(() => setToastMsg(null), 3000);
+          showToast("Routing download cancelled.", 3000);
           setRoutingProgress(null);
           refreshRoutingRegions();
         }
       });
     })();
     return () => { if (listener && listener.remove) listener.remove(); };
-  }, [refreshRoutingRegions]);
+  }, [refreshRoutingRegions, showToast]);
 
   const handleSuggestRoutingRegions = useCallback(async () => {
     const map = mapRef.current;
@@ -9455,22 +9457,19 @@ export default function Map() {
         return carry ? [...withSizes, carry] : withSizes;
       });
       if (withSizes.length === 0) {
-        setToastMsg("No Geofabrik region covers the current view.");
-        setTimeout(() => setToastMsg(null), 3000);
+        showToast("No Geofabrik region covers the current view.", 3000);
       }
     } catch (err) {
       console.warn("suggestGeofabrikRegions failed", err);
-      setToastMsg(`Suggest failed: ${err.message || err}`);
-      setTimeout(() => setToastMsg(null), 3000);
+      showToast(`Suggest failed: ${err.message || err}`, 3000);
     } finally {
       setRoutingSuggestLoading(false);
     }
-  }, []);
+  }, [showToast]);
 
   const handleDownloadRoutingRegion = useCallback(async (region) => {
     if (!isNativeAndroid()) {
-      setToastMsg("Offline routing is Android-only for now.");
-      setTimeout(() => setToastMsg(null), 3000);
+      showToast("Offline routing is Android-only for now.", 3000);
       return;
     }
     try {
@@ -9481,11 +9480,10 @@ export default function Map() {
       });
     } catch (err) {
       console.warn("downloadRoutingData failed", err);
-      setToastMsg(`Routing download failed: ${err.message || err}`);
-      setTimeout(() => setToastMsg(null), 3000);
+      showToast(`Routing download failed: ${err.message || err}`, 3000);
       setRoutingProgress(null);
     }
-  }, []);
+  }, [showToast]);
 
   const handleDeleteRoutingRegion = useCallback(async (regionId) => {
     if (!isNativeAndroid()) return;
@@ -9511,19 +9509,17 @@ export default function Map() {
     try {
       const pbfUrl = await pbfUrlForRegion(regionId);
       if (!pbfUrl) {
-        setToastMsg("Could not look up region URL for update.");
-        setTimeout(() => setToastMsg(null), 3000);
+        showToast("Could not look up region URL for update.", 3000);
         return;
       }
       setRoutingProgress({ regionId, phase: "downloading", pct: 0 });
       await OfflineRouting.downloadRoutingData({ regionId, pbfUrl });
     } catch (err) {
       console.warn("updateRoutingRegion failed", err);
-      setToastMsg(`Routing update failed: ${err.message || err}`);
-      setTimeout(() => setToastMsg(null), 3000);
+      showToast(`Routing update failed: ${err.message || err}`, 3000);
       setRoutingProgress(null);
     }
-  }, []);
+  }, [showToast]);
 
   const boundsToPolygon = (b) => ({
     type: "FeatureCollection",
@@ -9783,8 +9779,7 @@ export default function Map() {
     setSelectedFeature(null);
     setSheetLevel(preferredSheetLevel.current);
     setShowOfflineMapsPanel(true);
-    setToastMsg("Map view prepared for offline maps.");
-    setTimeout(() => setToastMsg(null), 3000);
+    showToast("Map view prepared for offline maps.", 3000);
   };
 
   const handleStartOfflineDownload = () => {
@@ -9806,8 +9801,7 @@ export default function Map() {
         console.warn("[offline region] native start failed", e);
         setIsDownloading(false);
         setDownloadProgress(null);
-        setToastMsg("Download failed to start.");
-        setTimeout(() => setToastMsg(null), 2500);
+        showToast("Download failed to start.", 2500);
         return false;
       }
     }
@@ -9815,8 +9809,7 @@ export default function Map() {
     if (!sw) {
       setIsDownloading(false);
       setDownloadProgress(null);
-      setToastMsg("Service worker not ready.");
-      setTimeout(() => setToastMsg(null), 2500);
+      showToast("Service worker not ready.", 2500);
       return false;
     }
     sw.postMessage({
@@ -9923,8 +9916,7 @@ export default function Map() {
     if (!baseOk) {
       setIsDownloading(false);
       setDownloadProgress(null);
-      setToastMsg("Base map download failed.");
-      setTimeout(() => setToastMsg(null), 2500);
+      showToast("Base map download failed.", 2500);
       return;
     }
 
@@ -9945,8 +9937,7 @@ export default function Map() {
       console.warn("[offline region] calculateTileUrls failed", err);
       setIsDownloading(false);
       setDownloadProgress(null);
-      setToastMsg("Failed to prepare download.");
-      setTimeout(() => setToastMsg(null), 2500);
+      showToast("Failed to prepare download.", 2500);
       return;
     }
 
@@ -10057,8 +10048,7 @@ export default function Map() {
       west: region.west,
     };
     if (!region.styleIds || region.styleIds.length === 0) {
-      setToastMsg("Region has no styles to update.");
-      setTimeout(() => setToastMsg(null), 2500);
+      showToast("Region has no styles to update.", 2500);
       return;
     }
     const styleConfigs = buildOfflineStyleConfigs();
@@ -10070,8 +10060,7 @@ export default function Map() {
       setIsDownloading(false);
       setDownloadProgress(null);
       setCurrentDownloadRegionId(null);
-      setToastMsg("Base map download failed.");
-      setTimeout(() => setToastMsg(null), 2500);
+      showToast("Base map download failed.", 2500);
       return;
     }
     let urls = [];
@@ -10084,8 +10073,7 @@ export default function Map() {
       console.warn("calculateTileUrls failed", err);
       setIsDownloading(false);
       setDownloadProgress(null);
-      setToastMsg("Failed to prepare update.");
-      setTimeout(() => setToastMsg(null), 2500);
+      showToast("Failed to prepare update.", 2500);
       return;
     }
     const updated = {
@@ -10525,10 +10513,7 @@ export default function Map() {
                     style={pathVertexCount < 2 ? { opacity: 0.3, cursor: "default" } : {}}
                     onClick={() => {
                       if (pathVertexCount < 2) {
-                        setToastMsg("Route needs at least 2 points.");
-                        setTimeout(() => {
-                          setToastMsg(null);
-                        }, 2000);
+                        showToast("Route needs at least 2 points.", 2000);
                         return;
                       }
                       handleStartNavigation({ resume: isNavigationPaused });
@@ -10542,10 +10527,7 @@ export default function Map() {
                     style={pathVertexCount < 2 ? { opacity: 0.3, cursor: "default" } : {}}
                     onClick={() => {
                       if (pathVertexCount < 2) {
-                        setToastMsg("Path needs to have at least 2 points.");
-                        setTimeout(() => {
-                          setToastMsg(null);
-                        }, 2000);
+                        showToast("Path needs to have at least 2 points.", 2000);
                         return;
                       }
                       handleFinishPath();
@@ -11247,13 +11229,11 @@ export default function Map() {
                 className={`save-btn${disabled ? " disabled" : ""}`}
                 onClick={() => {
                   if (belowMin) {
-                    setToastMsg(`Area too small \u2014 need \u2265 500 tiles, got ${tileCount}.`);
-                    setTimeout(() => setToastMsg(null), 3000);
+                    showToast(`Area too small \u2014 need \u2265 500 tiles, got ${tileCount}.`, 3000);
                     return;
                   }
                   if (aboveMax) {
-                    setToastMsg(`Area too large \u2014 max 100 000 tiles, got ${tileCount.toLocaleString()}.`);
-                    setTimeout(() => setToastMsg(null), 3000);
+                    showToast(`Area too large \u2014 max 100 000 tiles, got ${tileCount.toLocaleString()}.`, 3000);
                     return;
                   }
                   handleConfirmOfflineDownload();
@@ -11616,6 +11596,8 @@ export default function Map() {
           : [];
         return (
           <div
+            {...toastSwipe}
+            ref={(el) => { toastRef.current = el; toastSwipe.ref(el); }}
             className={`toast-msg${idMapStyle === "rontomap_streets_dark" ? " toast-msg-dark" : ""}${actions.length > 0 ? " toast-msg-interactive" : ""}`}
             style={toastBottom != null ? { bottom: toastBottom, zIndex: 1004 } : undefined}
           >
@@ -11625,6 +11607,14 @@ export default function Map() {
                 {a.label}
               </button>
             ))}
+            <button
+              type="button"
+              className="toast-msg-close"
+              aria-label="Dismiss message"
+              onClick={dismissToast}
+            >
+              <IonIcon icon={closeOutline} />
+            </button>
           </div>
         );
       })()}

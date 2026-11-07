@@ -1757,8 +1757,10 @@ textarea.rename-modal-input {
   text-align: center;
   font-size: 14px;
   z-index: 1100;
-  pointer-events: none;
+  pointer-events: auto;
+  gap: 8px;
   box-shadow: 0 1px 6px rgba(0, 0, 0, 0.15);
+  touch-action: none;
 }
 
 @media (min-width: 768px) {
@@ -1774,8 +1776,36 @@ textarea.rename-modal-input {
 }
 
 .toast-msg-interactive {
-  pointer-events: auto;
   gap: 12px;
+}
+
+/* Quiet by design: the message is the point, the × only has to be findable. */
+.toast-msg-close {
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.65);
+  cursor: pointer;
+  padding: 2px;
+  margin-right: -6px;
+  display: flex;
+  align-items: center;
+  font-size: 16px;
+  flex-shrink: 0;
+  border-radius: 4px;
+}
+
+.toast-msg-close:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: white;
+}
+
+.toast-msg-dark .toast-msg-close {
+  color: rgba(51, 51, 51, 0.55);
+}
+
+.toast-msg-dark .toast-msg-close:hover {
+  background: rgba(0, 0, 0, 0.08);
+  color: #333;
 }
 
 .toast-msg-action {
