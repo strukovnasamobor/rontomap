@@ -1,21 +1,20 @@
-FEATURE COLLECTIONS
+FEATURE COLLECTIONS - review with feature list panel and feature detail panel
     - icon: folder-open
-    * main actions on folders: sort-dist (disabled), sort-name, filter, link, embedded, export, back
-    - side actions in folders: rename, show/hide, save/unsave, delete
-    - features collection are saved by default
+    * main actions in folders: sort-dist, sort-name, filter, link, embedded, export, back
+    - side actions on folders: rename, show/hide, delete
     - remember sort after reopening feature list
     - remember the feature collection that is opened, when adding marker or creating path save at the opened feature collection
     - row interaction: same as feature rows: mouse over / first tap reveals the 4 side actions, click or second tap opens the collection
     - back affordance: Sticky ← <name> row at the top of the list — keeps all 7 toolbar buttons
     - new collection persistence: Session-only until its save action is used, like a new marker
-    - nesting: One level. No collections inside collections
+    ? nesting: One level. No collections inside collections
     - ordering: Collections pin to the top of the root list, name-ascending, independent of the feature sort
-    - show/hide + save/unsave: Cascade to contents
+    - show/hide: cascade to contents but not override
     - delete: Ask delete with features, or keep features (root); skip the dialog when the collection is empty
-    * to paths, sights and markers add cut-icon to move them in another collection or as a side action and selecting features to be added, info in which collection belongs
+    * to collections, paths, sights and markers add move-icon to move them in another collection or at root
     - after stopped recording path name it "Path created at dd-mm-yyyy" and save it in the root
     * action button for import, imported features put in one folder and name it "Imported on dd-mm-yyyy"
-- side menu action review and project-roadmap
+- side menu action - review
 
 PARALLEL ACTIONS - review
 - https://docs.google.com/spreadsheets/d/1no5W-1mDotm4eKghzjjsqetgft5C3l7uLmeSO7iH2jw/edit?gid=1762517575#gid=1762517575
@@ -55,8 +54,6 @@ id | action                         | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10| 11
  S | previous action is stopped with no alert
  A | previous action is stopped with with alert
 =============================================================================================================================================
-
-- login - sync offline regions, route data, feature collections, traced paths
 - publish new version on Google Play
 
 CURRENT VERSION
@@ -66,6 +63,7 @@ GOAL
 Free (no ads) and simple 3D map for orientation (online and offline), for navigation (online and offline only on Android), for creating and sharing map features (markers/sights and paths/tracks) by link or embeded code, for finding and tracing paths.
 
 UPGRADES
+- login - sync offline regions, route data, feature collections, traced paths
 - public collection - button to make feature public, allow rating, comments, traced data, show public features (depending of zoom, ratings and traced data)
 - location sharing
 
