@@ -1469,6 +1469,10 @@ textarea.rename-modal-input {
   display: flex;
   align-items: center;
   gap: 8px;
+  /* A sight's trail is four steps deep — let it wrap rather than squeeze every
+     name down to an ellipsis on a narrow sheet. */
+  flex-wrap: wrap;
+  row-gap: 2px;
   padding: 6px 4px;
   background: white;
   font-size: 12px;
@@ -1480,6 +1484,41 @@ textarea.rename-modal-input {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* One step of the trail. The toolbar no longer carries a back button, so these
+   segments are the only way out of a folder — a tap must not start a text
+   selection or raise the platform callout instead. */
+.panel-crumb-seg {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* Only a segment that leads somewhere is a link; the current location is text. */
+.panel-crumb-link {
+  cursor: pointer;
+}
+
+.panel-crumb-current {
+  font-weight: 600;
+}
+
+.panel-crumb-link:hover {
+  color: #ff6f00;
+}
+
+.panel-dark .panel-crumb-link:hover {
+  color: #ff9a40;
+}
+
+.panel-crumb-sep {
+  flex-shrink: 0;
+  opacity: 0.5;
 }
 
 .panel-dark .panel-list-crumb {

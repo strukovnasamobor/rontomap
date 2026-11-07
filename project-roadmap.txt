@@ -1,11 +1,13 @@
 FEATURE COLLECTIONS - review with feature list panel and feature detail panel
     - icon: folder-open
     * main actions in folders: sort-dist, sort-name, filter, link, embedded, export, back
-    - side actions on folders: rename, show/hide, delete
+    - side actions on folders: rename, duplicate, show/hide, delete
     - remember sort after reopening feature list
     - remember the feature collection that is opened, when adding marker or creating path save at the opened feature collection
-    - row interaction: same as feature rows: mouse over / first tap reveals the 4 side actions, click or second tap opens the collection
-    - back affordance: Sticky ← <name> row at the top of the list — keeps all 7 toolbar buttons
+    - row interaction: same as feature rows: mouse over / first tap reveals the side actions, click or second tap opens the collection
+    - duplicate on a folder copies the folder and its contents; the copies keep their own names inside the new folder
+    - back affordance: the sticky ← <name> row at the top of the list is clickable and leaves the
+      collection; there is no back button in the toolbar, the last toolbar button always closes the panel
     - everything is saved as it is created - added, drawn, recorded, imported - there is no save action
     ? nesting: One level. No collections inside collections
     - ordering: Collections pin to the top of the root list, name-ascending, independent of the feature sort
@@ -168,26 +170,39 @@ FEATURE DETAIL PANEL
     - Set name to marker/sight/path - ion-icon name="pencil-outline"
     - Copy embedded marker/sight/path - ion-icon name="code-slash-outline"
     - Export marker/sight/path - ion-icon name="download-outline"
-    - Close / Back to list (if origin is feature list) - ion-icon name="close-outline"/ion-icon name="arrow-back-outline"
+    - Close - ion-icon name="close-outline" - closes the detail panel; the feature list reopens
+      if that is where the feature was opened from
 - show name of ther feature
 - show details for marker/sight - coordinates, for path - snapping, distance, duration (for snapped paths),
   on mouse over the feature item (on touch devices: a tap, a second tap hides them again) the side action icons appears
 - opening a feature that belongs to a feature collection opens that collection in the feature list,
   as if the user had opened the collection there
+- a feature that belongs to a feature collection shows that collection above its name -
+  ion-icon name="folder-open-outline" + name, clickable, it opens the collection in the feature list;
+  a sight shows the collection of its path
 - side actions for marker showing on mouseover / tap
     - Set name to marker - ion-icon name="pencil-outline"
+    - Duplicate marker - ion-icon name="duplicate-outline"
     - Hide/Unhide marker - ion-icon name="eye-outline"/ion-icon name="eye-off-outline"
     - Delete marker - ion-icon name="trash-outline"
 - side actions for sight showing on mouseover / tap
     - Set name to sight - ion-icon name="pencil-outline"
-    - Hide/Unhide sight - ion-icon name="eye-outline"/ion-icon name="eye-off-outline"
     - Detach sight - ion-icon name="git-merge-outline"
+    - Duplicate sight - ion-icon name="duplicate-outline"
+    - Hide/Unhide sight - ion-icon name="eye-outline"/ion-icon name="eye-off-outline"
     - Delete sight - ion-icon name="trash-outline"
 -  side actions for path showing on mouseover / tap
-    - Edit path - ion-icon name="create-outline"
     - Set name to path - ion-icon name="pencil-outline"
+    - Edit path - ion-icon name="create-outline"
+    - Duplicate path - ion-icon name="duplicate-outline"
     - Hide/Unhide path - ion-icon name="eye-outline"/ion-icon name="eye-off-outline"
     - Delete - ion-icon name="trash-outline"
+- duplicate copies everything except the tracing records - the copy lands exactly on the original
+  and is visible even if the original is hidden; a named original gives "<name> (2)", an unnamed one
+  stays unnamed; it shows toast msg "<Marker/Sight/Path/Collection> duplicated." with undo option
+- the copy takes over the detail panel only when one is already open (duplicating a marker, sight or
+  path from there); undo hands the panel back to the original. From a feature list row the list stays
+  as it is and the toast is the only feedback
 - side actions for description showing on mouseover / tap
     - Set description - ion-icon name="pencil-outline"
 - above the description of a path the text link "Trace this path", it starts the tracing;

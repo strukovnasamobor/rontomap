@@ -41,10 +41,10 @@ import {
   bicycleOutline,
   carOutline,
   gitMergeOutline,
-  arrowBackOutline,
   eyeOutline,
   eyeOffOutline,
   folderOpenOutline,
+  duplicateOutline,
 } from "ionicons/icons";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDoubleTap } from "use-double-tap";
@@ -115,6 +115,46 @@ const pathIconFor = (snap) =>
   : snap === "bike" ? bicycleOutline
   : snap === "car" ? carOutline
   : analyticsOutline;
+
+/**
+ * The trail to whatever is on screen: $root, the collection, and in the detail
+ * panel the feature itself — a sight adds its path before it. The last step is
+ * where you already are, so it reads as text; every earlier one is a link.
+ *
+ * @param {{icon: string, label: string, onClick?: Function}[]} segments
+ */
+function CollectionCrumb({ segments }) {
+  return (
+    <div className="panel-list-crumb">
+      {segments.map((seg, i) => {
+        const current = i === segments.length - 1;
+        return (
+          <Fragment key={i}>
+            {i > 0 && <span className="panel-crumb-sep">/</span>}
+            <span
+              className={`panel-crumb-seg${current ? " panel-crumb-current" : " panel-crumb-link"}`}
+              onClick={current ? undefined : seg.onClick}
+              role={current ? undefined : "button"}
+            >
+              <IonIcon icon={seg.icon} />
+              <span>{seg.label}</span>
+            </span>
+          </Fragment>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * "Walk" -> "Walk (2)" -> "Walk (3)". `taken` is the sibling names the copy has
+ * to stand apart from, so a marker only competes with markers in its folder.
+ */
+const uniqueName = (base, taken) => {
+  let name = base;
+  for (let n = 2; taken.includes(name); n++) name = `${base} (${n})`;
+  return name;
+};
 
 // The mode shown for a path — its icon and its info line. A recording's mode is
 // a label only, kept out of roadSnap so nothing ever routes the trail that was
@@ -6117,9 +6157,11 @@ export default function Map() {
     if (pendingImportRef.current) clearTimeout(pendingImportRef.current.timerId);
   }, []);
 
-  // "Path created" toast with a grace period. Everything is saved the moment it
-  // exists, so the only thing left to take back is the feature itself — Undo
-  // removes it outright, the way an undone import does.
+  // "Path created" / "… duplicated" toast with a grace period. Everything is
+  // saved the moment it exists, so the only thing left to take back is what was
+  // just made — Undo removes it outright, the way an undone import does. Takes
+  // sets rather than one feature so a duplicated folder and its copied contents
+  // undo together instead of needing a second mechanism.
   const pendingCreateRef = useRef(null);
 
   const undoPendingCreate = () => {
@@ -6127,15 +6169,31 @@ export default function Map() {
     if (!pending) return;
     clearTimeout(pending.timerId);
     pendingCreateRef.current = null;
-    if (pending.type === "path") performDeletePath(pending.target);
-    else performDeleteMarker(pending.target);
+    // Paths first: a path's sights are markers, and deleting the path takes
+    // them with it.
+    pending.paths.forEach((p) => performDeletePath(p));
+    pending.markers.forEach((m) => performDeleteMarker(m));
+    if (pending.collection) {
+      collectionsRef.current = collectionsRef.current.filter((c) => c !== pending.collection);
+      setOpenCollectionId((cur) => (cur === pending.collection._id ? null : cur));
+    }
+    // Deleting a feature does not clear the selection, so a panel showing what
+    // was just removed has to be sent somewhere: back to the original for a
+    // duplicate, closed for anything else. A panel on an unrelated feature is
+    // left alone.
+    const removed = [...pending.paths, ...pending.markers];
+    setSelectedFeature((cur) => {
+      if (!cur) return cur;
+      const shown = cur.type === "path" ? cur.path : cur.marker;
+      return removed.includes(shown) ? pending.restore ?? null : cur;
+    });
     persistSavedFeaturesRef.current?.();
     bumpFeaturesVersion();
     setToastMsg(null);
   };
 
-  const queueCreateUndo = (target, type, label) => {
-    if (!target) return;
+  const queueCreateUndo = ({ markers = [], paths = [], collection = null, text, restore = null }) => {
+    if (!markers.length && !paths.length && !collection) return;
     if (pendingCreateRef.current) clearTimeout(pendingCreateRef.current.timerId);
     const token = Symbol("undoCreate");
     const timerId = setTimeout(() => {
@@ -6143,9 +6201,9 @@ export default function Map() {
       pendingCreateRef.current = null;
       setToastMsg((cur) => (cur && typeof cur === "object" && cur.__undo === token ? null : cur));
     }, UNDO_MS);
-    pendingCreateRef.current = { target, type, timerId, token };
+    pendingCreateRef.current = { markers, paths, collection, timerId, token, restore };
     showToast({
-      text: `${label} created.`,
+      text,
       action: { label: "Undo", onClick: undoPendingCreate },
       __undo: token,
     }, 0);
@@ -6587,19 +6645,190 @@ export default function Map() {
   // naming dialog, and an import names itself. Same-day imports are numbered
   // rather than merged.
   const createImportCollection = () => {
-    const base = `Imported on ${formatDateDMY(new Date())}`;
-    let name = base;
-    for (let n = 2; collectionsRef.current.some((c) => c.name === name); n++) {
-      name = `${base} (${n})`;
-    }
     const collection = {
       _id: generateFeatureId(),
-      name,
+      name: uniqueName(
+        `Imported on ${formatDateDMY(new Date())}`,
+        collectionsRef.current.map((c) => c.name),
+      ),
       _isCollection: true,
       createdAt: Date.now(),
     };
     collectionsRef.current.push(collection);
     return collection;
+  };
+
+  // === Duplicating features ===
+  //
+  // collect* -> materializeFeatures is the clone engine: it round-trips a live
+  // feature into a new one with fresh layer ids. Four fields it does not carry
+  // are handled deliberately here:
+  //   _traces            left behind on purpose — a record describes one walk of
+  //                      the original, and copying it would also lock the copy
+  //                      against editing
+  //   _collectionId      taken from the SOURCE, so the copy lands in the same
+  //                      folder (not fileInActiveCollection, which reads the
+  //                      folder the list happens to be showing)
+  //   _pathRecordingMode copied — it is the path's Foot/Bike/Car label
+  //   _hidden            NOT copied — a copy sits exactly on its original, so a
+  //                      visible one is the only thing that makes duplicating a
+  //                      hidden feature legible
+  const materializeDeps = () => ({
+    createMarker: createMarkerRef.current,
+    pathHelpersRef,
+    updateMarkerLabel,
+    deserializeSnappedSegments,
+    pathsRef,
+  });
+
+  // The new objects are found by diffing the refs, the same way an import does —
+  // materializeFeatures reports counts, not the features it made.
+  const materializeAndDiff = (data) => {
+    const beforeM = new Set(markersRef.current);
+    const beforeP = new Set(pathsRef.current);
+    materializeFeatures(data, materializeDeps());
+    return captureImportDiff(beforeM, beforeP);
+  };
+
+  const siblingNames = (list) => list.map((f) => f._markerName || f.name || "");
+
+  const duplicateMarker = (src, intoCollectionId) => {
+    const { markers } = materializeAndDiff(collectMarker(src));
+    const copy = markers[0];
+    if (!copy) return null;
+    const collectionId = intoCollectionId ?? src._collectionId ?? null;
+    // Only a named original gets a numbered copy: inventing "Marker (2)" for an
+    // unnamed one would name a feature the user never named.
+    if (src._markerName) {
+      copy._markerName = uniqueName(
+        src._markerName,
+        siblingNames(markersRef.current.filter((m) => !m._sightPath && (m._collectionId ?? null) === collectionId)),
+      );
+      updateMarkerLabel(copy);
+    }
+    if (collectionId) copy._collectionId = collectionId;
+    copy._id = generateFeatureId();
+    return copy;
+  };
+
+  const duplicatePath = (src, intoCollectionId) => {
+    const data = collectPath(src, serializeSnappedSegments);
+    // serializeSnappedSegments RDP-simplifies a snapped route at ~5 m, which is
+    // visible. Hand the materializer the runtime form instead — it sniffs for it
+    // and uses it as-is — so the copy traces the same roads as the original.
+    if (src.snappedSegments?.length) {
+      data.paths[0].snappedSegments = src.snappedSegments.map((seg) => ({
+        type: seg.type,
+        coords: seg.coords.map((c) => [...c]),
+      }));
+    }
+    const { paths } = materializeAndDiff(data);
+    const copy = paths[0];
+    if (!copy) return null;
+    const collectionId = intoCollectionId ?? src._collectionId ?? null;
+    copy.name = uniqueName(
+      src.name || "Path",
+      siblingNames(pathsRef.current.filter((p) => (p._collectionId ?? null) === collectionId)),
+    );
+    if (collectionId) copy._collectionId = collectionId;
+    if (src._pathRecordingMode) copy._pathRecordingMode = src._pathRecordingMode;
+    copy._id = generateFeatureId();
+    return copy;
+  };
+
+  // A sight is not a feature of its own in the interchange — it is persisted
+  // inside its path — so this replays handleAddSight's creation block at the
+  // source's position instead of going through collect*.
+  const duplicateSight = (src) => {
+    const path = src._sightPath;
+    if (!path) return null;
+    const h = pathHelpersRef.current;
+    const pos = h.getSightPos(path, { _segmentIndex: src._segmentIndex, _t: src._t });
+    const copy = createMarkerRef.current(pos, "#0091ff");
+    h.applySightColors(copy, path);
+    copy._sightPath = path;
+    copy._segmentIndex = src._segmentIndex;
+    copy._t = src._t;
+    if (src._markerName) {
+      copy._markerName = uniqueName(src._markerName, siblingNames(path.sights || []));
+      updateMarkerLabel(copy);
+    }
+    if (src._description) copy._description = src._description;
+    copy.on("drag", () => {
+      if (!copy._sightPath) return;
+      const p = copy.getLngLat(),
+        lngLat = [p.lng, p.lat];
+      const snap = h.snapToPath(copy._sightPath, lngLat);
+      copy._segmentIndex = snap.segmentIndex;
+      copy._t = snap.t;
+      const line = h.getRenderedLine(copy._sightPath);
+      copy.setLngLat(h.closestPointOnLine(line, lngLat));
+    });
+    if (featuresLockedRef.current) copy.setDraggable(false);
+    if (!path.sights) path.sights = [];
+    path.sights.push(copy);
+    return copy;
+  };
+
+  const duplicateCollection = (src) => {
+    const collection = {
+      _id: generateFeatureId(),
+      name: uniqueName(src.name || "Collection", collectionsRef.current.map((c) => c.name)),
+      _isCollection: true,
+      createdAt: Date.now(),
+      ...(src._description ? { _description: src._description } : {}),
+    };
+    collectionsRef.current.push(collection);
+    const members = collectionMembers(src._id);
+    // Named against the folder they are going into, which is empty — so the
+    // copies keep the names they had rather than collecting a "(2)" they do not
+    // need. Each duplicator files the copy for us.
+    const markers = members.markers.map((m) => duplicateMarker(m, collection._id)).filter(Boolean);
+    const paths = members.paths.map((p) => duplicatePath(p, collection._id)).filter(Boolean);
+    return { collection, markers, paths };
+  };
+
+  const handleDuplicateFeature = (item) => {
+    const src = item?.ref;
+    if (!src) return;
+    let created = null;
+    let label = "";
+    let select = null;
+    if (item.type === "collection") {
+      created = duplicateCollection(src);
+      label = "Collection";
+    } else if (item.type === "path") {
+      const copy = duplicatePath(src);
+      created = { paths: copy ? [copy] : [] };
+      label = "Path";
+      if (copy) select = { type: "path", path: copy };
+    } else if (item.type === "sight") {
+      const copy = duplicateSight(src);
+      created = { markers: copy ? [copy] : [] };
+      label = "Sight";
+      if (copy) select = { type: "marker", marker: copy };
+    } else {
+      const copy = duplicateMarker(src);
+      created = { markers: copy ? [copy] : [] };
+      label = "Marker";
+      if (copy) select = { type: "marker", marker: copy };
+    }
+    if (!created) return;
+    persistSavedFeatures();
+    bumpFeaturesVersion();
+    // The copy only takes over a detail panel that is already open — there it
+    // is the obvious next thing to look at, and Undo hands the panel back to
+    // the original. From a list row the list stays put instead: opening a panel
+    // would close it and lose the user's place.
+    const takeOver = !!select && !item.fromList;
+    queueCreateUndo({
+      ...created,
+      text: `${label} duplicated.`,
+      restore: takeOver
+        ? (item.type === "path" ? { type: "path", path: src } : { type: "marker", marker: src })
+        : null,
+    });
+    if (takeOver) setSelectedFeature(select);
   };
 
   const handleCreateCollection = () => {
@@ -8133,7 +8362,7 @@ export default function Map() {
       }
       persistSavedFeatures();
       bumpFeaturesVersion();
-      queueCreateUndo(path, "path", "Track");
+      queueCreateUndo({ paths: [path], text: "Track created." });
     } else {
       showToast("Track recorded.", 3000);
     }
@@ -8179,7 +8408,7 @@ export default function Map() {
         if (!path._id) path._id = generateFeatureId();
         persistSavedFeatures();
         bumpFeaturesVersion();
-        queueCreateUndo(path, "path", "Path");
+        queueCreateUndo({ paths: [path], text: "Path created." });
       }
     }
   };
@@ -10623,20 +10852,19 @@ export default function Map() {
               <ActionIconButton label={featListFilter.hidden ? "Hide hidden features" : "Show hidden features"} onClick={() => setFeatListFilter((f) => ({ ...f, hidden: !f.hidden }))}>
                 <IonIcon icon={eyeOffOutline} style={featListFilter.hidden ? undefined : { opacity: 0.3 }} />
               </ActionIconButton>
-              <ActionIconButton
-                label={openCollection ? "Back to all features" : "Close"}
-                onClick={() => (openCollection ? exitCollection() : setOpenFeaturesList(false))}
-              >
-                <IonIcon icon={openCollection ? arrowBackOutline : closeOutline} />
+              <ActionIconButton label="Close" onClick={() => setOpenFeaturesList(false)}>
+                <IonIcon icon={closeOutline} />
               </ActionIconButton>
             </div>
             <div className="panel-list-items" ref={listScrollRef}>
-              {openCollection && (
-                <div className="panel-list-crumb">
-                  <IonIcon icon={folderOpenOutline} />
-                  <span>{openCollection.name || "Collection"}</span>
-                </div>
-              )}
+              <CollectionCrumb
+                segments={[
+                  { icon: folderOpenOutline, label: "$root", onClick: exitCollection },
+                  ...(openCollection
+                    ? [{ icon: folderOpenOutline, label: openCollection.name || "Collection" }]
+                    : []),
+                ]}
+              />
               {createCollectionRow("name")}
               {items.map((item, i) => {
                 const renderRow = (row, nested) => {
@@ -10678,6 +10906,12 @@ export default function Map() {
                       )}
                       {selected && (
                         <>
+                          <ActionIconButton
+                            label={`Set name to ${row.type}`}
+                            onClick={(e) => { e.stopPropagation(); openRenameFromListItem(row); }}
+                          >
+                            <IonIcon icon={pencilOutline} />
+                          </ActionIconButton>
                           {row.type === "path" && (
                             <ActionIconButton
                               label="Edit path"
@@ -10686,18 +10920,6 @@ export default function Map() {
                               <IonIcon icon={createOutline} />
                             </ActionIconButton>
                           )}
-                          <ActionIconButton
-                            label={`Set name to ${row.type}`}
-                            onClick={(e) => { e.stopPropagation(); openRenameFromListItem(row); }}
-                          >
-                            <IonIcon icon={pencilOutline} />
-                          </ActionIconButton>
-                          <ActionIconButton
-                            label={row.ref._hidden ? `Show ${row.type}` : `Hide ${row.type}`}
-                            onClick={(e) => { e.stopPropagation(); handleFeatureToggleVisibility(row); }}
-                          >
-                            <IonIcon icon={row.ref._hidden ? eyeOffOutline : eyeOutline} />
-                          </ActionIconButton>
                           {row.type === "sight" && (
                             <ActionIconButton
                               label="Detach sight"
@@ -10706,6 +10928,18 @@ export default function Map() {
                               <IonIcon icon={gitMergeOutline} />
                             </ActionIconButton>
                           )}
+                          <ActionIconButton
+                            label={`Duplicate ${row.type}`}
+                            onClick={(e) => { e.stopPropagation(); handleDuplicateFeature({ ...row, fromList: true }); }}
+                          >
+                            <IonIcon icon={duplicateOutline} />
+                          </ActionIconButton>
+                          <ActionIconButton
+                            label={row.ref._hidden ? `Show ${row.type}` : `Hide ${row.type}`}
+                            onClick={(e) => { e.stopPropagation(); handleFeatureToggleVisibility(row); }}
+                          >
+                            <IonIcon icon={row.ref._hidden ? eyeOffOutline : eyeOutline} />
+                          </ActionIconButton>
                           <ActionIconButton
                             label="Delete"
                             onClick={(e) => { e.stopPropagation(); deleteFromListItem(row); }}
@@ -11316,7 +11550,7 @@ export default function Map() {
                       <IonIcon icon={downloadOutline} />
                     </ActionIconButton>
                     <ActionIconButton
-                      label={detailsOrigin === "list" ? "Back to list" : "Close"}
+                      label="Close"
                       onClick={() => {
                         if (detailsOrigin === "list") {
                           const restore = listRestoreRef.current;
@@ -11339,13 +11573,62 @@ export default function Map() {
                         }
                       }}
                     >
-                      <IonIcon icon={detailsOrigin === "list" ? arrowBackOutline : closeOutline} />
+                      <IonIcon icon={closeOutline} />
                     </ActionIconButton>
                   </div>
                 </>
               );
             })()}
             <div className="panel-details-scroll">
+            {(() => {
+              const isPathFeature = selectedFeature.type === "path";
+              const crumbMarker = isPathFeature ? null : selectedFeature.marker;
+              const sightPath = crumbMarker?._sightPath || null;
+              // A sight has no collection of its own — it lives wherever its
+              // path lives, so the trail shown is the path's.
+              const owner = isPathFeature ? selectedFeature.path : sightPath || crumbMarker;
+              const collection = owner?._collectionId
+                ? collectionsRef.current.find((c) => c._id === owner._collectionId)
+                : null;
+              const openList = (collectionId) => {
+                setSkipPanelAnim(true);
+                setSelectedFeature(null);
+                setDetailsOrigin(null);
+                setOpenCollectionId(collectionId);
+                setOpenFeaturesList(true);
+              };
+              const segments = [
+                { icon: folderOpenOutline, label: "$root", onClick: () => openList(null) },
+              ];
+              if (collection) {
+                segments.push({
+                  icon: folderOpenOutline,
+                  label: collection.name || "Collection",
+                  onClick: () => openList(collection._id),
+                });
+              }
+              if (sightPath) {
+                // The path a sight belongs to is a feature in its own right, so
+                // the step leads to its detail panel rather than to a list.
+                segments.push({
+                  icon: pathIconFor(pathDisplayMode(sightPath)),
+                  label: sightPath.name || "Path",
+                  onClick: () => setSelectedFeature({ type: "path", path: sightPath }),
+                });
+                segments.push({ icon: pinOutline, label: crumbMarker._markerName || "Sight" });
+              } else if (isPathFeature) {
+                segments.push({
+                  icon: pathIconFor(pathDisplayMode(selectedFeature.path)),
+                  label: selectedFeature.path.name || "Path",
+                });
+              } else {
+                segments.push({
+                  icon: locationOutline,
+                  label: crumbMarker._markerName || "Marker",
+                });
+              }
+              return <CollectionCrumb segments={segments} />;
+            })()}
             {(() => {
               const isPath = selectedFeature.type === "path";
               const isSight = !isPath && !!selectedFeature.marker._sightPath;
@@ -11396,16 +11679,34 @@ export default function Map() {
                   )}
                   {detailsActionsOpen && (
                     <div className="panel-name-actions">
-                      {isPath && (
-                        <ActionIconButton label="Edit path" onClick={(e) => { e.stopPropagation(); handleEditPath(selectedFeature.path); }}>
-                          <IonIcon icon={createOutline} />
-                        </ActionIconButton>
-                      )}
                       <ActionIconButton
                         label={`Set name to ${featureNoun}`}
                         onClick={(e) => { e.stopPropagation(); handleFeatureRename(); }}
                       >
                         <IonIcon icon={pencilOutline} />
+                      </ActionIconButton>
+                      {isPath && (
+                        <ActionIconButton label="Edit path" onClick={(e) => { e.stopPropagation(); handleEditPath(selectedFeature.path); }}>
+                          <IonIcon icon={createOutline} />
+                        </ActionIconButton>
+                      )}
+                      {isSight && (
+                        <ActionIconButton label="Detach sight" onClick={(e) => { e.stopPropagation(); handleFeatureDetachSight(); }}>
+                          <IonIcon icon={gitMergeOutline} />
+                        </ActionIconButton>
+                      )}
+                      <ActionIconButton
+                        label={`Duplicate ${featureNoun}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDuplicateFeature(
+                            isPath
+                              ? { type: "path", ref: selectedFeature.path }
+                              : { type: isSight ? "sight" : "marker", ref: selectedFeature.marker },
+                          );
+                        }}
+                      >
+                        <IonIcon icon={duplicateOutline} />
                       </ActionIconButton>
                       {(() => {
                         const target = isPath ? selectedFeature.path : selectedFeature.marker;
@@ -11419,11 +11720,6 @@ export default function Map() {
                           </ActionIconButton>
                         );
                       })()}
-                      {isSight && (
-                        <ActionIconButton label="Detach sight" onClick={(e) => { e.stopPropagation(); handleFeatureDetachSight(); }}>
-                          <IonIcon icon={gitMergeOutline} />
-                        </ActionIconButton>
-                      )}
                       <ActionIconButton label={`Delete ${featureNoun}`} onClick={(e) => { e.stopPropagation(); handleFeatureDelete(); }}>
                         <IonIcon icon={trashOutline} />
                       </ActionIconButton>
