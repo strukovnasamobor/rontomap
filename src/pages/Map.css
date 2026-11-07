@@ -999,13 +999,14 @@ textarea.rename-modal-input {
   opacity: 0.4;
 }
 
-.panel-saved-indicator {
+/* Marks a row whose feature is hidden, in the slot the bookmark used to use. */
+.panel-hidden-indicator {
   flex-shrink: 0;
   font-size: 18px;
   color: #888;
 }
 
-.panel-dark .panel-saved-indicator {
+.panel-dark .panel-hidden-indicator {
   color: #aaa;
 }
 

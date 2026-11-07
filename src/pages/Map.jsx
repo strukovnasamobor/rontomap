@@ -37,8 +37,6 @@ import {
   timeOutline,
   createOutline,
   pencilOutline,
-  save,
-  saveOutline,
   walkOutline,
   bicycleOutline,
   carOutline,
@@ -645,7 +643,7 @@ export default function Map() {
     const stored = localStorage.getItem("rontomap_feat_list_sort");
     return /^(dist|name)-(asc|desc)$/.test(stored || "") ? stored : "dist-asc";
   });
-  const [featListFilter, setFeatListFilter] = useState({ markers: true, sights: true, paths: true, saved: true });
+  const [featListFilter, setFeatListFilter] = useState({ markers: true, sights: true, paths: true, hidden: true });
   // Which collection the features list is drilled into; null is the root list.
   // Collections never contain collections, so one level is all that's needed.
   // This outlives the list panel — it is also the collection that newly added
@@ -687,6 +685,11 @@ export default function Map() {
   // Same bridge for the share-link importer: the setup effect has [] deps and
   // would otherwise capture the first render's closure.
   const importFromLinkRef = useRef(null);
+  // Boot order: a link import lands BEFORE hydration reads localStorage, so it
+  // must not write to it yet — hydration would then materialize a second copy
+  // of everything it just imported. The trailing persist after hydration
+  // stores both, since persistence now writes whatever is on the map.
+  const hydrationDoneRef = useRef(false);
   const featListGlowCleanupRef = useRef(null);
   const sheetDragRef = useRef({ startY: 0, dragging: false, startLevel: 0 });
   const featurePanelRef = useRef(null);
@@ -4368,7 +4371,13 @@ export default function Map() {
     // Rehydrate user-saved features from localStorage (after URL imports so
     // shared-link payloads win any id collision). Wait for style load so
     // path layers/sources can be added.
-    const runHydrate = () => hydrateSavedFeaturesRef.current?.();
+    const runHydrate = () => {
+      hydrateSavedFeaturesRef.current?.();
+      hydrationDoneRef.current = true;
+      // Writes the hydrated features and anything the boot link imported ahead
+      // of this point, whose own persist was held back.
+      persistSavedFeaturesRef.current?.();
+    };
     if (mapRef.current.isStyleLoaded()) {
       runHydrate();
     } else {
@@ -4469,7 +4478,8 @@ export default function Map() {
         let msg = `Imported ${parts.join(", ")}.`;
         if (result.skipped > 0) msg += ` ${result.skipped} feature${result.skipped > 1 ? "s" : ""} skipped.`;
         const diff = captureImportDiff(beforeM, beforeP);
-        queueImportUndo({ ...diff, lockToggled: false, text: msg });
+        queueImportUndo({ ...diff, lockToggled: false, text: msg,
+          collection: diff.markers.length + diff.paths.length > 0 ? createImportCollection() : null });
       } catch (e) {
         showToast(e.message, 3000);
       }
@@ -4522,7 +4532,9 @@ export default function Map() {
 
   // Apply the feature-list filter to the map itself: hidden types disappear
   // from the map, not just the list. Sights also hide when their parent path
-  // is filtered out. Per-feature `_hidden` overrides add an independent layer.
+  // is filtered out. Per-feature `_hidden` always hides, independently of the
+  // type filters — the `hidden` filter governs the list only, so a hidden
+  // feature stays off the map whether or not the list is showing its row.
   // The filter is read from a ref so this can also run outside React's data
   // flow — notably after a style change, which wipes every custom path layer
   // and re-adds it with the default (visible) layout.
@@ -4543,11 +4555,9 @@ export default function Map() {
     for (const m of markersRef.current) {
       const isSight = !!m._sightPath;
       const typeAllowed = isSight ? (filter.sights && filter.paths) : filter.markers;
-      const savedHidden = !filter.saved && (isSight ? !!m._sightPath._saved : !!m._saved);
       // A sight has no collection of its own — it follows its parent path.
       const owner = isSight ? m._sightPath : m;
       const hidden = !typeAllowed
-        || savedHidden
         || !!m._hidden
         || !!m._pendingDelete
         || inHiddenCollection(owner)
@@ -4556,7 +4566,7 @@ export default function Map() {
       if (el) el.style.display = hidden ? "none" : "";
     }
     for (const p of pathsRef.current) {
-      const hidden = !filter.paths || (!filter.saved && !!p._saved) || !!p._hidden || !!p._pendingDelete
+      const hidden = !filter.paths || !!p._hidden || !!p._pendingDelete
         || inHiddenCollection(p);
       const vis = hidden ? "none" : "visible";
       if (map.getLayer(p.layerId)) map.setLayoutProperty(p.layerId, "visibility", vis);
@@ -5856,7 +5866,8 @@ export default function Map() {
       let msg = `Imported ${parts.join(", ")}.`;
       if (result.skipped > 0) msg += ` ${result.skipped} feature${result.skipped > 1 ? "s" : ""} skipped.`;
       const diff = captureImportDiff(beforeM, beforeP);
-      queueImportUndo({ ...diff, lockToggled: false, text: msg });
+      queueImportUndo({ ...diff, lockToggled: false, text: msg,
+        collection: diff.markers.length + diff.paths.length > 0 ? createImportCollection() : null });
     } catch (e) {
       if (e.message === "No file selected.") return;
       showToast(e.message, 3000);
@@ -5960,15 +5971,13 @@ export default function Map() {
 
   const performDeleteMarker = (marker) => {
     if (!marker) return;
-    const wasSaved = marker._saved;
     const sightParent = marker._sightPath;
-    const parentSaved = !!sightParent?._saved;
     if (sightParent && sightParent.sights) {
       sightParent.sights = sightParent.sights.filter((m) => m !== marker);
     }
     marker.remove();
     markersRef.current = markersRef.current.filter((m) => m !== marker);
-    if (wasSaved || parentSaved) persistSavedFeaturesRef.current?.();
+    persistSavedFeaturesRef.current?.();
     bumpFeaturesVersion();
   };
 
@@ -6073,11 +6082,24 @@ export default function Map() {
     pendingImportRef.current = null;
     pending.paths.forEach((p) => performDeletePath(p));
     pending.markers.forEach((m) => performDeleteMarker(m));
+    // Take the import's folder down with it — but only once nothing is left in
+    // it. One link can queue several imports into the same folder, and a
+    // feature pointing at a folder that no longer exists would show in neither
+    // the root list nor any folder.
+    if (pending.collection) {
+      const { markers, paths } = collectionMembers(pending.collection._id);
+      if (markers.length === 0 && paths.length === 0) {
+        collectionsRef.current = collectionsRef.current.filter((c) => c !== pending.collection);
+        setOpenCollectionId((cur) => (cur === pending.collection._id ? null : cur));
+      }
+    }
     if (pending.lockToggled) {
       featuresLockedRef.current = false;
       setFeaturesLocked(false);
       mapRef.current?.getContainer().classList.remove("features-locked");
     }
+    persistSavedFeaturesRef.current?.();
+    bumpFeaturesVersion();
     setToastMsg(null);
   };
 
@@ -6091,66 +6113,46 @@ export default function Map() {
     );
   };
 
-  const saveImportedFeatures = () => {
-    const pending = pendingImportRef.current;
-    if (!pending) return;
-    if (pending.timerId) clearTimeout(pending.timerId);
-    pendingImportRef.current = null;
-    for (const m of pending.markers) {
-      m._saved = true;
-      if (!m._id) m._id = generateFeatureId();
-    }
-    for (const p of pending.paths) {
-      p._saved = true;
-      if (!p._id) p._id = generateFeatureId();
-    }
-    persistSavedFeaturesRef.current?.();
-    bumpFeaturesVersion();
-    setToastMsg(null);
-    // Drop import params so a reload doesn't re-import duplicates.
-    window.history.replaceState({}, "", window.location.pathname);
-  };
-
   useEffect(() => () => {
     if (pendingImportRef.current) clearTimeout(pendingImportRef.current.timerId);
   }, []);
 
-  // "Path saved" toast with a grace period to undo the auto-bookmark that
-  // finishing a path (or stopping a recording) performs. Undo only reverses the
-  // bookmark — the path stays on the map, it just stops being persisted.
-  // Deleting it outright is a separate flow with its own undo.
-  const pendingSaveRef = useRef(null);
+  // "Path created" toast with a grace period. Everything is saved the moment it
+  // exists, so the only thing left to take back is the feature itself — Undo
+  // removes it outright, the way an undone import does.
+  const pendingCreateRef = useRef(null);
 
-  const undoPendingSave = () => {
-    const pending = pendingSaveRef.current;
+  const undoPendingCreate = () => {
+    const pending = pendingCreateRef.current;
     if (!pending) return;
     clearTimeout(pending.timerId);
-    pendingSaveRef.current = null;
-    pending.target._saved = false;
+    pendingCreateRef.current = null;
+    if (pending.type === "path") performDeletePath(pending.target);
+    else performDeleteMarker(pending.target);
     persistSavedFeaturesRef.current?.();
     bumpFeaturesVersion();
     setToastMsg(null);
   };
 
-  const queueSaveUndo = (target, label) => {
+  const queueCreateUndo = (target, type, label) => {
     if (!target) return;
-    if (pendingSaveRef.current) clearTimeout(pendingSaveRef.current.timerId);
-    const token = Symbol("undoSave");
+    if (pendingCreateRef.current) clearTimeout(pendingCreateRef.current.timerId);
+    const token = Symbol("undoCreate");
     const timerId = setTimeout(() => {
-      if (pendingSaveRef.current?.token !== token) return;
-      pendingSaveRef.current = null;
+      if (pendingCreateRef.current?.token !== token) return;
+      pendingCreateRef.current = null;
       setToastMsg((cur) => (cur && typeof cur === "object" && cur.__undo === token ? null : cur));
     }, UNDO_MS);
-    pendingSaveRef.current = { target, timerId, token };
+    pendingCreateRef.current = { target, type, timerId, token };
     showToast({
-      text: `${label} saved.`,
-      action: { label: "Undo", onClick: undoPendingSave },
+      text: `${label} created.`,
+      action: { label: "Undo", onClick: undoPendingCreate },
       __undo: token,
     }, 0);
   };
 
   useEffect(() => () => {
-    if (pendingSaveRef.current) clearTimeout(pendingSaveRef.current.timerId);
+    if (pendingCreateRef.current) clearTimeout(pendingCreateRef.current.timerId);
   }, []);
 
   const captureImportDiff = (beforeM, beforeP) => {
@@ -6160,7 +6162,7 @@ export default function Map() {
     return { markers: newMarkers.filter((m) => !sightSet.has(m)), paths: newPaths };
   };
 
-  const queueImportUndo = ({ markers, paths, lockToggled, text }) => {
+  const queueImportUndo = ({ markers, paths, lockToggled, text, collection }) => {
     // Single-slot by design: a new import forfeits the previous one's Undo
     // affordance (the pending features are committed, not lost). Matches the
     // menu and file imports, and the toast only has room for one.
@@ -6169,13 +6171,24 @@ export default function Map() {
     const timerId = setTimeout(() => {
       if (pendingImportRef.current?.token === token) commitPendingImport();
     }, UNDO_MS);
-    pendingImportRef.current = { markers, paths, lockToggled, timerId, token };
-    const canSave = markers.length > 0 || paths.length > 0;
-    const actions = [{ label: "Undo", onClick: undoPendingImport }];
-    if (canSave) actions.push({ label: "Save", onClick: saveImportedFeatures });
+    pendingImportRef.current = { markers, paths, lockToggled, timerId, token, collection };
+    // The import is stored as it lands — there is nothing to confirm, only
+    // something to take back. Filed in its own folder first, so the whole
+    // import can be found and removed as a unit.
+    for (const feature of [...markers, ...paths]) {
+      if (collection) feature._collectionId = collection._id;
+      if (!feature._id) feature._id = generateFeatureId();
+    }
+    if (hydrationDoneRef.current) persistSavedFeaturesRef.current?.();
+    bumpFeaturesVersion();
+    // Drop the import params now that the features are stored, or a reload
+    // would import a second copy on top of them.
+    if (window.location.search || window.location.hash) {
+      window.history.replaceState({}, "", window.location.pathname);
+    }
     showToast({
       text,
-      actions,
+      action: { label: "Undo", onClick: undoPendingImport },
       __undo: token,
     }, 0);
   };
@@ -6261,6 +6274,15 @@ export default function Map() {
       const timer = setTimeout(finish, 10000);
     };
 
+    // One link is one import, however many of marker / path / collection it
+    // carries, so its branches share a folder. Created on first use, so a link
+    // that turns out to carry nothing leaves no empty folder behind.
+    let linkCollection = null;
+    const getLinkCollection = () => {
+      if (!linkCollection) linkCollection = createImportCollection();
+      return linkCollection;
+    };
+
     // Shared tail for all three branches.
     const finishLinkImport = (beforeM, beforeP, text) => {
       // Captured BEFORE locking: lockToggled must describe whether THIS import
@@ -6271,7 +6293,13 @@ export default function Map() {
       syncLabelsNow();
       if (isEmbeddedRef.current) return;
       const diff = captureImportDiff(beforeM, beforeP);
-      queueImportUndo({ ...diff, lockToggled: !wasLocked, text });
+      const hasFeatures = diff.markers.length + diff.paths.length > 0;
+      queueImportUndo({
+        ...diff,
+        lockToggled: !wasLocked,
+        text,
+        collection: hasFeatures ? getLinkCollection() : null,
+      });
     };
 
     if (mode === "runtime") flyToLinkCamera(link);
@@ -6471,21 +6499,6 @@ export default function Map() {
     queueDelete(marker, type);
   };
 
-  const handleToggleSaveMarkerMenu = () => {
-    const marker = markerMenu?.marker;
-    if (!marker) return;
-    const type = marker._sightPath ? "sight" : "marker";
-    toggleSaveFeature({ type, ref: marker });
-    setMarkerMenu(null);
-  };
-
-  const handleToggleSavePathMenu = () => {
-    const path = mapClickMenu?.path;
-    if (!path) return;
-    toggleSaveFeature({ type: "path", ref: path });
-    setMapClickMenu(null);
-  };
-
   // Same operation as the panel's "Detach sight", just reached from the marker
   // menu — defined below in this component, so it is bound by the time a click
   // can run this handler.
@@ -6510,9 +6523,6 @@ export default function Map() {
     const draggable = marker.isDraggable();
     const description = marker._description;
     const hidden = !!marker._hidden;
-    // A sight has no bookmark of its own — it is persisted inside its path — so
-    // a bookmarked marker keeps its bookmark by bookmarking the path it joins.
-    const wasSaved = !!marker._saved;
     marker.remove();
     markersRef.current = markersRef.current.filter((m) => m !== marker);
     const newMarker = createMarkerRef.current(sightPos, "#0091ff");
@@ -6539,21 +6549,14 @@ export default function Map() {
     if (!draggable) newMarker.setDraggable(false);
     if (!path.sights) path.sights = [];
     path.sights.push(newMarker);
-    let promotedPath = false;
-    if (wasSaved && !path._saved) {
-      path._saved = true;
-      if (!path._id) path._id = generateFeatureId();
-      promotedPath = true;
-    }
-    // Persist whenever storage is affected: the path gained a sight, and/or the
-    // marker's own saved entry has to go (it lives in the path now).
-    if (path._saved || wasSaved) persistSavedFeaturesRef.current?.();
+    // The path gained a sight and the marker's own entry has to go — it lives
+    // inside the path now.
+    persistSavedFeaturesRef.current?.();
     if (selectedFeatureRef.current?.type === "marker" && selectedFeatureRef.current.marker === marker) {
       setSelectedFeature({ type: "marker", marker: newMarker });
     }
     if (selectedFeatureListRef === marker) setSelectedFeatureListRef(newMarker);
     bumpFeaturesVersion();
-    if (promotedPath) queueSaveUndo(path, path.isTrack ? "Track" : "Path");
   };
 
   const handleSetNameMarker = (target) => {
@@ -6579,6 +6582,26 @@ export default function Map() {
   // The collection is built here but deliberately not pushed into
   // collectionsRef — the push happens when the name dialog commits, so
   // cancelling creates nothing.
+  // Each import gets its own folder, so a bulk import can be found and removed
+  // as a unit. Deliberately not handleCreateCollection: that one opens the
+  // naming dialog, and an import names itself. Same-day imports are numbered
+  // rather than merged.
+  const createImportCollection = () => {
+    const base = `Imported on ${formatDateDMY(new Date())}`;
+    let name = base;
+    for (let n = 2; collectionsRef.current.some((c) => c.name === name); n++) {
+      name = `${base} (${n})`;
+    }
+    const collection = {
+      _id: generateFeatureId(),
+      name,
+      _isCollection: true,
+      createdAt: Date.now(),
+    };
+    collectionsRef.current.push(collection);
+    return collection;
+  };
+
   const handleCreateCollection = () => {
     namingTargetRef.current = {
       type: "collection",
@@ -6594,14 +6617,10 @@ export default function Map() {
   };
 
   // Shared by the name dialog's Save and Clear. For a brand-new collection this
-  // is the moment it starts existing, and it is saved from birth like every
-  // other newly created feature — the row's save action can unsave it after.
-  // The caller persists: isFeaturePersisted(t.target) is true by the time it
-  // checks, because _saved is set here first.
+  // is the moment it starts existing; the caller persists straight after.
   const commitCollectionName = (t, name) => {
     t.target.name = name;
     if (t.isNew && !collectionsRef.current.includes(t.target)) {
-      t.target._saved = true;
       collectionsRef.current.push(t.target);
       t.isNew = false;
     }
@@ -6633,10 +6652,6 @@ export default function Map() {
   // === Saved-feature persistence (localStorage) ===
   const SAVED_FEATURES_KEY = "rontomap_saved_features";
 
-  // A sight carries no bookmark of its own — it is persisted inside its path —
-  // so editing one has to re-persist whenever that parent path is saved.
-  const isFeaturePersisted = (target) => !!(target?._saved || target?._sightPath?._saved);
-
   const generateFeatureId = () =>
     typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
       ? crypto.randomUUID()
@@ -6652,21 +6667,16 @@ export default function Map() {
 
   const persistSavedFeatures = useCallback(() => {
     try {
-      // A feature may only record its collectionId when that collection is
-      // itself saved. Otherwise a reload would resurrect the feature pointing
-      // at a folder that no longer exists, and it would vanish from the list.
-      const savedCollectionIds = new Set(
-        collectionsRef.current.filter((c) => c._saved).map((c) => c._id),
-      );
       const tagCollection = (entry, f) => {
-        if (f._collectionId && savedCollectionIds.has(f._collectionId)) {
-          entry.collectionId = f._collectionId;
-        }
+        if (f._collectionId) entry.collectionId = f._collectionId;
       };
 
+      // Everything the user has on the map is written. The two exclusions are
+      // not preferences: a sight is persisted inside its own path, and a
+      // feature previewing its deletion must not be saved mid-undo-window.
       const savedMarkers = [];
       for (const m of markersRef.current) {
-        if (!m._saved || m._sightPath) continue;
+        if (m._sightPath || m._pendingDelete) continue;
         const ll = m.getLngLat();
         const entry = {
           id: m._id || (m._id = generateFeatureId()),
@@ -6681,7 +6691,10 @@ export default function Map() {
 
       const savedPaths = [];
       for (const p of pathsRef.current) {
-        if (!p._saved) continue;
+        // A path being drawn, and a running recording, are both unfinished —
+        // half a geometry is not worth restoring, and the recording writes
+        // itself when it stops.
+        if (!p.isFinished || p._pendingDelete) continue;
         if (!p._id) p._id = generateFeatureId();
         const pathData = {
           id: p._id,
@@ -6721,7 +6734,7 @@ export default function Map() {
 
       const savedCollections = [];
       for (const c of collectionsRef.current) {
-        if (!c._saved) continue;
+        if (c._pendingDelete) continue;
         if (!c._id) c._id = generateFeatureId();
         const entry = { id: c._id, name: c.name || "", createdAt: c.createdAt ?? Date.now() };
         if (c._hidden) entry.hidden = true;
@@ -6738,30 +6751,6 @@ export default function Map() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const toggleSaveFeature = useCallback(
-    (item) => {
-      if (!item?.ref) return;
-      const target = item.ref;
-      const next = !target._saved;
-      target._saved = next;
-      if (next && !target._id) target._id = generateFeatureId();
-      if (item.type === "collection") {
-        // Saving a folder saves its contents; unsaving drops them too. The
-        // asymmetry is not available: persistSavedFeatures refuses to write a
-        // collectionId for an unsaved collection, so a member left saved would
-        // silently reappear at root on the next reload — an invisible move.
-        const { markers, paths } = collectionMembers(target._id);
-        for (const f of [...markers, ...paths]) {
-          f._saved = next;
-          if (next && !f._id) f._id = generateFeatureId();
-        }
-      }
-      persistSavedFeatures();
-      bumpFeaturesVersion();
-    },
-    [persistSavedFeatures, bumpFeaturesVersion, collectionMembers],
-  );
 
   const hydrateSavedFeatures = useCallback(() => {
     try {
@@ -6782,7 +6771,6 @@ export default function Map() {
             name: c.name || "",
             _isCollection: true,
             createdAt: c.createdAt ?? Date.now(),
-            _saved: true,
             ...(c.hidden ? { _hidden: true } : {}),
             ...(c.description ? { _description: c.description } : {}),
           });
@@ -6820,7 +6808,6 @@ export default function Map() {
       for (let i = markersBefore; i < markersRef.current.length; i++) {
         const m = markersRef.current[i];
         if (m._sightPath) continue;
-        m._saved = true;
         const entry = savedMarkerData[mIdx++];
         if (entry?.id) m._id = entry.id;
         if (entry?.hidden) m._hidden = true;
@@ -6830,7 +6817,6 @@ export default function Map() {
       const savedPathData = data.paths || [];
       for (let i = pathsBefore; i < pathsRef.current.length; i++) {
         const p = pathsRef.current[i];
-        p._saved = true;
         const entry = savedPathData[i - pathsBefore];
         if (entry?.id) p._id = entry.id;
         if (entry?.hidden) p._hidden = true;
@@ -7037,17 +7023,6 @@ export default function Map() {
     setNameAlert(true);
   };
 
-  const handleFeatureToggleSave = () => {
-    if (!selectedFeature) return;
-    if (selectedFeature.type === "path") {
-      toggleSaveFeature({ type: "path", ref: selectedFeature.path });
-    } else {
-      const m = selectedFeature.marker;
-      const type = m._sightPath ? "sight" : "marker";
-      toggleSaveFeature({ type, ref: m });
-    }
-  };
-
   const handleFeatureToggleVisibility = (itemOrEvent) => {
     let target = null;
     if (itemOrEvent && itemOrEvent.ref) target = itemOrEvent.ref;
@@ -7056,7 +7031,7 @@ export default function Map() {
     if (!target) return;
     target._hidden = !target._hidden;
     bumpFeaturesVersion();
-    if (isFeaturePersisted(target)) persistSavedFeatures();
+    persistSavedFeatures();
   };
 
   const handleFeatureDelete = () => {
@@ -7078,9 +7053,6 @@ export default function Map() {
     if (!marker) return;
     const path = marker._sightPath;
     if (!path) return;
-    // The sight was persisted through its path, so leaving it means the free
-    // marker has to carry its own bookmark or it would vanish on reload.
-    const wasSaved = !!path._saved;
     if (path.sights) path.sights = path.sights.filter((m) => m !== marker);
     const pos = marker.getLngLat();
     const name = marker._markerName;
@@ -7100,11 +7072,10 @@ export default function Map() {
       updateMarkerLabel(newMarker);
     }
     if (!draggable) newMarker.setDraggable(false);
-    if (wasSaved) {
-      newMarker._saved = true;
-      if (!newMarker._id) newMarker._id = generateFeatureId();
-      persistSavedFeaturesRef.current?.();
-    }
+    // The sight was persisted inside its path; as a free marker it needs its
+    // own entry, and the path's has to lose it.
+    if (!newMarker._id) newMarker._id = generateFeatureId();
+    persistSavedFeaturesRef.current?.();
     if (!markerArg) {
       setSelectedFeature({ type: "marker", marker: newMarker });
     }
@@ -7169,7 +7140,7 @@ export default function Map() {
     if (list.length === 0) delete path._traces;
     setTraceActionsOpenId(null);
     const save = () => {
-      if (isFeaturePersisted(path)) persistSavedFeatures();
+      persistSavedFeatures();
       bumpFeaturesVersion();
     };
     save();
@@ -7195,7 +7166,7 @@ export default function Map() {
     if (!path?._traces?.length) return;
     delete path._traces;
     setTraceActionsOpenId(null);
-    if (isFeaturePersisted(path)) persistSavedFeatures();
+    persistSavedFeatures();
     bumpFeaturesVersion();
     showToast("Tracing data deleted.", 2000);
   };
@@ -7235,7 +7206,7 @@ export default function Map() {
         if (m._sightPath) continue;
         if (m._pendingDelete) continue;
         if (!inScope(m)) continue;
-        if (!featListFilter.saved && m._saved) continue;
+        if (!featListFilter.hidden && m._hidden) continue;
         const ll = m.getLngLat();
         items.push({
           type: "marker",
@@ -7244,7 +7215,6 @@ export default function Map() {
           dist: haversinePoint(refLat, refLng, ll.lat, ll.lng),
           length: 0,
           ref: m,
-          _saved: !!m._saved,
         });
       }
     }
@@ -7254,7 +7224,7 @@ export default function Map() {
         if (!p.isFinished) continue;
         if (p._pendingDelete) continue;
         if (!inScope(p)) continue;
-        if (!featListFilter.saved && p._saved) continue;
+        if (!featListFilter.hidden && p._hidden) continue;
         if (!p.vertices || p.vertices.length === 0) continue;
         const bounds = new mapboxgl.LngLatBounds();
         let extended = false;
@@ -7270,12 +7240,12 @@ export default function Map() {
         if (dist == null && p.vertices.length >= 2) {
           dist = haversineDistance(p.vertices.map((v) => v.lngLat));
         }
-        // Sights belong to their parent path. They inherit the save state of
-        // the path implicitly, so they have no independent _saved flag.
+        // Sights belong to their parent path, and are never top-level rows.
         const sights =
           featListFilter.sights && p.sights && p.sights.length > 0
             ? p.sights
                 .filter((s) => !s._pendingDelete)
+                .filter((s) => featListFilter.hidden || !s._hidden)
                 .map((s) => {
                   const sll = s.getLngLat();
                   return {
@@ -7286,7 +7256,6 @@ export default function Map() {
                     length: 0,
                     ref: s,
                     parentPath: p,
-                    _saved: !!p._saved,
                   };
                 })
             : [];
@@ -7299,7 +7268,6 @@ export default function Map() {
           snap: pathDisplayMode(p),
           duration: p.routeDuration,
           ref: p,
-          _saved: !!p._saved,
           sights,
         });
       }
@@ -7322,12 +7290,12 @@ export default function Map() {
     // ordering as the features, and trail it when sorting by distance, where
     // they don't. The type filters deliberately do not apply: a folder is a
     // container, and hiding the only door to its contents would strand them.
-    // The saved filter does apply, with the same inverted sense as features:
-    // save state cascades, so a folder and its contents hide together.
+    // The hidden filter does apply, with the same inverted sense as features:
+    // hiding cascades, so a folder and its contents leave the list together.
     const collectionRows = [];
     for (const c of collectionsRef.current) {
       if (c._pendingDelete) continue;
-      if (!featListFilter.saved && c._saved) continue;
+      if (!featListFilter.hidden && c._hidden) continue;
       const members = collectionMembers(c._id);
       collectionRows.push({
         type: "collection",
@@ -7335,7 +7303,6 @@ export default function Map() {
         dist: 0,
         length: 0,
         ref: c,
-        _saved: !!c._saved,
         count: members.markers.length + members.paths.length,
       });
     }
@@ -7651,12 +7618,10 @@ export default function Map() {
     }
   };
 
-  // A newly added feature is bookmarked straight away, the same way finishing a
-  // path or stopping a recording already does. No undo toast here: the details
-  // panel opens on top of it and carries the save action, so unsaving is one
-  // tap away and better placed than a toast the panel would sit over.
+  // A newly added feature is written straight away. No undo toast here: the
+  // details panel opens on top of it and carries the delete action, better
+  // placed than a toast the panel would sit over.
   const saveNewFeature = (feature) => {
-    feature._saved = true;
     if (!feature._id) feature._id = generateFeatureId();
     persistSavedFeatures();
     bumpFeaturesVersion();
@@ -8151,14 +8116,10 @@ export default function Map() {
       setCanRedo(false);
     }
 
-    // Stopping a recording saves the track, which also bookmarks it — same as
-    // the Save button on a hand-drawn path. Skip degenerate one-point tracks:
-    // they have no geometry to restore on reload.
+    // Skip degenerate one-point tracks: they have no geometry to restore on
+    // reload.
     if (path.vertices.length > 1) {
-      if (!path._saved) {
-        path._saved = true;
-        if (!path._id) path._id = generateFeatureId();
-      }
+      if (!path._id) path._id = generateFeatureId();
       // The record goes on with the save, after the path is back to its finished
       // shape, so nothing transient reaches storage.
       if (startedAt != null) {
@@ -8172,7 +8133,7 @@ export default function Map() {
       }
       persistSavedFeatures();
       bumpFeaturesVersion();
-      queueSaveUndo(path, "Track");
+      queueCreateUndo(path, "path", "Track");
     } else {
       showToast("Track recorded.", 3000);
     }
@@ -8211,18 +8172,14 @@ export default function Map() {
         // Editing changes a path, it does not save it: an unsaved path stays
         // unsaved, a saved one gets its new geometry written back. Nothing was
         // bookmarked, so there is no save to undo either.
-        if (isFeaturePersisted(path)) persistSavedFeatures();
+        persistSavedFeatures();
         bumpFeaturesVersion();
         showToast("Path is changed.", 3000);
       } else {
-        // Saving a new path also bookmarks it, so it survives a reload.
-        if (!path._saved) {
-          path._saved = true;
-          if (!path._id) path._id = generateFeatureId();
-        }
+        if (!path._id) path._id = generateFeatureId();
         persistSavedFeatures();
         bumpFeaturesVersion();
-        queueSaveUndo(path, "Path");
+        queueCreateUndo(path, "path", "Path");
       }
     }
   };
@@ -8975,7 +8932,7 @@ export default function Map() {
     // Persist only now: the teardown has just put the path back to its
     // pre-trace self. Doing it before would save the trace's route styling
     // and snapping, and the path would come back blue on the next start.
-    if (path && isFeaturePersisted(path)) persistSavedFeatures();
+    if (path) persistSavedFeatures();
     bumpFeaturesVersion();
     showToast("Tracing completed.", 3000);
   };
@@ -8992,7 +8949,6 @@ export default function Map() {
 
   const performDeletePath = (path) => {
     if (!path) return;
-    const wasSaved = path._saved;
     const map = mapRef.current;
     const hitLayerId = `${path.layerId}-hit`;
     const arrowLayerId = `${path.layerId}-arrows`;
@@ -9018,7 +8974,7 @@ export default function Map() {
       setIsPathMode(false);
       setToastMsg(null);
     }
-    if (wasSaved) persistSavedFeaturesRef.current?.();
+    persistSavedFeaturesRef.current?.();
     bumpFeaturesVersion();
   };
 
@@ -9196,9 +9152,9 @@ export default function Map() {
     if (featuresLockedRef.current) marker.setDraggable(false);
     if (!path.sights) path.sights = [];
     path.sights.push(marker);
-    // Sights live inside their path's saved entry, so a bookmarked path has to
-    // be re-persisted or the new sight is gone on reload.
-    if (path._saved) persistSavedFeaturesRef.current?.();
+    // Sights live inside their path's entry, so the path has to be re-persisted
+    // or the new sight is gone on reload.
+    persistSavedFeaturesRef.current?.();
     bumpFeaturesVersion();
   };
 
@@ -10187,8 +10143,7 @@ export default function Map() {
         }
         onCancel={() => {
           setNameAlert(false);
-          const t = namingTargetRef.current;
-          if (isFeaturePersisted(t?.target)) persistSavedFeaturesRef.current?.();
+          persistSavedFeaturesRef.current?.();
           bumpFeaturesVersion();
         }}
         onClear={() => {
@@ -10204,7 +10159,7 @@ export default function Map() {
             }
           }
           setNameAlert(false);
-          if (isFeaturePersisted(t?.target)) persistSavedFeaturesRef.current?.();
+          persistSavedFeaturesRef.current?.();
           bumpFeaturesVersion();
         }}
         onSave={(name) => {
@@ -10220,7 +10175,7 @@ export default function Map() {
             }
           }
           setNameAlert(false);
-          if (isFeaturePersisted(t?.target)) persistSavedFeaturesRef.current?.();
+          persistSavedFeaturesRef.current?.();
           bumpFeaturesVersion();
         }}
       />
@@ -10242,7 +10197,7 @@ export default function Map() {
           const target = t?.type === "path" ? t.path : t?.marker;
           if (target) target._description = "";
           setDescAlert(false);
-          if (isFeaturePersisted(target)) persistSavedFeaturesRef.current?.();
+          persistSavedFeaturesRef.current?.();
           bumpFeaturesVersion();
         }}
         onSave={(val) => {
@@ -10250,7 +10205,7 @@ export default function Map() {
           const target = t?.type === "path" ? t.path : t?.marker;
           if (target) target._description = val;
           setDescAlert(false);
-          if (isFeaturePersisted(target)) persistSavedFeaturesRef.current?.();
+          persistSavedFeaturesRef.current?.();
           bumpFeaturesVersion();
         }}
       />
@@ -10533,7 +10488,7 @@ export default function Map() {
                       handleFinishPath();
                     }}
                   >
-                    Save
+                    Done
                   </button>
                 )}
               </div>
@@ -10665,8 +10620,8 @@ export default function Map() {
               <ActionIconButton label={featListFilter.paths ? "Hide paths" : "Show paths"} onClick={() => setFeatListFilter((f) => ({ ...f, paths: !f.paths }))}>
                 <IonIcon icon={analyticsOutline} style={featListFilter.paths ? undefined : { opacity: 0.3 }} />
               </ActionIconButton>
-              <ActionIconButton label={featListFilter.saved ? "Hide saved features" : "Show saved features"} onClick={() => setFeatListFilter((f) => ({ ...f, saved: !f.saved }))}>
-                <IonIcon icon={saveOutline} style={featListFilter.saved ? undefined : { opacity: 0.3 }} />
+              <ActionIconButton label={featListFilter.hidden ? "Hide hidden features" : "Show hidden features"} onClick={() => setFeatListFilter((f) => ({ ...f, hidden: !f.hidden }))}>
+                <IonIcon icon={eyeOffOutline} style={featListFilter.hidden ? undefined : { opacity: 0.3 }} />
               </ActionIconButton>
               <ActionIconButton
                 label={openCollection ? "Back to all features" : "Close"}
@@ -10718,8 +10673,8 @@ export default function Map() {
                             : `${row.lngLat.lat.toFixed(6)}, ${row.lngLat.lng.toFixed(6)}`}
                         </span>
                       </div>
-                      {row._saved && !selected && (
-                        <IonIcon icon={save} className="panel-saved-indicator" />
+                      {rowHidden && !selected && (
+                        <IonIcon icon={eyeOffOutline} className="panel-hidden-indicator" />
                       )}
                       {selected && (
                         <>
@@ -10743,23 +10698,12 @@ export default function Map() {
                           >
                             <IonIcon icon={row.ref._hidden ? eyeOffOutline : eyeOutline} />
                           </ActionIconButton>
-                          {row.type === "sight" ? (
+                          {row.type === "sight" && (
                             <ActionIconButton
                               label="Detach sight"
                               onClick={(e) => { e.stopPropagation(); handleFeatureDetachSight(row.ref); }}
                             >
                               <IonIcon icon={gitMergeOutline} />
-                            </ActionIconButton>
-                          ) : (
-                            <ActionIconButton
-                              label={
-                                isCollection
-                                  ? (row._saved ? "Unsave collection and contents" : "Save collection and contents")
-                                  : (row._saved ? "Unsave" : "Save")
-                              }
-                              onClick={(e) => { e.stopPropagation(); toggleSaveFeature(row); }}
-                            >
-                              <IonIcon icon={row._saved ? save : saveOutline} />
                             </ActionIconButton>
                           )}
                           <ActionIconButton
@@ -11347,11 +11291,6 @@ export default function Map() {
               const isPath = selectedFeature.type === "path";
               const isSight = !isPath && !!selectedFeature.marker._sightPath;
               const featureNoun = isPath ? "path" : isSight ? "sight" : "marker";
-              const isSaved = isPath
-                ? !!selectedFeature.path._saved
-                : isSight
-                  ? !!selectedFeature.marker._sightPath?._saved
-                  : !!selectedFeature.marker._saved;
               return (
                 <>
                   <div className="panel-actions">
@@ -11411,11 +11350,6 @@ export default function Map() {
               const isPath = selectedFeature.type === "path";
               const isSight = !isPath && !!selectedFeature.marker._sightPath;
               const featureNoun = isPath ? "path" : isSight ? "sight" : "marker";
-              const isSaved = isPath
-                ? !!selectedFeature.path._saved
-                : isSight
-                  ? !!selectedFeature.marker._sightPath?._saved
-                  : !!selectedFeature.marker._saved;
               const headerIcon = isPath ? pathIconFor(pathDisplayMode(selectedFeature.path)) : isSight ? pinOutline : locationOutline;
               const headerTypeClass = isPath ? "path" : isSight ? "sight" : "marker";
               const headerName = selectedFeature.type === "marker"
@@ -11457,8 +11391,8 @@ export default function Map() {
                     <span className="panel-list-name">{headerName}</span>
                     <span className="panel-list-info">{headerInfo}</span>
                   </div>
-                  {isSaved && !detailsActionsOpen && (
-                    <IonIcon icon={save} className="panel-saved-indicator" />
+                  {targetHidden && !detailsActionsOpen && (
+                    <IonIcon icon={eyeOffOutline} className="panel-hidden-indicator" />
                   )}
                   {detailsActionsOpen && (
                     <div className="panel-name-actions">
@@ -11485,16 +11419,9 @@ export default function Map() {
                           </ActionIconButton>
                         );
                       })()}
-                      {isSight ? (
+                      {isSight && (
                         <ActionIconButton label="Detach sight" onClick={(e) => { e.stopPropagation(); handleFeatureDetachSight(); }}>
                           <IonIcon icon={gitMergeOutline} />
-                        </ActionIconButton>
-                      ) : (
-                        <ActionIconButton
-                          label={isSaved ? `Unsave ${featureNoun}` : `Save ${featureNoun}`}
-                          onClick={(e) => { e.stopPropagation(); handleFeatureToggleSave(); }}
-                        >
-                          <IonIcon icon={isSaved ? save : saveOutline} />
                         </ActionIconButton>
                       )}
                       <ActionIconButton label={`Delete ${featureNoun}`} onClick={(e) => { e.stopPropagation(); handleFeatureDelete(); }}>

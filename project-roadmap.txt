@@ -6,14 +6,16 @@ FEATURE COLLECTIONS - review with feature list panel and feature detail panel
     - remember the feature collection that is opened, when adding marker or creating path save at the opened feature collection
     - row interaction: same as feature rows: mouse over / first tap reveals the 4 side actions, click or second tap opens the collection
     - back affordance: Sticky ← <name> row at the top of the list — keeps all 7 toolbar buttons
-    - new collection persistence: Session-only until its save action is used, like a new marker
+    - everything is saved as it is created - added, drawn, recorded, imported - there is no save action
     ? nesting: One level. No collections inside collections
     - ordering: Collections pin to the top of the root list, name-ascending, independent of the feature sort
     - show/hide: cascade to contents but not override
     - delete: Ask delete with features, or keep features (root, *one level up); skip the dialog when the collection is empty
     * to collections, paths, sights and markers add move-icon to move them in another collection or at root
     - after stopped recording path name it "Path created at dd-mm-yyyy" and save it in the root
-    * action button for import, imported features put in one folder and name it "Imported on dd-mm-yyyy"
+    - imported features go in one folder per import, named "Imported on dd-mm-yyyy",
+      a second import the same day is "Imported on dd-mm-yyyy (2)"; one share link is one import
+      however many features it carries; undoing an import removes its folder if nothing is left in it
 
 - side menu action - review
 
@@ -115,10 +117,10 @@ SIDE MENU
     - About
 
 CREATING & EDITING PATH
-- path actions bar: Undo, Redo, Cancel, Save + snap toggle (Free/Foot/Bike/Car, Force)
-- on Save of a new path: save (bookmark) it and show toast msg "Path saved." with undo option
-- on Save of an edited path: show toast msg "Path is changed.", no undo option,
-  an unsaved path stays unsaved, a saved one gets its new geometry written back
+- path actions bar: Undo, Redo, Cancel, Done + snap toggle (Free/Foot/Bike/Car, Force)
+- on Done of a new path: show toast msg "Path created." with undo option, undo deletes the path
+- on Done of an edited path: show toast msg "Path is changed.", no undo option,
+  the new geometry is written back
 
 NAVIGATION & TRACING PATH
 - path actions bar before start: Undo, Redo, Cancel, Start + snap toggle (Free/Foot/Bike/Car, Force)
@@ -164,7 +166,6 @@ FEATURE DETAIL PANEL
     - Navigate to marker/sight/path - ion-icon name="navigate-outline"
     - Copy link to marker/sight/path - ion-icon name="link-outline"
     - Set name to marker/sight/path - ion-icon name="pencil-outline"
-    - Save/unsave marker/sight/path - ion-icon name="save-outline"/ion-icon name="save"
     - Copy embedded marker/sight/path - ion-icon name="code-slash-outline"
     - Export marker/sight/path - ion-icon name="download-outline"
     - Close / Back to list (if origin is feature list) - ion-icon name="close-outline"/ion-icon name="arrow-back-outline"
@@ -176,7 +177,6 @@ FEATURE DETAIL PANEL
 - side actions for marker showing on mouseover / tap
     - Set name to marker - ion-icon name="pencil-outline"
     - Hide/Unhide marker - ion-icon name="eye-outline"/ion-icon name="eye-off-outline"
-    - Save/Unsave marker - ion-icon name="save-outline"/ion-icon name="save"
     - Delete marker - ion-icon name="trash-outline"
 - side actions for sight showing on mouseover / tap
     - Set name to sight - ion-icon name="pencil-outline"
@@ -187,7 +187,6 @@ FEATURE DETAIL PANEL
     - Edit path - ion-icon name="create-outline"
     - Set name to path - ion-icon name="pencil-outline"
     - Hide/Unhide path - ion-icon name="eye-outline"/ion-icon name="eye-off-outline"
-    - Save/Unsave path - ion-icon name="save-outline"/ion-icon name="save"
     - Delete - ion-icon name="trash-outline"
 - side actions for description showing on mouseover / tap
     - Set description - ion-icon name="pencil-outline"
@@ -213,7 +212,7 @@ FEATURES LIST PANEL
     - Show/Hide Markers (toggle on/off for filtering) - ion-icon name="location-outline"
     - Show/Hide Sights (toggle on/off for filtering) - ion-icon name="pin-outline"
     - Show/Hide Paths (toggle on/off for filtering) - ion-icon name="analytics-outline"
-    - Show/Hide Saved Features (toggle on/off for filtering) - ion-icon name="save-outline"
+    - Show/Hide Hidden Features (toggle on/off for filtering, on by default) - ion-icon name="eye-off-outline"
     - Close - ion-icon name="close-outline"
 - list of features with name and details showing for marker/sight - coordinates, for path - snapping, distance, duration (for snapped paths)
 - path item/header icon by snapping 
@@ -221,7 +220,9 @@ FEATURES LIST PANEL
     - foot - ion-icon name="walk-outline"
     - bike - ion-icon name="bicycle-outline"
     - car - ion-icon name="car-outline"
-- sights show nested in there paths and implicitly save/unsave sync with the path, so no save/unsave side icon
+- sights show nested in there paths
+- a hidden feature shows ion-icon name="eye-off-outline" at the end of its row,
+  in the slot the save icon used to use; it is only a mark, unhiding is the row's side action
 - side actions icons showing on mouseover / first tap and the feature glows on the map (no camera move)
 - left click / second tap on the feature opens the feature details panel (zooming out there if it falls in the obstructed area);
   on touch devices there is no long press on rows - the first tap reveals, the second tap opens, and
