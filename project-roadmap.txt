@@ -4,9 +4,10 @@ FEATURE COLLECTIONS - review with feature list panel and feature detail panel
     - side actions on folders: rename, duplicate, show/hide, delete
     - remember sort after reopening feature list
     - remember the feature collection that is opened, when adding marker or creating path save at the opened feature collection
-    - row interaction: same as feature rows: mouse over reveals the side actions; the first click or
-      tap frames the folder's DIRECT features on the map and keeps its side actions showing, the
-      second one enters the folder; the icon is part of the row and opens nothing by itself
+    - row interaction: same as feature rows: mouse over reveals the side actions and, once the
+      pointer settles, frames the folder's DIRECT features on the map; the first click enters the
+      folder. On touch the first tap reveals and frames, the second enters. The icon is part of
+      the row and opens nothing by itself
     - duplicate on a folder copies the folder, its sub-folders and all of their contents; the copy is
       a sibling of the original and the copies keep their own names inside the new folders
     - back affordance: the sticky ← <name> row at the top of the list is clickable and leaves the
@@ -226,16 +227,18 @@ FEATURE DETAIL PANEL
   as it is and the toast is the only feedback
 - side actions for description showing on mouseover / tap
     - Set description - ion-icon name="pencil-outline"
-- a path lists its sights above everything else, indented as the feature list indents a nested row -
-  ion-icon name="pin-outline", name, coordinates; a hidden sight shows the eye-off mark.
-  The path's detail panel is the only place sights are listed. One thing glows at a time: an open
-  path glows only itself (its line and vertices, not its sights), and mouse over on a sight row
-  reveals its side actions and glows that sight alone, moving no camera - leaving the row hands the
-  glow back to the path
-- a sight row is the same two-step as a features-list row: the first click or tap frames that sight
-  on the map (zoom out only) and leaves its side actions showing, the second opens the sight. The
-  pin is handed over when the other sight row is pointed at, and dropped when the user moves the map
-  by hand or taps outside the row
+- a path lists its sights above everything else, indented under it - ion-icon name="pin-outline",
+  name, coordinates; a hidden sight shows the eye-off mark. The path's detail panel is the only
+  place sights are listed
+- they start collapsed: clicking the path's own row in the panel lists them, clicking it again puts
+  them away, and each path is arrived at collapsed. So the panel opens showing what the path IS and
+  its contents are one click away. On touch the same tap also works the header's own side actions,
+  which have no hover to reveal them
+- a sight row behaves like a features-list row: mouse over reveals its side actions and glows that
+  sight alone, resting frames it (zoom out only), and the first click opens the sight; on touch the
+  first tap reveals, glows and frames and the second opens
+- one thing glows at a time: an open path glows only itself (its line and vertices, not its sights),
+  and pointing at a sight row hands the glow to that sight - leaving the row hands it back
 - below the description the list of tracing records, one row per completed tracing (no icon):
   the record name and below it the date, start time - finish time, duration; times are 24h and
   the date shows below only when the record has been renamed, otherwise it is already the name
@@ -269,21 +272,21 @@ FEATURES LIST PANEL
     - foot - ion-icon name="walk-outline"
     - bike - ion-icon name="bicycle-outline"
     - car - ion-icon name="car-outline"
-- sights are not listed here - they are listed in there path's detail panel; the Show/Hide Sights
-  toggle still governs whether they show on the map
+- sights are not listed here - they are listed, indented, in their path's detail panel, so a path's
+  sights appear when the path is opened and are gone once it is closed; the Show/Hide Sights toggle
+  still governs whether they show on the map
 - a hidden feature shows ion-icon name="eye-off-outline" at the end of its row,
   in the slot the save icon used to use; it is only a mark, unhiding is the row's side action
-- side actions icons showing on mouseover and the feature glows on the map; hovering moves no camera,
-  so running the mouse down the list does not fly the map around
-- every row is a two-step, mouse and touch alike: the FIRST click / tap frames the row's features on
-  the map and leaves its side actions showing (they stay when the pointer leaves, so they can be
-  reached), the SECOND opens the feature details panel or enters the folder
+- mouse over a row reveals its side actions and glows the feature on the map at once, and once the
+  pointer has rested on it (~250ms) frames it - the delay is what keeps a pointer sweeping down the
+  list from dragging the camera through every row it crosses; leaving the row before it settles
+  frames nothing, and takes the actions and the glow with it
+- the first click then opens the feature details panel or enters the folder. On touch there is no
+  hover, so the first tap stands in for it - revealing, glowing and framing at once, with no delay -
+  and the second tap opens
 - framing only ever zooms OUT, until everything the row stands for clears the panel: it never pans,
   so the user keeps their bearings, and never zooms in, so a single marker is not dived at. A row
   whose features are already in view moves the camera not at all
-- the pin on the framed row is handed over as soon as another row is pointed at, and dropped when the
-  user moves the map by hand, when the list leaves that level, or on a click outside the list - after
-  any of those the row frames again rather than opening
 - on touch devices there is no long press on rows, and on rows that open nothing (detail header,
   description, tracing record) the second tap hides the actions again
 - when feature detail panel closes then feature list panel reopens (in same height level and same collection) 
