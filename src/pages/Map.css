@@ -1429,7 +1429,9 @@ textarea.rename-modal-input {
 }
 
 /* "Create new feature collection": a text affordance pinned to the end of the
-   root list. Single-line, so the text block centres in the 50px row. */
+   folders block, at whatever level the list is showing — creating one inside an
+   open folder is how a folder gets a child. Single-line, so the text block
+   centres in the 50px row. */
 .panel-list-item-add .panel-list-icon,
 .panel-list-item-add .panel-list-name,
 .panel-dark .panel-list-item-add .panel-list-icon,
@@ -1441,10 +1443,11 @@ textarea.rename-modal-input {
   justify-content: center;
 }
 
-/* Collection breadcrumb: sticky label naming the folder you are inside. Not a
-   control — leaving is the toolbar's back action. Lives inside the scroll
-   container, so it costs nothing at the root level. The background must be
-   opaque or list rows scroll visibly underneath it. */
+/* Collection breadcrumb: the sticky trail of the folder you are inside, and the
+   only way back out — every earlier step is a link to that level, the last is
+   where you are. Lives inside the scroll container, so it costs nothing at the
+   root level. The background must be opaque or list rows scroll visibly
+   underneath it. */
 .panel-list-crumb {
   position: sticky;
   top: 0;
@@ -1453,7 +1456,8 @@ textarea.rename-modal-input {
   align-items: center;
   gap: 8px;
   /* A sight's trail is four steps deep — let it wrap rather than squeeze every
-     name down to an ellipsis on a narrow sheet. */
+     name down to an ellipsis on a narrow sheet. Past five steps the middle is
+     folded away in JS instead, so this never grows unbounded with depth. */
   flex-wrap: wrap;
   row-gap: 2px;
   padding: 6px 4px;

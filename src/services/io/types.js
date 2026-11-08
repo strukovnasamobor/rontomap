@@ -48,7 +48,7 @@
  *
  * @typedef {Object} RontoTrace
  * @property {string} id
- * @property {string} [name] - defaults to the date it was walked; the user can rename it
+ * @property {string} [name] - defaults to the date it was walked (yyyy-mm-dd); the user can rename it
  * @property {number} startedAt - epoch ms
  * @property {number} finishedAt - epoch ms
  * @property {number} durationMs
@@ -76,12 +76,17 @@
  */
 
 /**
- * A feature collection (folder) as shown in the features list. One nesting
- * level: collections never contain collections. Membership lives on the
- * feature (collectionId), not here, so a deleted feature cannot dangle.
+ * A feature collection (folder) as shown in the features list. Folders nest to
+ * any depth, and the tree is one pointer per child (parentId) for the same
+ * reason membership is one pointer per feature (collectionId): neither a
+ * deleted parent nor a deleted feature can leave a dangling list behind, and
+ * an unresolvable pointer degrades to the root rather than to something no
+ * list can reach.
  *
  * @typedef {Object} RontoCollection
  * @property {string} id
+ * @property {string} [parentId] - the containing collection; absent means root.
+ *   Persistence only, like collectionId - collections are not interchanged.
  * @property {string} [name]
  * @property {boolean} [hidden]
  * @property {string} [description]

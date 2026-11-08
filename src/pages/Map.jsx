@@ -129,15 +129,20 @@ function CollectionCrumb({ segments }) {
     <div className="panel-list-crumb">
       {segments.map((seg, i) => {
         const current = i === segments.length - 1;
+        // A step with nowhere to go reads as text, not as a dead link — the
+        // folded-away middle of a deep trail is one of those.
+        const link = !current && !!seg.onClick;
+        // Bold marks where you are; a folded step is neither bold nor a link.
+        const mod = current ? " panel-crumb-current" : link ? " panel-crumb-link" : "";
         return (
           <Fragment key={i}>
             {i > 0 && <span className="panel-crumb-sep">/</span>}
             <span
-              className={`panel-crumb-seg${current ? " panel-crumb-current" : " panel-crumb-link"}`}
-              onClick={current ? undefined : seg.onClick}
-              role={current ? undefined : "button"}
+              className={`panel-crumb-seg${mod}`}
+              onClick={link ? seg.onClick : undefined}
+              role={link ? "button" : undefined}
             >
-              <IonIcon icon={seg.icon} />
+              {seg.icon && <IonIcon icon={seg.icon} />}
               <span>{seg.label}</span>
             </span>
           </Fragment>
@@ -148,8 +153,22 @@ function CollectionCrumb({ segments }) {
 }
 
 /**
+ * An unlimited-depth trail costs more of the sticky bar than it earns past a
+ * few steps. The ends carry the meaning — the one-tap way out, and where you
+ * are — so the middle folds into a single inert step. Nothing becomes
+ * unreachable: stepping to the nearest shown ancestor reveals its own trail.
+ * Five is the pre-nesting worst case ($root / folder / path / sight), left
+ * alone on purpose.
+ */
+const collapseCrumb = (segments) =>
+  segments.length <= 5
+    ? segments
+    : [segments[0], { label: "…" }, ...segments.slice(-3)];
+
+/**
  * "Walk" -> "Walk (2)" -> "Walk (3)". `taken` is the sibling names the copy has
- * to stand apart from, so a marker only competes with markers in its folder.
+ * to stand apart from, so a marker only competes with markers in its folder,
+ * and a folder with the folders beside it.
  */
 const uniqueName = (base, taken) => {
   let name = base;
@@ -686,7 +705,8 @@ export default function Map() {
   });
   const [featListFilter, setFeatListFilter] = useState({ markers: true, sights: true, paths: true, hidden: true });
   // Which collection the features list is drilled into; null is the root list.
-  // Collections never contain collections, so one level is all that's needed.
+  // Folders nest to any depth, so this is the leaf of the trail on screen — the
+  // list only ever shows one level and the breadcrumb walks back out.
   // This outlives the list panel — it is also the collection that newly added
   // markers and paths are filed into — so it is mirrored into a ref for the
   // long-lived map handlers set up once in the setup effect.
@@ -1334,14 +1354,17 @@ export default function Map() {
     return rem > 0 ? `${hrs} h ${rem} min` : `${hrs} h`;
   };
 
-  // yyyy-mm-dd, in local time — a recording is named for the day the user made
-  // it, so this must not slide across a timezone via toISOString(). Sorting a
-  // list of dated names A-Z also puts them in chronological order.
+  // yyyy-mm-dd whatever the device locale says, in local time — a recording is
+  // named for the day the user made it, so this must not slide across a
+  // timezone via toISOString(). One fixed pattern on purpose: it is
+  // unambiguous everywhere, and sorting a list of dated names A-Z also puts
+  // them in chronological order.
   const formatDateYMD = (date) =>
     `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 
   // Wall-clock time of day for a recorded trace's start and finish. hour12 is
-  // pinned off: the locale default would render AM/PM in some regions.
+  // pinned off: the locale default would render AM/PM in some regions, and
+  // these rows are 24-hour everywhere to match the dates above.
   const formatClock = (ts) =>
     new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
 
@@ -4589,13 +4612,37 @@ export default function Map() {
     const map = mapRef.current;
     if (!map) return;
     const filter = featListFilterRef.current;
-    // Hiding a folder hides everything in it on the map. Only _hidden feeds
-    // this — a collection pending deletion propagates _pendingDelete to its
-    // members at queue time instead, so a "keep features" delete doesn't blink
-    // its contents off the map during the undo window.
-    const hiddenCollectionIds = new Set(
-      collectionsRef.current.filter((c) => c._hidden).map((c) => c._id),
-    );
+    // Hiding a folder hides everything beneath it on the map, at any depth, so
+    // what the cascade needs is the closure over parents rather than one flag.
+    // Resolved once per call into a flat set of effectively-hidden folder ids:
+    // the walk memoises, so a chain is climbed once however many folders hang
+    // off it, and `seen` keeps a corrupted parent ring from spinning. Kept
+    // self-contained rather than reaching for the tree helpers — this is a
+    // useCallback declared long before them, and it runs on every filter
+    // change and every style reload.
+    //
+    // Only _hidden feeds this — a collection pending deletion propagates
+    // _pendingDelete to its members at queue time instead, so a "keep features"
+    // delete doesn't blink its contents off the map during the undo window.
+    // An object, not a Map: this component is itself named Map, which shadows
+    // the global for the whole module — `new Map()` would construct the
+    // component and throw on its first hook. Ids are uuids, so a null-prototype
+    // object is an index either way.
+    const byId = Object.create(null);
+    for (const c of collectionsRef.current) byId[c._id] = c;
+    const hiddenCollectionIds = new Set();
+    const settled = new Set();
+    const resolveHidden = (c, seen) => {
+      if (settled.has(c._id)) return hiddenCollectionIds.has(c._id);
+      if (seen.has(c._id)) return false;
+      seen.add(c._id);
+      const parent = c._parentId ? byId[c._parentId] : null;
+      const hidden = !!c._hidden || (!!parent && resolveHidden(parent, seen));
+      settled.add(c._id);
+      if (hidden) hiddenCollectionIds.add(c._id);
+      return hidden;
+    };
+    for (const c of collectionsRef.current) resolveHidden(c, new Set());
     const inHiddenCollection = (f) =>
       !!f?._collectionId && hiddenCollectionIds.has(f._collectionId);
     for (const m of markersRef.current) {
@@ -6042,17 +6089,25 @@ export default function Map() {
   // performDeletePath also strips the path's sights out of markersRef, so a
   // single undifferentiated pass would operate on already-removed objects.
   const performDeleteCollection = (pending) => {
-    const { target, cascade, members = [] } = pending;
+    const { target, cascade, members = [], folders = [] } = pending;
     if (!target) return;
     if (cascade) {
       members.forEach((f) => { delete f._pendingDelete; });
       members.filter((f) => f.vertices).forEach((p) => performDeletePath(p));
       members.filter((f) => !f.vertices).forEach((m) => performDeleteMarker(m));
     }
-    // In the keep-features case _collectionId was already stripped at queue
-    // time, so the members are back at root and need nothing further.
-    collectionsRef.current = collectionsRef.current.filter((c) => c !== target);
-    setOpenCollectionId((cur) => (cur === target._id ? null : cur));
+    // In the keep case the direct children were re-pointed at the parent at
+    // queue time, so `folders` is the target alone and its descendants survive
+    // underneath whatever moved up.
+    const doomed = new Set(folders.length ? folders : [target]);
+    doomed.forEach((c) => { delete c._pendingDelete; });
+    collectionsRef.current = collectionsRef.current.filter((c) => !doomed.has(c));
+    // Standing anywhere inside what just went shows an unexplained empty list
+    // and, worse, files new features into a phantom folder — so the view falls
+    // back to the retired folder's parent, the nearest level that still exists.
+    const doomedIds = new Set([...doomed].map((c) => c._id));
+    const fallback = target._parentId ?? null;
+    setOpenCollectionId((cur) => (cur && doomedIds.has(cur) ? fallback : cur));
     persistSavedFeaturesRef.current?.();
     bumpFeaturesVersion();
   };
@@ -6078,8 +6133,19 @@ export default function Map() {
     pendingDeleteRef.current = null;
     delete pending.target._pendingDelete;
     if (pending.type === "collection") {
-      if (pending.cascade) pending.members.forEach((f) => { delete f._pendingDelete; });
-      else pending.members.forEach((f) => { f._collectionId = pending.target._id; });
+      (pending.folders || [pending.target]).forEach((c) => { delete c._pendingDelete; });
+      if (pending.cascade) {
+        pending.members.forEach((f) => { delete f._pendingDelete; });
+      } else {
+        // Put the lifted children back — features and sub-folders alike. The
+        // target was never removed, so re-pointing at it is the whole undo.
+        pending.members.forEach((f) => { f._collectionId = pending.target._id; });
+        (pending.moved || []).forEach((c) => { c._parentId = pending.target._id; });
+      }
+      // The keep case mutated membership at queue time, so an unrelated persist
+      // during the window has already written the lifted state; without this
+      // the undo would only ever hold until the next reload.
+      persistSavedFeaturesRef.current?.();
     }
     bumpFeaturesVersion();
     setToastMsg(null);
@@ -6099,15 +6165,41 @@ export default function Map() {
 
     // Preview the outcome for the length of the undo window. Cascade marks the
     // members pending too, which the existing _pendingDelete checks in the list
-    // and in applyFeatureVisibility already honour. Keep strips membership now,
-    // so the features pop up at root immediately — exactly what committing
+    // and in applyFeatureVisibility already honour. Keep moves membership now,
+    // so the contents pop up one level immediately — exactly what committing
     // will mean.
     let members = [];
+    let folders = [];
+    let moved = [];
     if (type === "collection") {
-      const found = collectionMembers(target._id);
-      members = [...found.markers, ...found.paths];
-      if (opts.cascade) members.forEach((f) => { f._pendingDelete = true; });
-      else members.forEach((f) => { delete f._collectionId; });
+      if (opts.cascade) {
+        // The whole subtree: hiding and deleting both mean "everything beneath
+        // this". Marking the sub-folders pending is what keeps them out of the
+        // list and out of persistSavedFeatures during the window too.
+        folders = collectionSubtree(target._id);
+        const found = subtreeFeatures(target._id);
+        members = [...found.markers, ...found.paths];
+        members.forEach((f) => { f._pendingDelete = true; });
+        folders.forEach((c) => { c._pendingDelete = true; });
+      } else {
+        // Keep lifts the direct children one level, to the retired folder's
+        // parent rather than to the root: a folder three deep has no business
+        // jumping to the top of the list. Features and sub-folders alike, and
+        // the rest of the subtree rides along underneath them, untouched.
+        const parentId = target._parentId ?? null;
+        const direct = collectionMembers(target._id);
+        members = [...direct.markers, ...direct.paths];
+        moved = childCollections(target._id);
+        for (const f of members) {
+          if (parentId) f._collectionId = parentId;
+          else delete f._collectionId;
+        }
+        for (const c of moved) {
+          if (parentId) c._parentId = parentId;
+          else delete c._parentId;
+        }
+        folders = [target];
+      }
     }
 
     const token = Symbol("undo");
@@ -6115,7 +6207,9 @@ export default function Map() {
       // Only commit if this pending is still the active one.
       if (pendingDeleteRef.current?.token === token) commitPendingDelete();
     }, UNDO_MS);
-    pendingDeleteRef.current = { target, type, timerId, token, cascade: !!opts.cascade, members };
+    pendingDeleteRef.current = {
+      target, type, timerId, token, cascade: !!opts.cascade, members, folders, moved,
+    };
     bumpFeaturesVersion();
     const label = type === "path" ? "Path"
       : type === "sight" ? "Sight"
@@ -6142,10 +6236,13 @@ export default function Map() {
     // Take the import's folder down with it — but only once nothing is left in
     // it. One link can queue several imports into the same folder, and a
     // feature pointing at a folder that no longer exists would show in neither
-    // the root list nor any folder.
+    // the root list nor any folder. A sub-folder counts: the create row works
+    // inside a folder, so one can be made here inside the undo window.
     if (pending.collection) {
       const { markers, paths } = collectionMembers(pending.collection._id);
-      if (markers.length === 0 && paths.length === 0) {
+      if (markers.length === 0
+        && paths.length === 0
+        && childCollections(pending.collection._id).length === 0) {
         collectionsRef.current = collectionsRef.current.filter((c) => c !== pending.collection);
         setOpenCollectionId((cur) => (cur === pending.collection._id ? null : cur));
       }
@@ -6177,8 +6274,9 @@ export default function Map() {
   // "Path created" / "… duplicated" toast with a grace period. Everything is
   // saved the moment it exists, so the only thing left to take back is what was
   // just made — Undo removes it outright, the way an undone import does. Takes
-  // sets rather than one feature so a duplicated folder and its copied contents
-  // undo together instead of needing a second mechanism.
+  // sets rather than one feature so a duplicated folder — now a whole subtree
+  // of them — and its copied contents undo together instead of needing a second
+  // mechanism.
   const pendingCreateRef = useRef(null);
 
   const undoPendingCreate = () => {
@@ -6190,9 +6288,15 @@ export default function Map() {
     // them with it.
     pending.paths.forEach((p) => performDeletePath(p));
     pending.markers.forEach((m) => performDeleteMarker(m));
-    if (pending.collection) {
-      collectionsRef.current = collectionsRef.current.filter((c) => c !== pending.collection);
-      setOpenCollectionId((cur) => (cur === pending.collection._id ? null : cur));
+    if (pending.collections?.length) {
+      // A duplicated folder is a whole subtree, so this takes a set. The user
+      // can have drilled into the copy during the window, so the list must not
+      // be left standing in a folder that has just been removed.
+      const doomed = new Set(pending.collections);
+      collectionsRef.current = collectionsRef.current.filter((c) => !doomed.has(c));
+      const doomedIds = new Set(pending.collections.map((c) => c._id));
+      const fallback = pending.collections[0]._parentId ?? null;
+      setOpenCollectionId((cur) => (cur && doomedIds.has(cur) ? fallback : cur));
     }
     // Deleting a feature does not clear the selection, so a panel showing what
     // was just removed has to be sent somewhere: back to the original for a
@@ -6209,8 +6313,8 @@ export default function Map() {
     setToastMsg(null);
   };
 
-  const queueCreateUndo = ({ markers = [], paths = [], collection = null, text, restore = null }) => {
-    if (!markers.length && !paths.length && !collection) return;
+  const queueCreateUndo = ({ markers = [], paths = [], collections = [], text, restore = null }) => {
+    if (!markers.length && !paths.length && !collections.length) return;
     if (pendingCreateRef.current) clearTimeout(pendingCreateRef.current.timerId);
     const token = Symbol("undoCreate");
     const timerId = setTimeout(() => {
@@ -6218,7 +6322,7 @@ export default function Map() {
       pendingCreateRef.current = null;
       setToastMsg((cur) => (cur && typeof cur === "object" && cur.__undo === token ? null : cur));
     }, UNDO_MS);
-    pendingCreateRef.current = { markers, paths, collection, timerId, token, restore };
+    pendingCreateRef.current = { markers, paths, collections, timerId, token, restore };
     showToast({
       text,
       action: { label: "Undo", onClick: undoPendingCreate },
@@ -6654,19 +6758,22 @@ export default function Map() {
     setNameAlert(true);
   };
 
-  // The collection is built here but deliberately not pushed into
-  // collectionsRef — the push happens when the name dialog commits, so
-  // cancelling creates nothing.
   // Each import gets its own folder, so a bulk import can be found and removed
   // as a unit. Deliberately not handleCreateCollection: that one opens the
   // naming dialog, and an import names itself. Same-day imports are numbered
   // rather than merged.
+  //
+  // Filed at the root whatever folder the list is showing, for the reason a
+  // finished recording is: an import arrives from outside the app — the side
+  // menu, a link, possibly at boot before the list has ever been opened — so
+  // the one obvious place to find it beats wherever the user happened to stand.
+  // It also keeps the same-day "(2)" numbering meaning one thing.
   const createImportCollection = () => {
     const collection = {
       _id: generateFeatureId(),
       name: uniqueName(
         `Imported on ${formatDateYMD(new Date())}`,
-        collectionsRef.current.map((c) => c.name),
+        childCollections(null).map((c) => c.name || ""),
       ),
       _isCollection: true,
       createdAt: Date.now(),
@@ -6686,6 +6793,8 @@ export default function Map() {
   //   _collectionId      taken from the SOURCE, so the copy lands in the same
   //                      folder (not fileInActiveCollection, which reads the
   //                      folder the list happens to be showing)
+  //   _parentId          taken from the SOURCE too: a copied folder is a
+  //                      sibling of its original, not a child of the open one
   //   _pathRecordingMode copied — it is the path's Foot/Bike/Car label
   //   _hidden            NOT copied — a copy sits exactly on its original, so a
   //                      visible one is the only thing that makes duplicating a
@@ -6787,22 +6896,54 @@ export default function Map() {
     return copy;
   };
 
+  // Copies the folder and everything under it. Parents before children, which
+  // is collectionSubtree's order, so each copy can look its new parent up by
+  // the source id it was copied from. The subtree is snapshotted before the
+  // first push, so iterating while pushing into collectionsRef can neither grow
+  // the walk nor let collectionMembers pick up a copy — a copy's members always
+  // carry the copy's id.
   const duplicateCollection = (src) => {
-    const collection = {
-      _id: generateFeatureId(),
-      name: uniqueName(src.name || "Collection", collectionsRef.current.map((c) => c.name)),
-      _isCollection: true,
-      createdAt: Date.now(),
-      ...(src._description ? { _description: src._description } : {}),
-    };
-    collectionsRef.current.push(collection);
-    const members = collectionMembers(src._id);
-    // Named against the folder they are going into, which is empty — so the
-    // copies keep the names they had rather than collecting a "(2)" they do not
-    // need. Each duplicator files the copy for us.
-    const markers = members.markers.map((m) => duplicateMarker(m, collection._id)).filter(Boolean);
-    const paths = members.paths.map((p) => duplicatePath(p, collection._id)).filter(Boolean);
-    return { collection, markers, paths };
+    // An object rather than a Map: the component is named Map, so the global is
+    // shadowed module-wide (see applyFeatureVisibility).
+    const copies = Object.create(null);
+    const collections = [];
+    const markers = [];
+    const paths = [];
+    for (const node of collectionSubtree(src._id)) {
+      const isRoot = node === src;
+      const parentCopy = isRoot ? null : copies[node._parentId];
+      // Only a ring the hydrate repair missed reaches this; skip it rather than
+      // file a stray copy at the root.
+      if (!isRoot && !parentCopy) continue;
+      const collection = {
+        _id: generateFeatureId(),
+        // The copied folder competes for its name with its siblings; everything
+        // deeper lands in a folder that is new and empty, so it keeps the name
+        // it had — the same argument the features below are named by.
+        name: isRoot
+          ? uniqueName(
+              src.name || "Collection",
+              childCollections(src._parentId ?? null).map((c) => c.name || ""),
+            )
+          : node.name,
+        _isCollection: true,
+        createdAt: Date.now(),
+        ...(isRoot
+          ? (src._parentId ? { _parentId: src._parentId } : {})
+          : { _parentId: parentCopy._id }),
+        ...(node._description ? { _description: node._description } : {}),
+      };
+      collectionsRef.current.push(collection);
+      copies[node._id] = collection;
+      collections.push(collection);
+      const members = collectionMembers(node._id);
+      // Named against the folder they are going into, which is empty — so the
+      // copies keep the names they had rather than collecting a "(2)" they do
+      // not need. Each duplicator files the copy for us.
+      markers.push(...members.markers.map((m) => duplicateMarker(m, collection._id)).filter(Boolean));
+      paths.push(...members.paths.map((p) => duplicatePath(p, collection._id)).filter(Boolean));
+    }
+    return { collections, markers, paths };
   };
 
   const handleDuplicateFeature = (item) => {
@@ -6848,7 +6989,15 @@ export default function Map() {
     if (takeOver) setSelectedFeature(select);
   };
 
+  // The collection is built here but deliberately not pushed into
+  // collectionsRef — the push happens when the name dialog commits, so
+  // cancelling creates nothing.
   const handleCreateCollection = () => {
+    // The parent is bound to the folder on screen now, not to whatever is open
+    // when the dialog commits: the name dialog can stand open across a pending
+    // delete's undo window, and "create a folder in here" means the here the
+    // user was looking at. commitCollectionName re-checks that it survived.
+    const parentId = openCollectionIdRef.current;
     namingTargetRef.current = {
       type: "collection",
       isNew: true,
@@ -6857,6 +7006,7 @@ export default function Map() {
         name: "",
         _isCollection: true,
         createdAt: Date.now(),
+        ...(parentId ? { _parentId: parentId } : {}),
       },
     };
     setNameAlert(true);
@@ -6867,6 +7017,12 @@ export default function Map() {
   const commitCollectionName = (t, name) => {
     t.target.name = name;
     if (t.isNew && !collectionsRef.current.includes(t.target)) {
+      // A parent that stopped existing while the dialog was open degrades to
+      // root — never to a folder that exists but is reachable from no list.
+      if (t.target._parentId
+        && !collectionsRef.current.some((c) => c._id === t.target._parentId)) {
+        delete t.target._parentId;
+      }
       collectionsRef.current.push(t.target);
       t.isNew = false;
     }
@@ -6875,15 +7031,17 @@ export default function Map() {
   const deleteFromListItem = (item) => {
     if (!item?.ref) return;
     if (item.type === "collection") {
-      const { markers, paths } = collectionMembers(item.ref._id);
+      const { markers, paths } = subtreeFeatures(item.ref._id);
       const count = markers.length + paths.length;
-      // Asking is pointless when both answers do the same thing, and the undo
-      // toast already covers a mis-tap.
-      if (count === 0) {
+      // Sub-folders are reason enough to ask on their own: delete takes them,
+      // keep lifts them to the parent. Asking is pointless only when both
+      // answers do the same thing, and the undo toast already covers a mis-tap.
+      const folders = collectionSubtree(item.ref._id).length - 1;
+      if (count === 0 && folders === 0) {
         queueDelete(item.ref, "collection", { cascade: false });
         return;
       }
-      setDeleteCollectionAlert({ collection: item.ref, count });
+      setDeleteCollectionAlert({ collection: item.ref, count, folders });
       return;
     }
     queueDelete(item.ref, item.type);
@@ -6910,6 +7068,67 @@ export default function Map() {
     markers: markersRef.current.filter((m) => !m._sightPath && m._collectionId === id),
     paths: pathsRef.current.filter((p) => p._collectionId === id),
   }), []);
+
+  // The folder tree is one pointer per folder, _parentId, the same shape as a
+  // feature's _collectionId: nothing to keep in sync when a parent goes, and an
+  // unresolvable parent reads as root rather than stranding a folder no list can
+  // reach. Absent means root, never null — matching _collectionId, which is
+  // deleted rather than nulled.
+  //
+  // Depth is unlimited, so every walk upward carries a `seen` guard: a
+  // hand-edited blob can describe a ring, and a list render must not spin on it.
+  //
+  // These are called from handlers declared above this point. Those run after
+  // mount, so the consts are initialised by then — do not hoist them on that
+  // account.
+  const childCollections = useCallback(
+    (id) => collectionsRef.current.filter((c) => (c._parentId ?? null) === (id ?? null)),
+    [],
+  );
+
+  // Root first, the folder itself last — the breadcrumb's segments in order.
+  // Empty for null or for an id that no longer resolves, which is what makes a
+  // vanished open folder degrade to the root list on its own.
+  const collectionPath = useCallback((id) => {
+    const chain = [];
+    const seen = new Set();
+    let cur = id ? collectionsRef.current.find((c) => c._id === id) : null;
+    while (cur && !seen.has(cur._id)) {
+      seen.add(cur._id);
+      chain.unshift(cur);
+      cur = cur._parentId ? collectionsRef.current.find((c) => c._id === cur._parentId) : null;
+    }
+    return chain;
+  }, []);
+
+  // The folder and everything beneath it, parents before children — the order
+  // both delete and duplicate need, so a child is never reached before the
+  // parent it hangs off.
+  const collectionSubtree = useCallback((id) => {
+    const root = collectionsRef.current.find((c) => c._id === id);
+    if (!root) return [];
+    const out = [root];
+    const seen = new Set([root._id]);
+    for (let i = 0; i < out.length; i++) {
+      for (const c of collectionsRef.current) {
+        if (seen.has(c._id) || (c._parentId ?? null) !== out[i]._id) continue;
+        seen.add(c._id);
+        out.push(c);
+      }
+    }
+    return out;
+  }, []);
+
+  // Everything a subtree holds, flat. Markers and paths stay apart because
+  // delete has to take the paths first — performDeletePath also strips the
+  // path's sights out of markersRef.
+  const subtreeFeatures = useCallback((id) => {
+    const ids = new Set(collectionSubtree(id).map((c) => c._id));
+    return {
+      markers: markersRef.current.filter((m) => !m._sightPath && ids.has(m._collectionId)),
+      paths: pathsRef.current.filter((p) => ids.has(p._collectionId)),
+    };
+  }, [collectionSubtree]);
 
   const persistSavedFeatures = useCallback(() => {
     try {
@@ -6980,9 +7199,13 @@ export default function Map() {
 
       const savedCollections = [];
       for (const c of collectionsRef.current) {
+        // A cascading delete marks the whole subtree pending, which is what
+        // keeps a sub-folder out of here too: a child written with a parentId
+        // its parent did not survive would come back at root on the next load.
         if (c._pendingDelete) continue;
         if (!c._id) c._id = generateFeatureId();
         const entry = { id: c._id, name: c.name || "", createdAt: c.createdAt ?? Date.now() };
+        if (c._parentId) entry.parentId = c._parentId;
         if (c._hidden) entry.hidden = true;
         if (c._description) entry.description = c._description;
         savedCollections.push(entry);
@@ -7022,6 +7245,35 @@ export default function Map() {
           });
         }
         hydratedCollectionIds.add(c.id);
+      }
+      // Parents in a second pass: collections are written in array order, so a
+      // child can land before its parent exists to point at. An unresolvable or
+      // self-referential parent is simply not applied, which leaves the folder
+      // at root — the same rule restoreCollection applies to a feature below.
+      for (const c of data.collections || []) {
+        if (!c?.parentId || c.parentId === c.id) continue;
+        if (!hydratedCollectionIds.has(c.parentId)) continue;
+        const obj = collectionsRef.current.find((x) => x._id === c.id);
+        if (obj) obj._parentId = c.parentId;
+      }
+      // A hand-edited blob can describe a ring (A inside B inside A), which
+      // would leave both folders reachable from no list and spin every walk up
+      // the tree. Break it at the first folder that cannot reach the root:
+      // dropping its parent lifts that folder to root, where it is at least
+      // reachable, and the rest of the ring then walks out cleanly. Iterating
+      // the live array rather than the blob, since a boot link-import may
+      // already have pushed a folder of its own.
+      for (const c of collectionsRef.current) {
+        const seen = new Set();
+        let cur = c;
+        while (cur?._parentId) {
+          if (seen.has(cur._id)) {
+            delete c._parentId;
+            break;
+          }
+          seen.add(cur._id);
+          cur = collectionsRef.current.find((x) => x._id === cur._parentId);
+        }
       }
       // An unresolvable collectionId degrades to "feature sits at root" — never
       // to a feature that exists but can't be reached from any list.
@@ -7475,10 +7727,16 @@ export default function Map() {
     const items = [];
 
     // The root list shows features that belong to no collection; a drilled-in
-    // list shows only that collection's members. `?? null` on both sides so an
-    // absent _collectionId reads as root.
+    // list shows only that collection's own members, not its descendants' —
+    // the view is one level deep whatever the depth. `?? null` on both sides so
+    // an absent _collectionId reads as root.
     const scopeId = openCollectionId ?? null;
     const inScope = (f) => (f._collectionId ?? null) === scopeId;
+
+    // Standing inside a hidden folder with hidden items filtered out: nothing
+    // here is effectively visible, so nothing is listed. Keeps the cascade
+    // honest at depth, the way the root list's hidden folder already is.
+    if (!featListFilter.hidden && collectionPath(scopeId).some((c) => c._hidden)) return [];
 
     if (featListFilter.markers) {
       for (const m of markersRef.current) {
@@ -7543,29 +7801,60 @@ export default function Map() {
       return 0;
     });
 
-    // One nesting level: no collections inside collections.
-    if (scopeId != null) return items;
-
     // Collections are always name-ascending among themselves — they have no
     // location, so the distance sort can say nothing meaningful about them.
     // They lead the list when sorting by name, where they belong to the same
     // ordering as the features, and trail it when sorting by distance, where
-    // they don't. The type filters deliberately do not apply: a folder is a
+    // they don't. That was never a rule about the root, so it holds at every
+    // depth. The type filters deliberately do not apply: a folder is a
     // container, and hiding the only door to its contents would strand them.
     // The hidden filter does apply, with the same inverted sense as features:
     // hiding cascades, so a folder and its contents leave the list together.
+    //
+    // Feature counts are tallied per folder once and then rolled up the tree:
+    // asking for a folder's whole subtree per row would re-walk the same
+    // folders once per sibling. A count describes contents, not the current
+    // view, so the type and hidden filters leave it alone — but _pendingDelete
+    // does not, since that is a preview of the deletion.
+    // Objects rather than Maps: the component is named Map, so the global is
+    // shadowed module-wide (see applyFeatureVisibility).
+    const directCount = Object.create(null);
+    const bump = (id) => { if (id) directCount[id] = (directCount[id] || 0) + 1; };
+    for (const m of markersRef.current) {
+      if (m._sightPath || m._pendingDelete) continue;
+      bump(m._collectionId);
+    }
+    for (const p of pathsRef.current) {
+      if (!p.isFinished || p._pendingDelete || !p.vertices?.length) continue;
+      bump(p._collectionId);
+    }
+    const subtotal = Object.create(null);
+    const countIn = (id, seen) => {
+      if (subtotal[id] !== undefined) return subtotal[id];
+      if (seen.has(id)) return 0;
+      seen.add(id);
+      let n = directCount[id] || 0;
+      for (const kid of childCollections(id)) n += countIn(kid._id, seen);
+      subtotal[id] = n;
+      return n;
+    };
+
     const collectionRows = [];
-    for (const c of collectionsRef.current) {
+    for (const c of childCollections(scopeId)) {
       if (c._pendingDelete) continue;
       if (!featListFilter.hidden && c._hidden) continue;
-      const members = collectionMembers(c._id);
       collectionRows.push({
         type: "collection",
         name: c.name || "Collection",
         dist: 0,
         length: 0,
         ref: c,
-        count: members.markers.length + members.paths.length,
+        // Sub-folders are the direct children — what opening this row shows.
+        // Features are the whole subtree — what deleting it would take and what
+        // hiding it hides; a folder of folders holding thirty markers must not
+        // advertise itself as empty.
+        folderCount: childCollections(c._id).filter((k) => !k._pendingDelete).length,
+        count: countIn(c._id, new Set()),
       });
     }
     // Under the name sort collections share the features' ordering, so they
@@ -10546,15 +10835,25 @@ export default function Map() {
         cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
         onDidDismiss={() => setDeleteCollectionAlert(null)}
         header="Delete collection"
-        message={
-          `"${deleteCollectionAlert?.collection?.name || "Collection"}" contains ` +
-          `${deleteCollectionAlert?.count} ` +
-          `${deleteCollectionAlert?.count === 1 ? "feature" : "features"}.`
-        }
+        message={(() => {
+          const { collection, count = 0, folders = 0 } = deleteCollectionAlert || {};
+          const parts = [];
+          if (folders) parts.push(`${folders} ${folders === 1 ? "collection" : "collections"}`);
+          if (count) parts.push(`${count} ${count === 1 ? "feature" : "features"}`);
+          return `"${collection?.name || "Collection"}" contains ${parts.join(" and ")}.`;
+        })()}
         buttons={[
           { text: "Cancel", role: "cancel" },
-          { text: "Keep features", handler: () => confirmDeleteCollection(false) },
-          { text: "Delete features", handler: () => confirmDeleteCollection(true) },
+          // "features" would under-describe the choice once sub-folders are
+          // moving with them — either answer acts on everything inside.
+          {
+            text: deleteCollectionAlert?.folders ? "Keep contents" : "Keep features",
+            handler: () => confirmDeleteCollection(false),
+          },
+          {
+            text: deleteCollectionAlert?.folders ? "Delete contents" : "Delete features",
+            handler: () => confirmDeleteCollection(true),
+          },
         ]}
       />
       <IonAlert
@@ -10844,15 +11143,40 @@ export default function Map() {
         // view degrades to root rather than showing an unexplained empty list.
         const openCollection =
           collectionsRef.current.find((c) => c._id === openCollectionId) || null;
-        const exitCollection = () => {
+        // Moving to another level, by the crumb or by a row. The glow cleanup
+        // is openFeatureListItem's: leaving a level can otherwise strand a
+        // highlight on a feature the new view does not list.
+        const openCollectionAt = (id) => {
+          if (featListGlowCleanupRef.current) {
+            featListGlowCleanupRef.current();
+            featListGlowCleanupRef.current = null;
+          }
           setSelectedFeatureListRef(null);
-          setOpenCollectionId(null);
+          setOpenCollectionId(id);
+        };
+        // Every row in this view shares the same ancestors, so the inherited
+        // half of "looks hidden" is resolved once. A child folder inherits it
+        // exactly as a feature does — the open folder's own _hidden is the last
+        // link in that chain.
+        const ancestorsHidden = collectionPath(openCollectionId).some((c) => !!c._hidden);
+        // "2 folders · 5 features"; a zero side is dropped, and a folder with
+        // nothing at all still reads "Empty" — the one state where deleting it
+        // skips its dialog, so it is worth naming.
+        const collectionInfo = (row) => {
+          const parts = [];
+          if (row.folderCount > 0) {
+            parts.push(`${row.folderCount} folder${row.folderCount === 1 ? "" : "s"}`);
+          }
+          if (row.count > 0) parts.push(`${row.count} feature${row.count === 1 ? "" : "s"}`);
+          return parts.length ? parts.join(" · ") : "Empty";
         };
         // The create row sits with the collections block, on the far side from
         // the features: above them when sorting by name (collections lead the
         // list), below them when sorting by distance (collections trail it).
+        // It shows inside a folder too — that is how a folder gets a child,
+        // handleCreateCollection reading the parent off the open level.
         const createCollectionRow = (forField) => {
-          if (openCollection || sortField !== forField) return null;
+          if (sortField !== forField) return null;
           return (
             <div className="panel-list-item panel-list-item-add" onClick={handleCreateCollection}>
               <IonIcon icon={addOutline} className="panel-list-icon" />
@@ -10907,12 +11231,17 @@ export default function Map() {
             </div>
             <div className="panel-list-items" ref={listScrollRef}>
               <CollectionCrumb
-                segments={[
-                  { icon: folderOpenOutline, label: "$root", onClick: exitCollection },
-                  ...(openCollection
-                    ? [{ icon: folderOpenOutline, label: openCollection.name || "Collection" }]
-                    : []),
-                ]}
+                segments={collapseCrumb([
+                  { icon: folderOpenOutline, label: "$root", onClick: () => openCollectionAt(null) },
+                  ...collectionPath(openCollectionId).map((c, i, all) => ({
+                    icon: folderOpenOutline,
+                    label: c.name || "Collection",
+                    // The last step is where you already are. Said here rather
+                    // than leaning on "last renders as text", so it stays true
+                    // the day a step is appended after it.
+                    onClick: i === all.length - 1 ? undefined : () => openCollectionAt(c._id),
+                  })),
+                ])}
               />
               {createCollectionRow("name")}
               {items.map((item, i) => {
@@ -10922,8 +11251,7 @@ export default function Map() {
                     ? folderOpenOutline
                     : row.type === "path" ? pathIconFor(row.snap) : locationOutline;
                   const selected = row.ref === selectedFeatureListRef;
-                  const rowHidden = !!row.ref._hidden
-                    || (!isCollection && !!openCollection?._hidden);
+                  const rowHidden = !!row.ref._hidden || ancestorsHidden;
                   return (
                     <div
                       className={`panel-list-item${rowHidden ? " panel-list-item-hidden" : ""}`}
@@ -10943,7 +11271,7 @@ export default function Map() {
                         <span className="panel-list-name">{row.name}</span>
                         <span className="panel-list-info">
                           {isCollection
-                            ? (row.count === 0 ? "Empty" : `${row.count} feature${row.count === 1 ? "" : "s"}`)
+                            ? collectionInfo(row)
                             : row.type === "path"
                             ? [
                                 row.snap === "foot" ? "Foot" : row.snap === "bike" ? "Bike" : row.snap === "car" ? "Car" : "Free",
@@ -11013,8 +11341,21 @@ export default function Map() {
                 );
               })}
               {items.length === 0 && (() => {
-                // Inside a collection neither of the root messages is true.
+                // Inside a collection neither of the root messages is true —
+                // except that a folder can now hold things the filters are
+                // keeping off the list, so "empty" has to mean actually empty.
                 if (openCollection) {
+                  const inside = subtreeFeatures(openCollection._id);
+                  const hasAny = inside.markers.length > 0
+                    || inside.paths.length > 0
+                    || childCollections(openCollection._id).length > 0;
+                  if (hasAny) {
+                    return (
+                      <div className="panel-list-empty">
+                        Features are hidden by filters.
+                      </div>
+                    );
+                  }
                   return (
                     <div className="panel-list-empty">
                       {openCollection.name
@@ -11636,9 +11977,6 @@ export default function Map() {
               // A sight has no collection of its own — it lives wherever its
               // path lives, so the trail shown is the path's.
               const owner = isPathFeature ? selectedFeature.path : sightPath || crumbMarker;
-              const collection = owner?._collectionId
-                ? collectionsRef.current.find((c) => c._id === owner._collectionId)
-                : null;
               const openList = (collectionId) => {
                 setSkipPanelAnim(true);
                 setSelectedFeature(null);
@@ -11649,11 +11987,13 @@ export default function Map() {
               const segments = [
                 { icon: folderOpenOutline, label: "$root", onClick: () => openList(null) },
               ];
-              if (collection) {
+              // Every folder step keeps its link here: the feature itself is
+              // always the last segment, so none of them is where you are.
+              for (const c of collectionPath(owner?._collectionId ?? null)) {
                 segments.push({
                   icon: folderOpenOutline,
-                  label: collection.name || "Collection",
-                  onClick: () => openList(collection._id),
+                  label: c.name || "Collection",
+                  onClick: () => openList(c._id),
                 });
               }
               if (sightPath) {
@@ -11676,7 +12016,7 @@ export default function Map() {
                   label: crumbMarker._markerName || "Marker",
                 });
               }
-              return <CollectionCrumb segments={segments} />;
+              return <CollectionCrumb segments={collapseCrumb(segments)} />;
             })()}
             {(() => {
               const isPath = selectedFeature.type === "path";

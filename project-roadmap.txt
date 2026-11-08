@@ -6,19 +6,37 @@ FEATURE COLLECTIONS - review with feature list panel and feature detail panel
     - remember the feature collection that is opened, when adding marker or creating path save at the opened feature collection
     - row interaction: same as feature rows: mouse over / first tap reveals the side actions,
       click or second tap opens the collection; the icon is part of the row and opens nothing by itself
-    - duplicate on a folder copies the folder and its contents; the copies keep their own names inside the new folder
+    - duplicate on a folder copies the folder, its sub-folders and all of their contents; the copy is
+      a sibling of the original and the copies keep their own names inside the new folders
     - back affordance: the sticky ← <name> row at the top of the list is clickable and leaves the
       collection; there is no back button in the toolbar, the last toolbar button always closes the panel
     - everything is saved as it is created - added, drawn, recorded, imported - there is no save action
-    ? nesting: One level. No collections inside collections
-    - ordering: Collections pin to the top of the root list, name-ascending, independent of the feature sort
-    - show/hide: cascade to contents but not override
-    - delete: Ask delete with features, or keep features (root, *one level up); skip the dialog when the collection is empty
+    - every date and time the app writes itself - import folder names, recorded path names, tracing
+      records - is yyyy-mm-dd and 24h regardless of the device locale: unambiguous everywhere, and
+      dated names sort chronologically under the list's A-Z sort
+    - nesting: unlimited depth. A folder becomes a child by being created inside an open folder
+      (the create row shows at every level); there is no move action yet, so that is the only way in.
+      The list always shows one level - no indentation, no expanding in place - and the breadcrumb
+      walks back out: $root / folder / folder, every earlier step clickable, the last one bold;
+      past five steps the middle folds into an inert "..."
+    - ordering: Collections pin to the top of each list at every level, name-ascending,
+      independent of the feature sort
+    - a folder row reads "2 folders · 5 features": sub-folders are the direct children, features are
+      the whole subtree, a zero side is dropped, and a folder with nothing at all reads "Empty"
+    - show/hide: cascade to the whole subtree at any depth, but not override - unhiding a folder
+      restores the per-item state the user left behind. Inside a hidden folder with the hidden
+      filter off the list shows nothing
+    - delete: Ask delete contents, or keep contents - keep lifts the direct children, features and
+      sub-folders alike, one level up to the deleted folder's parent; delete takes the whole
+      subtree. Skip the dialog only when the folder holds nothing at all. Either way the list
+      falls back to that parent if it was standing inside what went
     * to collections, paths, sights and markers add move-icon to move them in another collection or at root
     - after stopped recording path name it "Path created at yyyy-mm-dd" and save it in the root
-    - imported features go in one folder per import, named "Imported on yyyy-mm-dd",
-      a second import the same day is "Imported on yyyy-mm-dd (2)"; one share link is one import
-      however many features it carries; undoing an import removes its folder if nothing is left in it
+    - imported features go in one folder per import, named "Imported on yyyy-mm-dd" and always
+      placed in the root whatever folder the list is showing - an import arrives from outside the
+      app, so the one obvious place to find it wins; a second import the same day is
+      "Imported on yyyy-mm-dd (2)"; one share link is one import however many features it carries;
+      undoing an import removes its folder if nothing is left in it
 
 - side menu action - review
 
