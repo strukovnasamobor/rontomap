@@ -4,7 +4,8 @@ FEATURE COLLECTIONS - review with feature list panel and feature detail panel
     - side actions on folders: rename, duplicate, show/hide, delete
     - remember sort after reopening feature list
     - remember the feature collection that is opened, when adding marker or creating path save at the opened feature collection
-    - row interaction: same as feature rows: mouse over / first tap reveals the side actions, click or second tap opens the collection
+    - row interaction: same as feature rows: mouse over / first tap reveals the side actions,
+      click or second tap opens the collection; the icon is part of the row and opens nothing by itself
     - duplicate on a folder copies the folder and its contents; the copies keep their own names inside the new folder
     - back affordance: the sticky ← <name> row at the top of the list is clickable and leaves the
       collection; there is no back button in the toolbar, the last toolbar button always closes the panel
@@ -14,9 +15,9 @@ FEATURE COLLECTIONS - review with feature list panel and feature detail panel
     - show/hide: cascade to contents but not override
     - delete: Ask delete with features, or keep features (root, *one level up); skip the dialog when the collection is empty
     * to collections, paths, sights and markers add move-icon to move them in another collection or at root
-    - after stopped recording path name it "Path created at dd-mm-yyyy" and save it in the root
-    - imported features go in one folder per import, named "Imported on dd-mm-yyyy",
-      a second import the same day is "Imported on dd-mm-yyyy (2)"; one share link is one import
+    - after stopped recording path name it "Path created at yyyy-mm-dd" and save it in the root
+    - imported features go in one folder per import, named "Imported on yyyy-mm-dd",
+      a second import the same day is "Imported on yyyy-mm-dd (2)"; one share link is one import
       however many features it carries; undoing an import removes its folder if nothing is left in it
 
 - side menu action - review
@@ -192,6 +193,7 @@ FEATURE DETAIL PANEL
     - Hide/Unhide sight - ion-icon name="eye-outline"/ion-icon name="eye-off-outline"
     - Delete sight - ion-icon name="trash-outline"
 -  side actions for path showing on mouseover / tap
+    - Trace path - ion-icon name="ribbon-outline"
     - Set name to path - ion-icon name="pencil-outline"
     - Edit path - ion-icon name="create-outline"
     - Duplicate path - ion-icon name="duplicate-outline"
@@ -205,15 +207,25 @@ FEATURE DETAIL PANEL
   as it is and the toast is the only feedback
 - side actions for description showing on mouseover / tap
     - Set description - ion-icon name="pencil-outline"
-- above the description of a path the text link "Trace this path", it starts the tracing;
-  on the right of the same row the text link "Delete all tracing data" (only when there is a record),
-  it asks to confirm and then drops the whole tracing history of that path, which unlocks editing again
-- under the links the list of tracing records, one row per completed tracing (no icon),
-  date of the start, start time - finish time, duration
+- a path lists its sights above everything else, indented as the feature list indents a nested row -
+  ion-icon name="pin-outline", name, coordinates; a hidden sight shows the eye-off mark.
+  The path's detail panel is the only place sights are listed. One thing glows at a time: an open
+  path glows only itself (its line and vertices, not its sights), and mouse over / first tap on a
+  sight row reveals its side actions and glows that sight alone, with no camera move - leaving the
+  row hands the glow back to the path;
+  click or second tap opens the sight
+- below the description the list of tracing records, one row per completed tracing (no icon):
+  the record name and below it the date, start time - finish time, duration; times are 24h and
+  the date shows below only when the record has been renamed, otherwise it is already the name
   (a recorded path arrives with one record already, for the walk that recorded it)
-- side action for a tracing record showing on mouseover / tap
+- a tracing record is named for the date it was walked and can be renamed
+- side actions for a tracing record showing on mouseover / tap
+    - Set name to tracing record - ion-icon name="pencil-outline"
     - Delete tracing record - ion-icon name="trash-outline" - deletes at once and
       shows toast msg "Tracing record deleted" with undo option
+- after three record deletions in a row on the same path, and only while records are left,
+  ask "Delete all tracing data" - on confirm the rest go with a toast msg and undo option;
+  undoing a single delete breaks the run
 - a path with tracing records can not be edited: Edit path shows toast msg
   "Delete tracing data before editing this path."
 
@@ -235,7 +247,8 @@ FEATURES LIST PANEL
     - foot - ion-icon name="walk-outline"
     - bike - ion-icon name="bicycle-outline"
     - car - ion-icon name="car-outline"
-- sights show nested in there paths
+- sights are not listed here - they are listed in there path's detail panel; the Show/Hide Sights
+  toggle still governs whether they show on the map
 - a hidden feature shows ion-icon name="eye-off-outline" at the end of its row,
   in the slot the save icon used to use; it is only a mark, unhiding is the row's side action
 - side actions icons showing on mouseover / first tap and the feature glows on the map (no camera move)

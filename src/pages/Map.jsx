@@ -45,6 +45,7 @@ import {
   eyeOffOutline,
   folderOpenOutline,
   duplicateOutline,
+  ribbonOutline,
 } from "ionicons/icons";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDoubleTap } from "use-double-tap";
@@ -700,8 +701,11 @@ export default function Map() {
   const [hoveredOfflineRowId, setHoveredOfflineRowId] = useState(null);
   const [detailsActionsOpen, setDetailsActionsOpen] = useState(false);
   const [descActionsOpen, setDescActionsOpen] = useState(false);
-  // Which tracing record row has its delete action revealed, by record id.
+  // Which tracing record row has its actions revealed, by record id.
   const [traceActionsOpenId, setTraceActionsOpenId] = useState(null);
+  // Which sight row in a path's detail panel has its actions revealed. Held by
+  // marker object, not index: deleting a sight shifts every index after it.
+  const [sightActionsOpen, setSightActionsOpen] = useState(null);
   // The path whose whole tracing history is about to be dropped, pending confirm.
   const [deleteTracesAlert, setDeleteTracesAlert] = useState(null);
   const listRestoreRef = useRef(null);
@@ -1330,14 +1334,16 @@ export default function Map() {
     return rem > 0 ? `${hrs} h ${rem} min` : `${hrs} h`;
   };
 
-  // dd-mm-yyyy, in local time — a recording is named for the day the user made
-  // it, so this must not slide across a timezone via toISOString().
-  const formatDateDMY = (date) =>
-    `${String(date.getDate()).padStart(2, "0")}-${String(date.getMonth() + 1).padStart(2, "0")}-${date.getFullYear()}`;
+  // yyyy-mm-dd, in local time — a recording is named for the day the user made
+  // it, so this must not slide across a timezone via toISOString(). Sorting a
+  // list of dated names A-Z also puts them in chronological order.
+  const formatDateYMD = (date) =>
+    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 
-  // Wall-clock time of day for a recorded trace's start and finish.
+  // Wall-clock time of day for a recorded trace's start and finish. hour12 is
+  // pinned off: the locale default would render AM/PM in some regions.
   const formatClock = (ts) =>
-    new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
 
   const formatRecordingDuration = (seconds) => {
     const total = Math.max(0, Math.floor(seconds ?? 0));
@@ -5004,21 +5010,30 @@ export default function Map() {
     if (selectedFeature.type === "path") {
       const path = selectedFeature.path;
       const layerId = path.layerId;
-      if (map.getLayer(layerId)) {
+      // One thing glows at a time. An open path glows itself — its line and its
+      // vertices — and not the sights hanging off it; pointing at one of its
+      // sight rows glows that sight instead, and nothing of the path. Dragging
+      // is untouched by this: only the glow moves.
+      const solo = path.sights?.includes(sightActionsOpen) ? sightActionsOpen : null;
+      if (!solo && map.getLayer(layerId)) {
         map.setPaintProperty(layerId, "line-width", 6);
         map.setPaintProperty(layerId, "line-opacity", 0.8);
       }
       const restoreDrag = [];
-      path.vertices.forEach((v) => {
-        const el = v.marker.getElement();
-        el.classList.add("feature-glow");
-        glowEls.push(el);
-      });
+      if (!solo) {
+        path.vertices.forEach((v) => {
+          const el = v.marker.getElement();
+          el.classList.add("feature-glow");
+          glowEls.push(el);
+        });
+      }
       if (path.sights) {
         path.sights.forEach((m) => {
           const el = m.getElement();
-          el.classList.add("feature-glow");
-          glowEls.push(el);
+          if (solo === m) {
+            el.classList.add("feature-glow");
+            glowEls.push(el);
+          }
           const wasDraggable = m.isDraggable();
           if (!wasDraggable) {
             m.setDraggable(true);
@@ -5035,7 +5050,7 @@ export default function Map() {
         restoreDrag.forEach((m) => m.setDraggable(false));
       };
     }
-  }, [selectedFeature]);
+  }, [selectedFeature, sightActionsOpen]);
 
   // Opening a feature that lives in a collection drills the list into that
   // collection, so the list behind the details panel shows the feature where it
@@ -5288,15 +5303,17 @@ export default function Map() {
   }, [showFeaturesList, showOfflineMapsPanel, featListSort, offlineSort, selectedFeature]);
 
   useEffect(() => {
-    if (!detailsActionsOpen && !descActionsOpen && !traceActionsOpenId) return;
+    if (!detailsActionsOpen && !descActionsOpen && !traceActionsOpenId && !sightActionsOpen) return;
     const onDocDown = (e) => {
       const t = e.target;
       const inHeader = !!t.closest?.(".panel-list-item-header");
       const inDesc = !!t.closest?.(".panel-description");
       const inTrace = !!t.closest?.(".panel-trace-record");
+      const inSight = !!t.closest?.(".panel-detail-sight");
       if (!inHeader) setDetailsActionsOpen(false);
       if (!inDesc) setDescActionsOpen(false);
       if (!inTrace) setTraceActionsOpenId(null);
+      if (!inSight) setSightActionsOpen(null);
     };
     document.addEventListener("mousedown", onDocDown);
     document.addEventListener("touchstart", onDocDown);
@@ -5304,7 +5321,7 @@ export default function Map() {
       document.removeEventListener("mousedown", onDocDown);
       document.removeEventListener("touchstart", onDocDown);
     };
-  }, [detailsActionsOpen, descActionsOpen, traceActionsOpenId]);
+  }, [detailsActionsOpen, descActionsOpen, traceActionsOpenId, sightActionsOpen]);
 
   useEffect(() => {
     if (!selectedFeatureListRef) return;
@@ -6648,7 +6665,7 @@ export default function Map() {
     const collection = {
       _id: generateFeatureId(),
       name: uniqueName(
-        `Imported on ${formatDateDMY(new Date())}`,
+        `Imported on ${formatDateYMD(new Date())}`,
         collectionsRef.current.map((c) => c.name),
       ),
       _isCollection: true,
@@ -6820,7 +6837,7 @@ export default function Map() {
     // is the obvious next thing to look at, and Undo hands the panel back to
     // the original. From a list row the list stays put instead: opening a panel
     // would close it and lose the user's place.
-    const takeOver = !!select && !item.fromList;
+    const takeOver = !!select && !item.keepPanel;
     queueCreateUndo({
       ...created,
       text: `${label} duplicated.`,
@@ -7343,10 +7360,11 @@ export default function Map() {
   // Entering trace mode asks nothing of the user's position: the trace can be
   // laid out from anywhere and walked to. Only Start checks that the user is at
   // the start point, and says so if they are not.
-  // Started from the "Trace this path" link in the detail panel, so the path is
-  // always the selected one.
-  const handleFeatureTrace = () => {
-    const path = selectedFeature?.type === "path" ? selectedFeature.path : null;
+  // Reached from the Trace side action in either the features list or the
+  // detail panel, so the path is the row's when it has one and the selected one
+  // otherwise.
+  const handleFeatureTrace = (pathArg) => {
+    const path = pathArg ?? (selectedFeature?.type === "path" ? selectedFeature.path : null);
     if (!path || path.vertices.length < 2) return;
     // The trace takes over the map: both panels go, and the details panel must
     // not hand back to the list on its way out — same as entering path editing.
@@ -7357,10 +7375,14 @@ export default function Map() {
     confirmTracePath(path.roadSnap ?? null, path);
   };
 
+  // Deleting records one by one is how a user clears a path's history now that
+  // there is no "delete all" link. Three in a row on the same path is the point
+  // at which offering the rest in one go stops being presumptuous.
+  const traceDeleteRunRef = useRef({ path: null, count: 0 });
+
   // A tracing record is pure data — no map layers or markers to keep alive during
   // a pending window — so unlike queueDelete this applies straight away and Undo
-  // puts the record back where it was. The __undo token stops a later delete's
-  // timeout from dismissing this delete's toast.
+  // puts the record back where it was.
   const deleteTraceRecord = (path, recId) => {
     const list = path?._traces;
     const idx = list ? list.findIndex((r) => r.id === recId) : -1;
@@ -7373,6 +7395,11 @@ export default function Map() {
       bumpFeaturesVersion();
     };
     save();
+
+    const run = traceDeleteRunRef.current;
+    run.count = run.path === path ? run.count + 1 : 1;
+    run.path = path;
+
     showToast({
       text: "Tracing record deleted",
       action: {
@@ -7381,23 +7408,46 @@ export default function Map() {
           if (!path._traces) path._traces = [];
           path._traces.splice(Math.min(idx, path._traces.length), 0, removed);
           save();
+          // Putting one back says the opposite of wanting them all gone.
+          traceDeleteRunRef.current = { path: null, count: 0 };
           setToastMsg(null);
         },
       },
     }, UNDO_MS);
+
+    // Only worth asking while something is actually left to delete.
+    if (run.count >= 3 && path._traces?.length) {
+      traceDeleteRunRef.current = { path: null, count: 0 };
+      setDeleteTracesAlert(path);
+    }
   };
 
   // Clearing the whole history is the one way back to editing a path that has
-  // been traced, so it asks first rather than offering an undo afterwards.
+  // been traced. It is reached by repetition rather than a deliberate link, so
+  // it both asks first and offers the records back afterwards.
   const confirmDeleteAllTraces = () => {
     const path = deleteTracesAlert;
     setDeleteTracesAlert(null);
-    if (!path?._traces?.length) return;
+    const removed = path?._traces;
+    if (!removed?.length) return;
     delete path._traces;
     setTraceActionsOpenId(null);
-    persistSavedFeatures();
-    bumpFeaturesVersion();
-    showToast("Tracing data deleted.", 2000);
+    const save = () => {
+      persistSavedFeatures();
+      bumpFeaturesVersion();
+    };
+    save();
+    showToast({
+      text: "Tracing data deleted.",
+      action: {
+        label: "Undo",
+        onClick: () => {
+          path._traces = removed;
+          save();
+          setToastMsg(null);
+        },
+      },
+    }, UNDO_MS);
   };
 
   // === Features list handlers ===
@@ -7469,25 +7519,9 @@ export default function Map() {
         if (dist == null && p.vertices.length >= 2) {
           dist = haversineDistance(p.vertices.map((v) => v.lngLat));
         }
-        // Sights belong to their parent path, and are never top-level rows.
-        const sights =
-          featListFilter.sights && p.sights && p.sights.length > 0
-            ? p.sights
-                .filter((s) => !s._pendingDelete)
-                .filter((s) => featListFilter.hidden || !s._hidden)
-                .map((s) => {
-                  const sll = s.getLngLat();
-                  return {
-                    type: "sight",
-                    name: s._markerName || "Sight",
-                    lngLat: sll,
-                    dist: haversinePoint(refLat, refLng, sll.lat, sll.lng),
-                    length: 0,
-                    ref: s,
-                    parentPath: p,
-                  };
-                })
-            : [];
+        // Sights are not listed here at all — a path's own detail panel is the
+        // one place they appear, so the list stays a list of top-level features.
+        // The sights filter still governs whether they show on the map.
         items.push({
           type: "path",
           name: p.name || "Path",
@@ -7497,7 +7531,6 @@ export default function Map() {
           snap: pathDisplayMode(p),
           duration: p.routeDuration,
           ref: p,
-          sights,
         });
       }
     }
@@ -7644,6 +7677,16 @@ export default function Map() {
       featListGlowCleanupRef.current = null;
     }
   };
+
+  // A sight row inside a path's detail panel reveals like a features list row,
+  // glow included — the list no longer lists sights, so this panel is the only
+  // place a sight can be pointed at and found on the map. The glow itself is
+  // the panel's own glow effect, which lights the revealed sight instead of the
+  // whole path, so revealing is nothing more than this state. It needs no timer:
+  // the glow lasts exactly as long as the row is revealed.
+  const revealSightRow = (sight) => setSightActionsOpen(sight);
+  const clearSightRow = (sight) =>
+    setSightActionsOpen((cur) => (!sight || cur === sight ? null : cur));
 
   // Touch has no hover, so the first tap on a row reveals its side actions and
   // only a tap on an already revealed row does what a click does. A scroll never
@@ -8284,7 +8327,7 @@ export default function Map() {
     // A recording is started from the map, not from inside a folder, so it is
     // filed at the root regardless of which collection the list is showing —
     // and it names itself, since there is no naming step when a recording ends.
-    if (!path.name) path.name = `Path created at ${formatDateDMY(new Date())}`;
+    if (!path.name) path.name = `Path created at ${formatDateYMD(new Date())}`;
     delete path._collectionId;
     h.updatePathLine(path);
     h.updateVertexStyles(path);
@@ -8355,6 +8398,7 @@ export default function Map() {
         if (!path._traces) path._traces = [];
         path._traces.push({
           id: generateFeatureId(),
+          name: formatDateYMD(new Date(startedAt)),
           startedAt,
           finishedAt,
           durationMs: Math.max(0, finishedAt - startedAt - pausedMs),
@@ -9152,6 +9196,7 @@ export default function Map() {
       if (!path._traces) path._traces = [];
       path._traces.push({
         id: generateFeatureId(),
+        name: formatDateYMD(new Date(startedAt)),
         startedAt,
         finishedAt,
         durationMs: Math.max(0, finishedAt - startedAt - paused),
@@ -10362,11 +10407,15 @@ export default function Map() {
         title={
           namingTargetRef.current?.type === "collection"
             ? (namingTargetRef.current?.isNew ? "New collection" : "Collection name")
-            : namingTargetRef.current?.type === "path" ? "Path name" : "Marker name"
+            : namingTargetRef.current?.type === "path" ? "Path name"
+            : namingTargetRef.current?.type === "trace" ? "Tracing record name"
+            : "Marker name"
         }
         maxLength={50}
         initialValue={
-          namingTargetRef.current?.type === "path" || namingTargetRef.current?.type === "collection"
+          namingTargetRef.current?.type === "path"
+          || namingTargetRef.current?.type === "collection"
+          || namingTargetRef.current?.type === "trace"
             ? namingTargetRef.current?.target?.name ?? ""
             : namingTargetRef.current?.target?._markerName ?? ""
         }
@@ -10380,7 +10429,7 @@ export default function Map() {
           if (t) {
             if (t.type === "collection") {
               commitCollectionName(t, "");
-            } else if (t.type === "path") {
+            } else if (t.type === "path" || t.type === "trace") {
               t.target.name = "";
             } else {
               t.target._markerName = "";
@@ -10396,7 +10445,7 @@ export default function Map() {
           if (t) {
             if (t.type === "collection") {
               commitCollectionName(t, name);
-            } else if (t.type === "path") {
+            } else if (t.type === "path" || t.type === "trace") {
               t.target.name = name;
             } else {
               t.target._markerName = name;
@@ -10867,26 +10916,29 @@ export default function Map() {
               />
               {createCollectionRow("name")}
               {items.map((item, i) => {
-                const renderRow = (row, nested) => {
+                const renderRow = (row) => {
                   const isCollection = row.type === "collection";
                   const iconIcon = isCollection
                     ? folderOpenOutline
-                    : row.type === "path" ? pathIconFor(row.snap) : row.type === "sight" ? pinOutline : locationOutline;
+                    : row.type === "path" ? pathIconFor(row.snap) : locationOutline;
                   const selected = row.ref === selectedFeatureListRef;
                   const rowHidden = !!row.ref._hidden
-                    || (row.type === "sight" && !!row.ref._sightPath?._hidden)
                     || (!isCollection && !!openCollection?._hidden);
                   return (
                     <div
                       className={`panel-list-item${rowHidden ? " panel-list-item-hidden" : ""}`}
-                      style={nested ? { paddingLeft: 28 } : undefined}
                       onPointerEnter={(e) => { if (e.pointerType === "mouse") revealFeatureListActions(row); }}
                       onPointerLeave={(e) => { if (e.pointerType === "mouse") clearFeatureListActions(row); }}
                       onPointerDown={noteRowPointer}
                       onContextMenu={(e) => e.preventDefault()}
                       onClick={() => handleRowClick(row)}
                     >
-                      <IonIcon icon={iconIcon} className={`panel-list-icon panel-list-icon-${row.type}`} />
+                      {/* The icon carries no click of its own: it is part of the
+                          row, and the row's reveal-then-open is the only way in. */}
+                      <IonIcon
+                        icon={iconIcon}
+                        className={`panel-list-icon panel-list-icon-${row.type}`}
+                      />
                       <div className="panel-list-text">
                         <span className="panel-list-name">{row.name}</span>
                         <span className="panel-list-info">
@@ -10906,6 +10958,14 @@ export default function Map() {
                       )}
                       {selected && (
                         <>
+                          {row.type === "path" && (
+                            <ActionIconButton
+                              label="Trace path"
+                              onClick={(e) => { e.stopPropagation(); handleFeatureTrace(row.ref); }}
+                            >
+                              <IonIcon icon={ribbonOutline} />
+                            </ActionIconButton>
+                          )}
                           <ActionIconButton
                             label={`Set name to ${row.type}`}
                             onClick={(e) => { e.stopPropagation(); openRenameFromListItem(row); }}
@@ -10920,17 +10980,9 @@ export default function Map() {
                               <IonIcon icon={createOutline} />
                             </ActionIconButton>
                           )}
-                          {row.type === "sight" && (
-                            <ActionIconButton
-                              label="Detach sight"
-                              onClick={(e) => { e.stopPropagation(); handleFeatureDetachSight(row.ref); }}
-                            >
-                              <IonIcon icon={gitMergeOutline} />
-                            </ActionIconButton>
-                          )}
                           <ActionIconButton
                             label={`Duplicate ${row.type}`}
-                            onClick={(e) => { e.stopPropagation(); handleDuplicateFeature({ ...row, fromList: true }); }}
+                            onClick={(e) => { e.stopPropagation(); handleDuplicateFeature({ ...row, keepPanel: true }); }}
                           >
                             <IonIcon icon={duplicateOutline} />
                           </ActionIconButton>
@@ -10956,10 +11008,7 @@ export default function Map() {
                 // DOM as a feature row (stale tooltip, stale glow class).
                 return (
                   <Fragment key={`${openCollectionId ?? "root"}-${item.type}-${i}`}>
-                    {renderRow(item, false)}
-                    {item.type === "path" && item.sights && item.sights.map((sight, j) => (
-                      <Fragment key={`s-${j}`}>{renderRow(sight, true)}</Fragment>
-                    ))}
+                    {renderRow(item)}
                   </Fragment>
                 );
               })}
@@ -11679,6 +11728,11 @@ export default function Map() {
                   )}
                   {detailsActionsOpen && (
                     <div className="panel-name-actions">
+                      {isPath && (
+                        <ActionIconButton label="Trace path" onClick={(e) => { e.stopPropagation(); handleFeatureTrace(); }}>
+                          <IonIcon icon={ribbonOutline} />
+                        </ActionIconButton>
+                      )}
                       <ActionIconButton
                         label={`Set name to ${featureNoun}`}
                         onClick={(e) => { e.stopPropagation(); handleFeatureRename(); }}
@@ -11729,50 +11783,79 @@ export default function Map() {
               );
             })()}
             <div className="panel-details">
-              {selectedFeature.type === "path" && (
-                <div className="panel-trace-links">
-                  <span className="panel-trace-link" onClick={handleFeatureTrace}>
-                    Trace this path
-                  </span>
-                  {selectedFeature.path._traces?.length > 0 && (
-                    <span
-                      className="panel-trace-link panel-trace-link-danger"
-                      onClick={() => setDeleteTracesAlert(selectedFeature.path)}
-                    >
-                      Delete all tracing data
-                    </span>
-                  )}
-                </div>
-              )}
               {selectedFeature.type === "path" &&
-                (selectedFeature.path._traces || []).map((rec) => (
-                  <div
-                    key={rec.id}
-                    className="panel-list-item panel-trace-record"
-                    onPointerEnter={(e) => { if (e.pointerType === "mouse") setTraceActionsOpenId(rec.id); }}
-                    onPointerLeave={(e) => { if (e.pointerType === "mouse") setTraceActionsOpenId((cur) => (cur === rec.id ? null : cur)); }}
-                    onPointerDown={noteRowPointer}
-                    onClick={toggleOnTap(() => setTraceActionsOpenId((cur) => (cur === rec.id ? null : rec.id)))}
-                    onContextMenu={(e) => e.preventDefault()}
-                  >
-                    <div className="panel-list-text">
-                      <span className="panel-list-name">{formatDateDMY(new Date(rec.startedAt))}</span>
-                      <span className="panel-list-info">
-                        {`${formatClock(rec.startedAt)} \u2013 ${formatClock(rec.finishedAt)} \u00b7 ${formatDuration(rec.durationMs / 1000)}`}
-                      </span>
-                    </div>
-                    {traceActionsOpenId === rec.id && (
-                      <div className="panel-name-actions">
-                        <ActionIconButton
-                          label="Delete tracing record"
-                          onClick={(e) => { e.stopPropagation(); deleteTraceRecord(selectedFeature.path, rec.id); }}
-                        >
-                          <IonIcon icon={trashOutline} />
-                        </ActionIconButton>
+                (selectedFeature.path.sights || []).map((sight, i) => {
+                  const ll = sight.getLngLat();
+                  const sightHidden = !!sight._hidden;
+                  const open = sightActionsOpen === sight;
+                  return (
+                    <div
+                      key={`sight-${i}`}
+                      className={`panel-list-item panel-detail-sight${sightHidden ? " panel-list-item-hidden" : ""}`}
+                      style={{ paddingLeft: 28 }}
+                      onPointerEnter={(e) => { if (e.pointerType === "mouse") revealSightRow(sight); }}
+                      onPointerLeave={(e) => { if (e.pointerType === "mouse") clearSightRow(sight); }}
+                      onPointerDown={noteRowPointer}
+                      onClick={() => {
+                        // Exactly a features-list row: a mouse click opens, and
+                        // on touch the first tap reveals (and glows) while the
+                        // second opens.
+                        if (consumeRevealTap(sightActionsOpen === sight, () => revealSightRow(sight))) return;
+                        clearSightRow();
+                        setSelectedFeature({ type: "marker", marker: sight });
+                      }}
+                      onContextMenu={(e) => e.preventDefault()}
+                    >
+                      <IonIcon
+                        icon={pinOutline}
+                        className="panel-list-icon panel-list-icon-sight"
+                      />
+                      <div className="panel-list-text">
+                        <span className="panel-list-name">{sight._markerName || "Sight"}</span>
+                        <span className="panel-list-info">
+                          {`${ll.lat.toFixed(6)}, ${ll.lng.toFixed(6)}`}
+                        </span>
                       </div>
-                    )}
-                  </div>
-                ))}
+                      {sightHidden && !open && (
+                        <IonIcon icon={eyeOffOutline} className="panel-hidden-indicator" />
+                      )}
+                      {open && (
+                        <div className="panel-name-actions">
+                          <ActionIconButton
+                            label="Set name to sight"
+                            onClick={(e) => { e.stopPropagation(); openRenameFromListItem({ type: "sight", ref: sight }); }}
+                          >
+                            <IonIcon icon={pencilOutline} />
+                          </ActionIconButton>
+                          <ActionIconButton
+                            label="Detach sight"
+                            onClick={(e) => { e.stopPropagation(); handleFeatureDetachSight(sight); }}
+                          >
+                            <IonIcon icon={gitMergeOutline} />
+                          </ActionIconButton>
+                          <ActionIconButton
+                            label="Duplicate sight"
+                            onClick={(e) => { e.stopPropagation(); handleDuplicateFeature({ type: "sight", ref: sight, keepPanel: true }); }}
+                          >
+                            <IonIcon icon={duplicateOutline} />
+                          </ActionIconButton>
+                          <ActionIconButton
+                            label={sight._hidden ? "Show sight" : "Hide sight"}
+                            onClick={(e) => { e.stopPropagation(); handleFeatureToggleVisibility({ ref: sight }); }}
+                          >
+                            <IonIcon icon={sight._hidden ? eyeOffOutline : eyeOutline} />
+                          </ActionIconButton>
+                          <ActionIconButton
+                            label="Delete sight"
+                            onClick={(e) => { e.stopPropagation(); clearSightRow(); queueDelete(sight, "sight"); }}
+                          >
+                            <IonIcon icon={trashOutline} />
+                          </ActionIconButton>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               {(() => {
                 const target = selectedFeature.type === "path" ? selectedFeature.path : selectedFeature.marker;
                 const desc = target?._description || "";
@@ -11805,6 +11888,56 @@ export default function Map() {
                   </div>
                 );
               })()}
+              {selectedFeature.type === "path" &&
+                (selectedFeature.path._traces || []).map((rec) => {
+                  // Records made before names existed have none, so the date is
+                  // derived rather than assumed.
+                  const dateName = formatDateYMD(new Date(rec.startedAt));
+                  const name = rec.name || dateName;
+                  const info = [
+                    // Repeated below only once renamed: otherwise the date
+                    // would show on both lines.
+                    name === dateName ? null : dateName,
+                    `${formatClock(rec.startedAt)} \u2013 ${formatClock(rec.finishedAt)}`,
+                    formatDuration(rec.durationMs / 1000),
+                  ].filter(Boolean).join(" \u00b7 ");
+                  return (
+                    <div
+                      key={rec.id}
+                      className="panel-list-item panel-trace-record"
+                      onPointerEnter={(e) => { if (e.pointerType === "mouse") setTraceActionsOpenId(rec.id); }}
+                      onPointerLeave={(e) => { if (e.pointerType === "mouse") setTraceActionsOpenId((cur) => (cur === rec.id ? null : cur)); }}
+                      onPointerDown={noteRowPointer}
+                      onClick={toggleOnTap(() => setTraceActionsOpenId((cur) => (cur === rec.id ? null : rec.id)))}
+                      onContextMenu={(e) => e.preventDefault()}
+                    >
+                      <div className="panel-list-text">
+                        <span className="panel-list-name">{name}</span>
+                        <span className="panel-list-info">{info}</span>
+                      </div>
+                      {traceActionsOpenId === rec.id && (
+                        <div className="panel-name-actions">
+                          <ActionIconButton
+                            label="Set name to tracing record"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              namingTargetRef.current = { type: "trace", target: rec };
+                              setNameAlert(true);
+                            }}
+                          >
+                            <IonIcon icon={pencilOutline} />
+                          </ActionIconButton>
+                          <ActionIconButton
+                            label="Delete tracing record"
+                            onClick={(e) => { e.stopPropagation(); deleteTraceRecord(selectedFeature.path, rec.id); }}
+                          >
+                            <IonIcon icon={trashOutline} />
+                          </ActionIconButton>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
             </div>
             </div>
           </div>

@@ -48,6 +48,7 @@
  *
  * @typedef {Object} RontoTrace
  * @property {string} id
+ * @property {string} [name] - defaults to the date it was walked; the user can rename it
  * @property {number} startedAt - epoch ms
  * @property {number} finishedAt - epoch ms
  * @property {number} durationMs

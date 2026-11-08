@@ -1111,23 +1111,6 @@ textarea.rename-modal-input {
   color: #4db8ff;
 }
 
-/* The two tracing links share one row: the action left, the destructive one
-   right, so the delete never sits under the finger aiming for Trace. */
-.panel-trace-links {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.panel-trace-link-danger {
-  color: #d32f2f;
-}
-
-.panel-dark .panel-trace-link-danger {
-  color: #ff6b6b;
-}
-
 /* A recorded trace reuses the list-row shell for its icon, two-line text and
    revealed delete action, but the row itself opens nothing. */
 .panel-trace-record {
