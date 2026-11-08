@@ -726,6 +726,10 @@ export default function Map() {
   // Which sight row in a path's detail panel has its actions revealed. Held by
   // marker object, not index: deleting a sight shifts every index after it.
   const [sightActionsOpen, setSightActionsOpen] = useState(null);
+  // Which sight row the last click framed — the framedRowRef of the path
+  // panel's sight list. See its comment for why a hover-driven reveal cannot
+  // double as this.
+  const framedSightRef = useRef(null);
   // The path whose whole tracing history is about to be dropped, pending confirm.
   const [deleteTracesAlert, setDeleteTracesAlert] = useState(null);
   const listRestoreRef = useRef(null);
@@ -910,6 +914,13 @@ export default function Map() {
   const [shownRegionId, setShownRegionId] = useState(null);
   const [selectedRoutingSubId, setSelectedRoutingSubId] = useState(null);
   const [selectedFeatureListRef, setSelectedFeatureListRef] = useState(null);
+  // Which features-list row the last click framed on the map. Separate from
+  // selectedFeatureListRef, which a mouse hover sets before the click even
+  // lands: "already revealed" cannot tell a first click from a second one,
+  // "already framed" can. A ref, not state — nothing renders from it directly;
+  // it only decides whether a click frames or opens, and keeps the framed row's
+  // actions from being cleared when the pointer leaves.
+  const framedRowRef = useRef(null);
   const [renameRegionTarget, setRenameRegionTarget] = useState(null);
 
   // Offline routing (Android only) — installed graphs + Geofabrik suggestions
@@ -5128,52 +5139,7 @@ export default function Map() {
       skipNextDetailsZoomRef.current = false;
       return;
     }
-    const map = mapRef.current;
-    const pp = getPanelPadding();
-    const coords = [];
-    if (selectedFeature.type === "marker") {
-      const ll = selectedFeature.marker.getLngLat();
-      coords.push([ll.lng, ll.lat]);
-    } else if (selectedFeature.type === "path") {
-      const path = selectedFeature.path;
-      const asLngLat = (ll) => (Array.isArray(ll) ? [ll[0], ll[1]] : [ll.lng, ll.lat]);
-      if (path.snappedSegments && path.snappedSegments.length > 0) {
-        path.snappedSegments.forEach((seg) => seg.coords.forEach((c) => coords.push(asLngLat(c))));
-      } else if (path.vertices) {
-        path.vertices.forEach((v) => coords.push(asLngLat(v.lngLat)));
-      }
-    }
-    if (coords.length === 0) return;
-    const rect = map.getContainer().getBoundingClientRect();
-    const MARGIN = 40;
-    const aroundLL = getUnobstructedCenterLL();
-    const cPx = map.project(aroundLL);
-    const availW = Math.max(20, (rect.width - (pp.left || 0) - (pp.right || 0)) / 2 - MARGIN);
-    const availH = Math.max(20, (rect.height - (pp.top || 0) - (pp.bottom || 0)) / 2 - MARGIN);
-    let ratio = 1;
-    let outside = false;
-    for (const [lng, lat] of coords) {
-      const p = map.project([lng, lat]);
-      const dx = Math.abs(p.x - cPx.x);
-      const dy = Math.abs(p.y - cPx.y);
-      if (dx > availW) { ratio = Math.max(ratio, dx / availW); outside = true; }
-      if (dy > availH) { ratio = Math.max(ratio, dy / availH); outside = true; }
-    }
-    if (outside) {
-      const dz = Math.log2(ratio);
-      const newZoom = Math.max(map.getMinZoom(), map.getZoom() - dz - 0.1);
-      skipNextMoveBumpRef.current = true;
-      // Zoom around the unobstructed-center pixel without touching center or
-      // padding — avoids the low-zoom clamping jolt that a padding change
-      // causes when the world bounds are already in view.
-      map.easeTo({
-        zoom: newZoom,
-        around: aroundLL,
-        duration: 500,
-        bearing: map.getBearing(),
-        pitch: map.getPitch(),
-      });
-    }
+    zoomOutToFitCoords(featureMapCoords(selectedFeature));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedFeature]);
 
@@ -5202,6 +5168,7 @@ export default function Map() {
     }
     if (!showFeaturesList) {
       setSelectedFeatureListRef(null);
+      framedRowRef.current = null;
       setSkipPanelAnim(false);
       // openCollectionId deliberately survives the list closing: it is the
       // active collection, and new markers and paths are filed into it.
@@ -5337,11 +5304,19 @@ export default function Map() {
           featListGlowCleanupRef.current();
           featListGlowCleanupRef.current = null;
         }
+        // The user has moved the map by hand, so whatever a click framed is no
+        // longer what they are looking at: the pin goes with the highlight, and
+        // the next click on that row frames it again rather than opening it.
+        framedRowRef.current = null;
         setSelectedFeatureListRef(null);
       }
       if (selectedFeature) {
         setDetailsActionsOpen(false);
         setDescActionsOpen(false);
+        // Same as the list: a hand-moved map makes a framing stale, so the pin
+        // goes and the sight row's next click frames it again.
+        framedSightRef.current = null;
+        setSightActionsOpen(null);
       }
       if (distSortActive) setMapCenterTick((t) => t + 1);
     };
@@ -5360,7 +5335,10 @@ export default function Map() {
       if (!inHeader) setDetailsActionsOpen(false);
       if (!inDesc) setDescActionsOpen(false);
       if (!inTrace) setTraceActionsOpenId(null);
-      if (!inSight) setSightActionsOpen(null);
+      if (!inSight) {
+        framedSightRef.current = null;
+        setSightActionsOpen(null);
+      }
     };
     document.addEventListener("mousedown", onDocDown);
     document.addEventListener("touchstart", onDocDown);
@@ -5375,6 +5353,7 @@ export default function Map() {
     const onDocDown = (e) => {
       const t = e.target;
       if (!t.closest?.(".panel-list-item")) {
+        framedRowRef.current = null;
         setSelectedFeatureListRef(null);
       }
     };
@@ -7391,6 +7370,104 @@ export default function Map() {
     return [((pp.left || 0) - (pp.right || 0)) / 2, ((pp.top || 0) - (pp.bottom || 0)) / 2];
   };
 
+  const asLngLat = (ll) => (Array.isArray(ll) ? [ll[0], ll[1]] : [ll.lng, ll.lat]);
+
+  // Every coordinate a path occupies on screen: its snapped geometry when it has
+  // one, its own vertices otherwise — the same choice the path line itself makes.
+  const pathMapCoords = (path) => {
+    const out = [];
+    if (path?.snappedSegments && path.snappedSegments.length > 0) {
+      path.snappedSegments.forEach((seg) => seg.coords.forEach((c) => out.push(asLngLat(c))));
+    } else if (path?.vertices) {
+      path.vertices.forEach((v) => out.push(asLngLat(v.lngLat)));
+    }
+    return out;
+  };
+
+  // What the details panel has to keep in view. A sight selects as a marker, so
+  // it needs no case of its own.
+  const featureMapCoords = (feature) => {
+    if (feature?.type === "marker") {
+      const ll = feature.marker.getLngLat();
+      return [[ll.lng, ll.lat]];
+    }
+    if (feature?.type === "path") return pathMapCoords(feature.path);
+    return [];
+  };
+
+  // What a features-list row has to show. A folder has no geometry of its own,
+  // so it stands for its direct features — collectionMembers rather than
+  // subtreeFeatures: the row was clicked to see what is in THIS folder.
+  // Anything not actually drawn is left out, or the camera would pull back to
+  // take in something the user cannot see.
+  const rowMapCoords = (row) => {
+    if (!row?.ref) return [];
+    if (row.type === "collection") {
+      // A hidden folder, or one inside a hidden folder, draws nothing at all.
+      // collectionPath is the whole ancestor chain, so this is the same
+      // cascade applyFeatureVisibility applies to the markers themselves.
+      if (collectionPath(row.ref._id).some((c) => c._hidden)) return [];
+      const { markers, paths } = collectionMembers(row.ref._id);
+      const out = [];
+      for (const m of markers) {
+        if (m._pendingDelete || m._hidden) continue;
+        const ll = m.getLngLat();
+        out.push([ll.lng, ll.lat]);
+      }
+      for (const p of paths) {
+        if (!p.isFinished || p._pendingDelete || p._hidden) continue;
+        out.push(...pathMapCoords(p));
+      }
+      return out;
+    }
+    if (row.type === "path") return pathMapCoords(row.ref);
+    const ll = row.ref.getLngLat();
+    return [[ll.lng, ll.lat]];
+  };
+
+  // Zoom out — only ever out — until every coordinate sits inside the part of
+  // the viewport the panel does not cover. Shared by the details panel opening
+  // and by a list row being clicked, so both frame a feature the same way:
+  // never panning, so the user keeps their bearings, and never zooming in, so
+  // clicking a single marker does not dive at it.
+  const zoomOutToFitCoords = (coords) => {
+    const map = mapRef.current;
+    if (!map || !coords || coords.length === 0) return;
+    const pp = getPanelPadding();
+    const rect = map.getContainer().getBoundingClientRect();
+    const MARGIN = 40;
+    const aroundLL = getUnobstructedCenterLL();
+    const cPx = map.project(aroundLL);
+    const availW = Math.max(20, (rect.width - (pp.left || 0) - (pp.right || 0)) / 2 - MARGIN);
+    const availH = Math.max(20, (rect.height - (pp.top || 0) - (pp.bottom || 0)) / 2 - MARGIN);
+    let ratio = 1;
+    let outside = false;
+    for (const [lng, lat] of coords) {
+      const p = map.project([lng, lat]);
+      const dx = Math.abs(p.x - cPx.x);
+      const dy = Math.abs(p.y - cPx.y);
+      if (dx > availW) { ratio = Math.max(ratio, dx / availW); outside = true; }
+      if (dy > availH) { ratio = Math.max(ratio, dy / availH); outside = true; }
+    }
+    // Only arm the move-bump guard when a move actually follows: it is a
+    // one-shot, and a move that never happens would leave it to swallow the
+    // user's next real pan.
+    if (!outside) return;
+    const dz = Math.log2(ratio);
+    const newZoom = Math.max(map.getMinZoom(), map.getZoom() - dz - 0.1);
+    skipNextMoveBumpRef.current = true;
+    // Zoom around the unobstructed-center pixel without touching center or
+    // padding — avoids the low-zoom clamping jolt that a padding change
+    // causes when the world bounds are already in view.
+    map.easeTo({
+      zoom: newZoom,
+      around: aroundLL,
+      duration: 500,
+      bearing: map.getBearing(),
+      pitch: map.getPitch(),
+    });
+  };
+
   const handleFeatureFlyTo = () => {
     if (!selectedFeature) return;
     const map = mapRef.current;
@@ -7873,6 +7950,9 @@ export default function Map() {
   // scroll position is preserved, and the details panel inherits the current
   // sheet level.
   const openFeatureListItem = (item) => {
+    // The pin has done its job: coming back to this row later starts the
+    // two-step over, framing before it opens anything again.
+    framedRowRef.current = null;
     // Activating a collection means entering it, not opening a details panel.
     if (item.type === "collection") {
       if (featListGlowCleanupRef.current) {
@@ -7900,6 +7980,11 @@ export default function Map() {
   // revealed row also glows its feature on the map, but deliberately moves no
   // camera: a mouse sweeping down the list would otherwise fly the map around.
   const revealFeatureListActions = (item) => {
+    // Pointing at another row hands the actions over, so the pin on the last
+    // clicked row is spent — its next click frames again rather than opening.
+    if (framedRowRef.current && framedRowRef.current !== item.ref) {
+      framedRowRef.current = null;
+    }
     if (selectedFeatureListRef === item.ref) return;
     setSelectedFeatureListRef(item.ref);
     // Clear previous glow
@@ -7960,6 +8045,10 @@ export default function Map() {
 
   const clearFeatureListActions = (item) => {
     if (item && selectedFeatureListRef !== item.ref) return;
+    // A clicked row keeps its actions after the pointer leaves it — that is
+    // what makes them reachable at all, since the click no longer opens the
+    // feature. Hovering another row takes them away instead.
+    if (framedRowRef.current && framedRowRef.current === item?.ref) return;
     setSelectedFeatureListRef(null);
     if (featListGlowCleanupRef.current) {
       featListGlowCleanupRef.current();
@@ -7973,9 +8062,36 @@ export default function Map() {
   // the panel's own glow effect, which lights the revealed sight instead of the
   // whole path, so revealing is nothing more than this state. It needs no timer:
   // the glow lasts exactly as long as the row is revealed.
-  const revealSightRow = (sight) => setSightActionsOpen(sight);
-  const clearSightRow = (sight) =>
+  const revealSightRow = (sight) => {
+    // Pointing at another sight hands the actions over, so the pin on the last
+    // clicked one is spent — the same rule the features list follows.
+    if (framedSightRef.current && framedSightRef.current !== sight) {
+      framedSightRef.current = null;
+    }
+    setSightActionsOpen(sight);
+  };
+  const clearSightRow = (sight) => {
+    // A clicked row keeps its actions after the pointer leaves it.
+    if (framedSightRef.current && framedSightRef.current === sight) return;
     setSightActionsOpen((cur) => (!sight || cur === sight ? null : cur));
+  };
+
+  // A sight row is the same two-step as a features-list row: the first click or
+  // tap frames the sight on the map and leaves the row's actions showing, the
+  // second opens it. Its own pin, for the reason handleRowClick needs one — a
+  // mouse hover has already revealed the row before the click lands.
+  const handleSightRowClick = (sight) => {
+    if (framedSightRef.current !== sight) {
+      revealSightRow(sight);
+      const ll = sight.getLngLat();
+      zoomOutToFitCoords([[ll.lng, ll.lat]]);
+      framedSightRef.current = sight;
+      return;
+    }
+    framedSightRef.current = null;
+    setSightActionsOpen(null);
+    setSelectedFeature({ type: "marker", marker: sight });
+  };
 
   // Touch has no hover, so the first tap on a row reveals its side actions and
   // only a tap on an already revealed row does what a click does. A scroll never
@@ -8019,8 +8135,22 @@ export default function Map() {
     run();
   };
 
+  // Every row is a two-step, whatever the pointer: the first click or tap frames
+  // the row's features on the map and leaves its side actions showing, the
+  // second opens the feature or enters the folder. So you can see where a thing
+  // is before committing to it.
+  //
+  // This cannot gate on consumeRevealTap any more. A mouse hover has already
+  // revealed the row before the click lands, so "is it revealed?" is always
+  // true by then and could never tell a first click from a second — hence a
+  // memory of its own, below.
   const handleRowClick = (row) => {
-    if (consumeRevealTap(selectedFeatureListRef === row.ref, () => revealFeatureListActions(row))) return;
+    if (framedRowRef.current !== row.ref) {
+      revealFeatureListActions(row);          // a no-op when a hover got there first
+      zoomOutToFitCoords(rowMapCoords(row));
+      framedRowRef.current = row.ref;
+      return;
+    }
     openFeatureListItem(row);
   };
 
@@ -11151,6 +11281,8 @@ export default function Map() {
             featListGlowCleanupRef.current();
             featListGlowCleanupRef.current = null;
           }
+          // The pinned row belongs to the level being left.
+          framedRowRef.current = null;
           setSelectedFeatureListRef(null);
           setOpenCollectionId(id);
         };
@@ -12136,14 +12268,7 @@ export default function Map() {
                       onPointerEnter={(e) => { if (e.pointerType === "mouse") revealSightRow(sight); }}
                       onPointerLeave={(e) => { if (e.pointerType === "mouse") clearSightRow(sight); }}
                       onPointerDown={noteRowPointer}
-                      onClick={() => {
-                        // Exactly a features-list row: a mouse click opens, and
-                        // on touch the first tap reveals (and glows) while the
-                        // second opens.
-                        if (consumeRevealTap(sightActionsOpen === sight, () => revealSightRow(sight))) return;
-                        clearSightRow();
-                        setSelectedFeature({ type: "marker", marker: sight });
-                      }}
+                      onClick={() => handleSightRowClick(sight)}
                       onContextMenu={(e) => e.preventDefault()}
                     >
                       <IonIcon
@@ -12187,7 +12312,12 @@ export default function Map() {
                           </ActionIconButton>
                           <ActionIconButton
                             label="Delete sight"
-                            onClick={(e) => { e.stopPropagation(); clearSightRow(); queueDelete(sight, "sight"); }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              framedSightRef.current = null;
+                              clearSightRow();
+                              queueDelete(sight, "sight");
+                            }}
                           >
                             <IonIcon icon={trashOutline} />
                           </ActionIconButton>

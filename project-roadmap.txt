@@ -4,8 +4,9 @@ FEATURE COLLECTIONS - review with feature list panel and feature detail panel
     - side actions on folders: rename, duplicate, show/hide, delete
     - remember sort after reopening feature list
     - remember the feature collection that is opened, when adding marker or creating path save at the opened feature collection
-    - row interaction: same as feature rows: mouse over / first tap reveals the side actions,
-      click or second tap opens the collection; the icon is part of the row and opens nothing by itself
+    - row interaction: same as feature rows: mouse over reveals the side actions; the first click or
+      tap frames the folder's DIRECT features on the map and keeps its side actions showing, the
+      second one enters the folder; the icon is part of the row and opens nothing by itself
     - duplicate on a folder copies the folder, its sub-folders and all of their contents; the copy is
       a sibling of the original and the copies keep their own names inside the new folders
     - back affordance: the sticky ← <name> row at the top of the list is clickable and leaves the
@@ -228,10 +229,13 @@ FEATURE DETAIL PANEL
 - a path lists its sights above everything else, indented as the feature list indents a nested row -
   ion-icon name="pin-outline", name, coordinates; a hidden sight shows the eye-off mark.
   The path's detail panel is the only place sights are listed. One thing glows at a time: an open
-  path glows only itself (its line and vertices, not its sights), and mouse over / first tap on a
-  sight row reveals its side actions and glows that sight alone, with no camera move - leaving the
-  row hands the glow back to the path;
-  click or second tap opens the sight
+  path glows only itself (its line and vertices, not its sights), and mouse over on a sight row
+  reveals its side actions and glows that sight alone, moving no camera - leaving the row hands the
+  glow back to the path
+- a sight row is the same two-step as a features-list row: the first click or tap frames that sight
+  on the map (zoom out only) and leaves its side actions showing, the second opens the sight. The
+  pin is handed over when the other sight row is pointed at, and dropped when the user moves the map
+  by hand or taps outside the row
 - below the description the list of tracing records, one row per completed tracing (no icon):
   the record name and below it the date, start time - finish time, duration; times are 24h and
   the date shows below only when the record has been renamed, otherwise it is already the name
@@ -269,10 +273,19 @@ FEATURES LIST PANEL
   toggle still governs whether they show on the map
 - a hidden feature shows ion-icon name="eye-off-outline" at the end of its row,
   in the slot the save icon used to use; it is only a mark, unhiding is the row's side action
-- side actions icons showing on mouseover / first tap and the feature glows on the map (no camera move)
-- left click / second tap on the feature opens the feature details panel (zooming out there if it falls in the obstructed area);
-  on touch devices there is no long press on rows - the first tap reveals, the second tap opens, and
-  on rows that open nothing (detail header, description, tracing record) the second tap hides the actions again
+- side actions icons showing on mouseover and the feature glows on the map; hovering moves no camera,
+  so running the mouse down the list does not fly the map around
+- every row is a two-step, mouse and touch alike: the FIRST click / tap frames the row's features on
+  the map and leaves its side actions showing (they stay when the pointer leaves, so they can be
+  reached), the SECOND opens the feature details panel or enters the folder
+- framing only ever zooms OUT, until everything the row stands for clears the panel: it never pans,
+  so the user keeps their bearings, and never zooms in, so a single marker is not dived at. A row
+  whose features are already in view moves the camera not at all
+- the pin on the framed row is handed over as soon as another row is pointed at, and dropped when the
+  user moves the map by hand, when the list leaves that level, or on a click outside the list - after
+  any of those the row frames again rather than opening
+- on touch devices there is no long press on rows, and on rows that open nothing (detail header,
+  description, tracing record) the second tap hides the actions again
 - when feature detail panel closes then feature list panel reopens (in same height level and same collection) 
 - when user click on feature while feature list is opened then closing feature detail panel it will reopen feature list
 
