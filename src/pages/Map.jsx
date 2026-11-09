@@ -4649,6 +4649,26 @@ export default function Map() {
     for (const c of collectionsRef.current) resolveHidden(c, new Set());
     const inHiddenCollection = (f) =>
       !!f?._collectionId && hiddenCollectionIds.has(f._collectionId);
+
+    // The map shows what the list shows: the features filed directly in the
+    // folder the list is drilled into, root meaning "in no folder at all". The
+    // same strict equality the list's own inScope uses, so the two can never
+    // disagree — and it follows the active folder, which outlives the list
+    // panel, rather than whether the panel happens to be open.
+    const scopeId = openCollectionIdRef.current ?? null;
+    const outOfScope = (f) => (f?._collectionId ?? null) !== scopeId;
+    // Three things are drawn whatever the scope says. The feature whose panel is
+    // open: the drill effect only ever drills in, so opening a root feature from
+    // the map while a folder is open would otherwise hide the very thing being
+    // looked at. And a path still being drawn or recorded, or carrying a live
+    // route — none of those are in the list either, and blanking what the user
+    // is in the middle of would be far worse than showing one thing too many.
+    const shown = selectedFeatureRef.current;
+    const shownFeature = shown?.type === "path" ? shown.path : shown?.marker || null;
+    const exemptPath = (p) =>
+      !p.isFinished || !!p.isRoute || p === shownFeature || p === shownFeature?._sightPath;
+    const exemptMarker = (m) =>
+      m === shownFeature || (!!m._sightPath && exemptPath(m._sightPath));
     for (const m of markersRef.current) {
       const isSight = !!m._sightPath;
       const typeAllowed = isSight ? (filter.sights && filter.paths) : filter.markers;
@@ -4658,13 +4678,15 @@ export default function Map() {
         || !!m._hidden
         || !!m._pendingDelete
         || inHiddenCollection(owner)
+        || (outOfScope(owner) && !exemptMarker(m))
         || (isSight && (!!m._sightPath._hidden || !!m._sightPath._pendingDelete));
       const el = m.getElement();
       if (el) el.style.display = hidden ? "none" : "";
     }
     for (const p of pathsRef.current) {
       const hidden = !filter.paths || !!p._hidden || !!p._pendingDelete
-        || inHiddenCollection(p);
+        || inHiddenCollection(p)
+        || (outOfScope(p) && !exemptPath(p));
       const vis = hidden ? "none" : "visible";
       if (map.getLayer(p.layerId)) map.setLayoutProperty(p.layerId, "visibility", vis);
       if (map.getLayer(`${p.layerId}-hit`)) map.setLayoutProperty(`${p.layerId}-hit`, "visibility", vis);
@@ -5140,13 +5162,21 @@ export default function Map() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedFeature]);
 
-  // Close the feature detail panel whenever a context menu or the side menu opens
+  // Close the feature detail panel whenever a context menu or the side menu
+  // opens — each of those is the user asking for something else.
+  //
+  // The features list is the one exception, and only for the map's own
+  // right-click / long-press menu: adding a marker or starting a path there is
+  // usually the next thing after browsing the list, and it files into whichever
+  // folder the list is showing, so throwing the list away mid-task would lose
+  // both the user's place and the visible reason the new feature lands where it
+  // does. The side menu and a marker's own menu still close it.
   useEffect(() => {
     if (markerMenu || mapClickMenu || isSideMenuOpen) {
       setSelectedFeature(null);
-      setOpenFeaturesList(false);
       setShowOfflineMapsPanel(false);
     }
+    if (markerMenu || isSideMenuOpen) setOpenFeaturesList(false);
   }, [markerMenu, mapClickMenu, isSideMenuOpen]);
 
   // Track where the feature details panel was opened from so the close icon
@@ -5186,7 +5216,10 @@ export default function Map() {
   useEffect(() => {
     featListFilterRef.current = featListFilter;
     applyFeatureVisibility();
-  }, [featListFilter, featuresVersion, applyFeatureVisibility]);
+    // openCollectionId and selectedFeature are both read through refs inside,
+    // so they have to be listed here or the map would keep drawing the level
+    // the user has just left, or hide the feature they have just opened.
+  }, [featListFilter, featuresVersion, openCollectionId, selectedFeature, applyFeatureVisibility]);
 
   // Clear routing sub-selection when the offline panel closes.
   useEffect(() => {
@@ -6324,6 +6357,12 @@ export default function Map() {
       if (collection) feature._collectionId = collection._id;
       if (!feature._id) feature._id = generateFeatureId();
     }
+    // The list follows the import into its folder. The map only draws the
+    // folder it is standing in, and an import always files itself in a fresh
+    // root folder — so without this the features would land out of sight,
+    // whether the user was inside another folder or at the root, and the toast
+    // would be announcing something invisible.
+    if (collection) setOpenCollectionId(collection._id);
     if (hydrationDoneRef.current) persistSavedFeaturesRef.current?.();
     bumpFeaturesVersion();
     // Drop the import params now that the features are stored, or a reload
@@ -7389,24 +7428,10 @@ export default function Map() {
   // take in something the user cannot see.
   const rowMapCoords = (row) => {
     if (!row?.ref) return [];
-    if (row.type === "collection") {
-      // A hidden folder, or one inside a hidden folder, draws nothing at all.
-      // collectionPath is the whole ancestor chain, so this is the same
-      // cascade applyFeatureVisibility applies to the markers themselves.
-      if (collectionPath(row.ref._id).some((c) => c._hidden)) return [];
-      const { markers, paths } = collectionMembers(row.ref._id);
-      const out = [];
-      for (const m of markers) {
-        if (m._pendingDelete || m._hidden) continue;
-        const ll = m.getLngLat();
-        out.push([ll.lng, ll.lat]);
-      }
-      for (const p of paths) {
-        if (!p.isFinished || p._pendingDelete || p._hidden) continue;
-        out.push(...pathMapCoords(p));
-      }
-      return out;
-    }
+    // A folder frames nothing: its contents are not on the map while the list
+    // is outside it, so there is nothing to bring into view — and the camera
+    // staying put is what makes running the pointer over folders quiet.
+    if (row.type === "collection") return [];
     if (row.type === "path") return pathMapCoords(row.ref);
     const ll = row.ref.getLngLat();
     return [[ll.lng, ll.lat]];

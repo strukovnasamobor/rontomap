@@ -4,10 +4,10 @@ FEATURE COLLECTIONS - review with feature list panel and feature detail panel
     - side actions on folders: rename, duplicate, show/hide, delete
     - remember sort after reopening feature list
     - remember the feature collection that is opened, when adding marker or creating path save at the opened feature collection
-    - row interaction: same as feature rows: mouse over reveals the side actions and, once the
-      pointer settles, frames the folder's DIRECT features on the map; the first click enters the
-      folder. On touch the first tap reveals and frames, the second enters. The icon is part of
-      the row and opens nothing by itself
+    - row interaction: same as feature rows except that a folder row moves no camera - its contents
+      are not on the map while the list is outside it, so there is nothing to bring into view:
+      mouse over reveals the side actions, the first click enters the folder; on touch the first
+      tap reveals and the second enters. The icon is part of the row and opens nothing by itself
     - duplicate on a folder copies the folder, its sub-folders and all of their contents; the copy is
       a sibling of the original and the copies keep their own names inside the new folders
     - back affordance: the sticky ← <name> row at the top of the list is clickable and leaves the
@@ -98,6 +98,10 @@ UI DESIGN & INTERACTIONS
 - in embedded, features show no hover cursor, unless &interact=true (then alias on markers and finished paths)
 - double left mouse click / double tap => fullscreen enter/exit
 - right mouse click / long tap on map => context menu opens (in embedded disabled)
+    - it closes the feature detail panel and the offline maps panel, but NOT the feature list:
+      adding a marker or creating a path from here is usually the next thing after browsing the
+      list, and it files into whichever folder the list is showing, so the list keeps the user's
+      place and shows the new feature arriving. The side menu and a marker's own menu do close it
     - Center here
     - Navigate here
     - Fly here
@@ -277,10 +281,19 @@ FEATURES LIST PANEL
   still governs whether they show on the map
 - a hidden feature shows ion-icon name="eye-off-outline" at the end of its row,
   in the slot the save icon used to use; it is only a mark, unhiding is the row's side action
+- the map shows only what the list shows: the features filed DIRECTLY in the folder the list is
+  drilled into, root meaning "in no folder at all" - so entering a folder is a way to look at it
+  alone, and a sub-folder's contents stay off the map until you enter that too. A sight follows its
+  path. It tracks the active folder, which outlives the list panel, so closing the list does not
+  bring everything back; stepping out to the root does
+- three things are drawn whatever the folder says: the feature whose detail panel is open (so
+  opening one from the map cannot hide it), a path still being drawn or recorded, and a live
+  navigation/tracing route. An import drills the list into its own folder, so what just arrived is
+  never out of sight
 - mouse over a row reveals its side actions and glows the feature on the map at once, and once the
   pointer has rested on it (~250ms) frames it - the delay is what keeps a pointer sweeping down the
   list from dragging the camera through every row it crosses; leaving the row before it settles
-  frames nothing, and takes the actions and the glow with it
+  frames nothing, and takes the actions and the glow with it. A FOLDER row never frames anything
 - the first click then opens the feature details panel or enters the folder. On touch there is no
   hover, so the first tap stands in for it - revealing, glowing and framing at once, with no delay -
   and the second tap opens
