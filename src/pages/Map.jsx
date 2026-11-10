@@ -8329,37 +8329,38 @@ export default function Map() {
     }
   };
 
-  // A newly added feature is written straight away. No undo toast here: the
-  // details panel opens on top of it and carries the delete action, better
-  // placed than a toast the panel would sit over.
-  const saveNewFeature = (feature) => {
-    if (!feature._id) feature._id = generateFeatureId();
+  // A newly added marker is written straight away and announced the way a new
+  // path is — "Marker created." with Undo — since most of the time no panel
+  // opens on it. `restore` is the details the new marker took over, which Undo
+  // hands the panel back to.
+  const saveNewMarker = (m, restore = null) => {
+    if (!m._id) m._id = generateFeatureId();
     persistSavedFeatures();
     bumpFeaturesVersion();
+    queueCreateUndo({ markers: [m], text: "Marker created.", restore });
   };
 
+  // Same rule as a new path: an open list stays put, the marker showing up in
+  // it; open details switch to the new marker in place; with no panel open the
+  // marker's details open. The selectedFeature effect handles drag enable.
   const handleAddMarkerHere = () => {
     const m = createMarkerRef.current(mapClickMenu.lngLat);
     fileInActiveCollection(m);
-    saveNewFeature(m);
+    saveNewMarker(m, selectedFeature);
     setMapClickMenu(null);
-    // Auto-open the detail panel; the selectedFeature effect handles drag enable.
-    // An already open panel switches to it in place, at its current height.
-    if (selectedFeature || showFeaturesList) {
-      setSkipPanelAnim(true);
-    } else {
-      setSheetLevel(preferredSheetLevel.current);
-    }
+    if (showFeaturesList && !selectedFeature) return;
+    if (!selectedFeature) setSheetLevel(preferredSheetLevel.current);
     setSelectedFeature({ type: "marker", marker: m });
   };
 
+  // The side menu has already closed any panel, so the details always open.
   const handleAddMarkerAtCenter = () => {
     const map = mapRef.current;
     if (!map) return;
     const center = map.getCenter();
     const m = createMarkerRef.current(center);
     fileInActiveCollection(m);
-    saveNewFeature(m);
+    saveNewMarker(m);
     setIsSideMenuOpen(false);
     setSelectedFeature({ type: "marker", marker: m });
     setSheetLevel(preferredSheetLevel.current);
@@ -8896,12 +8897,15 @@ export default function Map() {
         if (!path._id) path._id = generateFeatureId();
         persistSavedFeatures();
         bumpFeaturesVersion();
-        queueCreateUndo({ paths: [path], text: "Path created." });
-        // A panel left open while drawing switches to the new path, in place.
-        // Read through refs: finishing can also come from a map handler. The
-        // camera stays — the user is looking at what they just drew.
-        if (selectedFeatureRef.current || showFeaturesListRef.current) {
-          setSkipPanelAnim(true);
+        // Undo hands details taken over below back to what they showed.
+        queueCreateUndo({ paths: [path], text: "Path created.", restore: selectedFeatureRef.current });
+        // An open list stays put, the path showing up in it; details left open
+        // while drawing switch to the new path in place; with no panel open
+        // the path's details open. Read through refs: finishing can also come
+        // from a map handler. The camera stays — the user is looking at what
+        // they just drew.
+        if (selectedFeatureRef.current || !showFeaturesListRef.current) {
+          if (!selectedFeatureRef.current) setSheetLevel(preferredSheetLevel.current);
           skipNextDetailsZoomRef.current = true;
           setSelectedFeature({ type: "path", path });
         }
