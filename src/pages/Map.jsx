@@ -715,7 +715,6 @@ export default function Map() {
   const [mapCenterTick, setMapCenterTick] = useState(0);
   const [featuresVersion, setFeaturesVersion] = useState(0);
   const bumpFeaturesVersion = useCallback(() => setFeaturesVersion((v) => v + 1), []);
-  const [detailsOrigin, setDetailsOrigin] = useState(null);
   // Action icons inside the details header row start hidden; revealed on hover
   // or on the first tap — mirrors the feature-list row pattern.
   const [hoveredOfflineRowId, setHoveredOfflineRowId] = useState(null);
@@ -1098,33 +1097,50 @@ export default function Map() {
     document.body.appendChild(probe);
     const safeBottom = probe.getBoundingClientRect().height;
     probe.remove();
-    const bottomLimit = vh - safeBottom - PAD;
-    const menuTop = rect.top; // top of menu after default translate(-50%, 8px)
-    const spaceBelow = bottomLimit - menuTop;
-    const clickY = menuTop - 8; // undo the 8px offset to get click point
-    const spaceAbove = clickY - PAD;
+    let bottomLimit = vh - safeBottom - PAD;
+    let leftLimit = PAD;
+    // An open panel is an edge too: the bottom sheet's top in portrait, the
+    // sidebar's right side in landscape. The ref can briefly point at a panel
+    // that has just unmounted, hence the connected/size check.
+    const panel = featurePanelRef.current;
+    if (panel?.isConnected) {
+      const pr = panel.getBoundingClientRect();
+      if (pr.width > 0 && pr.height > 0) {
+        if (window.matchMedia("(orientation: portrait)").matches) {
+          bottomLimit = Math.min(bottomLimit, pr.top - PAD);
+        } else {
+          leftLimit = Math.max(leftLimit, pr.right + PAD);
+        }
+      }
+    }
+    const clickY = rect.top - 8; // undo the default translate(-50%, 8px) offset
+    // A click on the panel itself anchors the menu at the panel's edge.
+    const anchorY = Math.min(clickY, bottomLimit);
+    const dy = anchorY - clickY;
+    const spaceBelow = bottomLimit - (anchorY + 8);
+    const spaceAbove = anchorY - PAD;
 
     // Vertical: flip above if not enough space below
-    let translateY = "8px";
+    let translateY = `${8 + dy}px`;
     if (rect.height > spaceBelow) {
       if (spaceAbove > spaceBelow && spaceAbove >= 80) {
-        translateY = "calc(-100% - 8px)";
+        translateY = `calc(-100% - ${8 - dy}px)`;
         if (rect.height > spaceAbove) el.style.maxHeight = `${spaceAbove}px`;
       } else {
         el.style.maxHeight = `${Math.max(spaceBelow, 80)}px`;
       }
     }
 
-    // Horizontal: shift left if menu extends past right edge
+    // Horizontal: shift away from whichever side the menu crosses
     let translateX = "-50%";
     const menuLeft = rect.left;
     const menuRight = rect.right;
-    if (menuRight > vw - PAD) {
+    if (menuLeft < leftLimit) {
+      const shift = leftLimit - menuLeft;
+      translateX = `calc(-50% + ${shift}px)`;
+    } else if (menuRight > vw - PAD) {
       const shift = menuRight - (vw - PAD);
       translateX = `calc(-50% - ${shift}px)`;
-    } else if (menuLeft < PAD) {
-      const shift = PAD - menuLeft;
-      translateX = `calc(-50% + ${shift}px)`;
     }
 
     el.style.transform = `translate(${translateX}, ${translateY})`;
@@ -1498,7 +1514,6 @@ export default function Map() {
           markerClickTimer = null;
           if (showFeaturesListRef.current) {
             setSkipPanelAnim(true);
-            setDetailsOrigin("list");
           }
           skipNextDetailsZoomRef.current = true;
           setSelectedFeature({ type: "marker", marker });
@@ -2382,7 +2397,6 @@ export default function Map() {
             }, 400);
             if (showFeaturesListRef.current) {
               setSkipPanelAnim(true);
-              setDetailsOrigin("list");
             }
             skipNextDetailsZoomRef.current = true;
             setSelectedFeature({ type: "path", path });
@@ -3721,7 +3735,6 @@ export default function Map() {
           if (hitPath) {
             if (showFeaturesListRef.current) {
               setSkipPanelAnim(true);
-              setDetailsOrigin("list");
             }
             skipNextDetailsZoomRef.current = true;
             setSelectedFeature({ type: "path", path: hitPath });
@@ -3729,15 +3742,11 @@ export default function Map() {
             return;
           }
           // Empty-map click:
-          //  1. Details panel open → close it.
-          //  2. Features list open → close it.
-          //  3. Offline maps panel open → close it.
-          //  4. Nothing open → open the list, keeping the sort the user chose.
-          if (selectedFeatureRef.current) {
+          //  1. Feature panel open (list or details view) → close it.
+          //  2. Offline maps panel open → close it.
+          //  3. Nothing open → open the list, keeping the sort the user chose.
+          if (selectedFeatureRef.current || showFeaturesListRef.current) {
             setSelectedFeature(null);
-            return;
-          }
-          if (showFeaturesListRef.current) {
             setOpenFeaturesList(false);
             return;
           }
@@ -5162,30 +5171,21 @@ export default function Map() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedFeature]);
 
-  // Close the feature detail panel whenever a context menu or the side menu
-  // opens — each of those is the user asking for something else.
+  // Close the panels whenever a context menu or the side menu opens — each of
+  // those is the user asking for something else.
   //
-  // The features list is the one exception, and only for the map's own
-  // right-click / long-press menu: adding a marker or starting a path there is
-  // usually the next thing after browsing the list, and it files into whichever
-  // folder the list is showing, so throwing the list away mid-task would lose
-  // both the user's place and the visible reason the new feature lands where it
-  // does. The side menu and a marker's own menu still close it.
+  // The feature panel (list or details) is the one exception, and only for the
+  // map's own right-click / long-press menu: adding a marker or starting a path
+  // there is usually the next thing after browsing, and it files into whichever
+  // folder the list is showing, so the panel stays and simply switches to the
+  // new feature's details. The side menu and a marker's own menu still close it.
   useEffect(() => {
-    if (markerMenu || mapClickMenu || isSideMenuOpen) {
+    if (markerMenu || mapClickMenu || isSideMenuOpen) setShowOfflineMapsPanel(false);
+    if (markerMenu || isSideMenuOpen) {
       setSelectedFeature(null);
-      setShowOfflineMapsPanel(false);
+      setOpenFeaturesList(false);
     }
-    if (markerMenu || isSideMenuOpen) setOpenFeaturesList(false);
   }, [markerMenu, mapClickMenu, isSideMenuOpen]);
-
-  // Track where the feature details panel was opened from so the close icon
-  // can switch between "Back to list" and "Close". When details opens without
-  // an explicit origin (e.g. from a map click), default to "map".
-  useEffect(() => {
-    if (selectedFeature && !detailsOrigin) setDetailsOrigin("map");
-    if (!selectedFeature && detailsOrigin) setDetailsOrigin(null);
-  }, [selectedFeature, detailsOrigin]);
 
   // Clean up feature list glow when list closes
   useEffect(() => {
@@ -7707,11 +7707,10 @@ export default function Map() {
   const handleFeatureTrace = (pathArg) => {
     const path = pathArg ?? (selectedFeature?.type === "path" ? selectedFeature.path : null);
     if (!path || path.vertices.length < 2) return;
-    // The trace takes over the map: both panels go, and the details panel must
-    // not hand back to the list on its way out — same as entering path editing.
+    // The trace takes over the map, so the panel goes — same as entering path
+    // editing.
     setSelectedFeature(null);
     setOpenFeaturesList(false);
-    setDetailsOrigin(null);
     // A trace keeps the path's own snapping — a free-drawn path is traced free.
     confirmTracePath(path.roadSnap ?? null, path);
   };
@@ -7976,7 +7975,6 @@ export default function Map() {
       scrollTop: listScrollRef.current?.scrollTop || 0,
     };
     setSkipPanelAnim(true);
-    setDetailsOrigin("list");
     if (item.type === "path") {
       setSelectedFeature({ type: "path", path: item.ref });
     } else {
@@ -8172,10 +8170,15 @@ export default function Map() {
   };
 
   // Bottom sheet drag handlers (portrait + desktop mouse)
+  // The features list and a feature's details are one panel showing two views,
+  // so closing either view closes the panel.
+  const closeFeaturePanel = () => {
+    setSelectedFeature(null);
+    setOpenFeaturesList(false);
+  };
   const dismissPanel = () => {
     if (showOfflineMapsPanel) setShowOfflineMapsPanel(false);
-    else if (showFeaturesList) setOpenFeaturesList(false);
-    else setSelectedFeature(null);
+    else closeFeaturePanel();
   };
   const getSheetPeekHeight = () => Math.round(window.innerHeight * 0.25);
 
@@ -8341,8 +8344,13 @@ export default function Map() {
     saveNewFeature(m);
     setMapClickMenu(null);
     // Auto-open the detail panel; the selectedFeature effect handles drag enable.
+    // An already open panel switches to it in place, at its current height.
+    if (selectedFeature || showFeaturesList) {
+      setSkipPanelAnim(true);
+    } else {
+      setSheetLevel(preferredSheetLevel.current);
+    }
     setSelectedFeature({ type: "marker", marker: m });
-    setSheetLevel(preferredSheetLevel.current);
   };
 
   const handleAddMarkerAtCenter = () => {
@@ -8889,6 +8897,14 @@ export default function Map() {
         persistSavedFeatures();
         bumpFeaturesVersion();
         queueCreateUndo({ paths: [path], text: "Path created." });
+        // A panel left open while drawing switches to the new path, in place.
+        // Read through refs: finishing can also come from a map handler. The
+        // camera stays — the user is looking at what they just drew.
+        if (selectedFeatureRef.current || showFeaturesListRef.current) {
+          setSkipPanelAnim(true);
+          skipNextDetailsZoomRef.current = true;
+          setSelectedFeature({ type: "path", path });
+        }
       }
     }
   };
@@ -8964,7 +8980,6 @@ export default function Map() {
     }
     setSelectedFeature(null);
     setOpenFeaturesList(false);
-    setDetailsOrigin(null);
     // The camera stays where it is: editing starts from whatever the user is
     // already looking at, so no fitBounds on the path here.
     pathUndoStackRef.current = [];
@@ -11372,7 +11387,7 @@ export default function Map() {
               <ActionIconButton label={featListFilter.hidden ? "Hide hidden features" : "Show hidden features"} onClick={() => setFeatListFilter((f) => ({ ...f, hidden: !f.hidden }))}>
                 <IonIcon icon={eyeOffOutline} style={featListFilter.hidden ? undefined : { opacity: 0.3 }} />
               </ActionIconButton>
-              <ActionIconButton label="Close" onClick={() => setOpenFeaturesList(false)}>
+              <ActionIconButton label="Close" onClick={closeFeaturePanel}>
                 <IonIcon icon={closeOutline} />
               </ActionIconButton>
             </div>
@@ -12086,30 +12101,7 @@ export default function Map() {
                     <ActionIconButton label={`Export ${featureNoun}`} onClick={handleFeatureExport}>
                       <IonIcon icon={downloadOutline} />
                     </ActionIconButton>
-                    <ActionIconButton
-                      label="Close"
-                      onClick={() => {
-                        if (detailsOrigin === "list") {
-                          const restore = listRestoreRef.current;
-                          setSkipPanelAnim(true);
-                          setSelectedFeature(null);
-                          setDetailsOrigin(null);
-                          setOpenFeaturesList(true);
-                          // Keep the current sheetLevel so expanding the
-                          // details panel carries over when the list returns.
-                          if (restore) {
-                            requestAnimationFrame(() => {
-                              if (listScrollRef.current && restore.scrollTop != null) {
-                                listScrollRef.current.scrollTop = restore.scrollTop;
-                              }
-                            });
-                          }
-                        } else {
-                          setSelectedFeature(null);
-                          setDetailsOrigin(null);
-                        }
-                      }}
-                    >
+                    <ActionIconButton label="Close" onClick={closeFeaturePanel}>
                       <IonIcon icon={closeOutline} />
                     </ActionIconButton>
                   </div>
@@ -12124,12 +12116,20 @@ export default function Map() {
               // A sight has no collection of its own — it lives wherever its
               // path lives, so the trail shown is the path's.
               const owner = isPathFeature ? selectedFeature.path : sightPath || crumbMarker;
+              // Back to the list view of the same panel. Returning to the level
+              // the list was left at puts it back where it was scrolled; any
+              // other level starts at the top anyway.
               const openList = (collectionId) => {
+                const restore = collectionId === openCollectionId ? listRestoreRef.current : null;
                 setSkipPanelAnim(true);
                 setSelectedFeature(null);
-                setDetailsOrigin(null);
                 setOpenCollectionId(collectionId);
                 setOpenFeaturesList(true);
+                if (restore?.scrollTop != null) {
+                  requestAnimationFrame(() => {
+                    if (listScrollRef.current) listScrollRef.current.scrollTop = restore.scrollTop;
+                  });
+                }
               };
               const segments = [
                 { icon: folderOpenOutline, label: "$root", onClick: () => openList(null) },
