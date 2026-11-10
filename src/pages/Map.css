@@ -994,8 +994,7 @@ textarea.rename-modal-input {
 }
 
 .panel-details-hidden .panel-list-item-header .panel-list-text,
-.panel-details-hidden .panel-list-item-header .panel-list-icon,
-.panel-details-hidden .panel-description {
+.panel-details-hidden .panel-list-item-header .panel-list-icon {
   opacity: 0.4;
 }
 

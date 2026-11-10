@@ -27,6 +27,8 @@ import {
   radioOutline,
   chevronUpOutline,
   chevronDownOutline,
+  chevronForwardOutline,
+  chevronBackOutline,
   locationOutline,
   pinOutline,
   analyticsOutline,
@@ -725,10 +727,6 @@ export default function Map() {
   // Which sight row in a path's detail panel has its actions revealed. Held by
   // marker object, not index: deleting a sight shifts every index after it.
   const [sightActionsOpen, setSightActionsOpen] = useState(null);
-  // Whether an open path is listing its sights. Collapsed on arrival, toggled
-  // by clicking the path's own row in the panel — so the panel opens showing
-  // what the path IS, and its contents are one click away.
-  const [sightsOpen, setSightsOpen] = useState(false);
   // The path whose whole tracing history is about to be dropped, pending confirm.
   const [deleteTracesAlert, setDeleteTracesAlert] = useState(null);
   const listRestoreRef = useRef(null);
@@ -5092,11 +5090,12 @@ export default function Map() {
     if (selectedFeature.type === "path") {
       const path = selectedFeature.path;
       const layerId = path.layerId;
-      // One thing glows at a time. An open path glows itself — its line and its
-      // vertices — and not the sights hanging off it; pointing at one of its
-      // sight rows glows that sight instead, and nothing of the path. Dragging
-      // is untouched by this: only the glow moves.
+      // An open path glows whole — its line, its vertices and its sights.
+      // Pointing at one of its sight rows narrows that to the sight alone, and
+      // pointing at the path's own row to the path alone, without its sights.
+      // Dragging is untouched by this: only the glow moves.
       const solo = path.sights?.includes(sightActionsOpen) ? sightActionsOpen : null;
+      const pathOnly = !solo && detailsActionsOpen;
       if (!solo && map.getLayer(layerId)) {
         map.setPaintProperty(layerId, "line-width", 6);
         map.setPaintProperty(layerId, "line-opacity", 0.8);
@@ -5112,7 +5111,7 @@ export default function Map() {
       if (path.sights) {
         path.sights.forEach((m) => {
           const el = m.getElement();
-          if (solo === m) {
+          if (solo ? solo === m : !pathOnly) {
             el.classList.add("feature-glow");
             glowEls.push(el);
           }
@@ -5132,7 +5131,7 @@ export default function Map() {
         restoreDrag.forEach((m) => m.setDraggable(false));
       };
     }
-  }, [selectedFeature, sightActionsOpen]);
+  }, [selectedFeature, sightActionsOpen, detailsActionsOpen]);
 
   // Opening a feature that lives in a collection drills the list into that
   // collection, so the list behind the details panel shows the feature where it
@@ -5158,9 +5157,6 @@ export default function Map() {
   useEffect(() => {
     setDetailsActionsOpen(false);
     setDescActionsOpen(false);
-    // Each path is arrived at collapsed, including the next one opened from
-    // this panel's own breadcrumb.
-    setSightsOpen(false);
     setSightActionsOpen(null);
     if (!selectedFeature || !mapRef.current) return;
     if (skipNextDetailsZoomRef.current) {
@@ -7974,6 +7970,14 @@ export default function Map() {
     listRestoreRef.current = {
       scrollTop: listScrollRef.current?.scrollTop || 0,
     };
+    // The details panel's own glow takes over from the row's. Left running, the
+    // row glow's auto-clear would later strip the very classes and line width
+    // the details glow had just put on the same feature.
+    if (featListGlowCleanupRef.current) {
+      featListGlowCleanupRef.current();
+      featListGlowCleanupRef.current = null;
+    }
+    setSelectedFeatureListRef(null);
     setSkipPanelAnim(true);
     if (item.type === "path") {
       setSelectedFeature({ type: "path", path: item.ref });
@@ -8110,6 +8114,11 @@ export default function Map() {
   // the second opens.
   const handleSightRowClick = (sight) => {
     if (consumeRevealTap(sightActionsOpen === sight, () => revealSightRow(sight, 0))) return;
+    openSightRow(sight);
+  };
+
+  // Shared by the row click and the row's own Open action.
+  const openSightRow = (sight) => {
     cancelPendingFrame();
     setSightActionsOpen(null);
     setSelectedFeature({ type: "marker", marker: sight });
@@ -8175,6 +8184,35 @@ export default function Map() {
   const closeFeaturePanel = () => {
     setSelectedFeature(null);
     setOpenFeaturesList(false);
+  };
+  // From details back to the list view of the same panel. Returning to the
+  // level the list was left at puts it back where it was scrolled; any other
+  // level starts at the top anyway.
+  const openListAt = (collectionId) => {
+    const restore = collectionId === openCollectionId ? listRestoreRef.current : null;
+    setSkipPanelAnim(true);
+    setSelectedFeature(null);
+    setOpenCollectionId(collectionId);
+    setOpenFeaturesList(true);
+    if (restore?.scrollTop != null) {
+      requestAnimationFrame(() => {
+        if (listScrollRef.current) listScrollRef.current.scrollTop = restore.scrollTop;
+      });
+    }
+  };
+  // One step up from the open details, the same step the breadcrumb's last link
+  // takes: a sight goes back to its path, anything else to the collection it
+  // is filed in (the root when that is gone).
+  const handleDetailsBack = () => {
+    if (!selectedFeature) return;
+    const sightPath = selectedFeature.type === "marker" ? selectedFeature.marker._sightPath : null;
+    if (sightPath) {
+      setSelectedFeature({ type: "path", path: sightPath });
+      return;
+    }
+    const target = selectedFeature.type === "path" ? selectedFeature.path : selectedFeature.marker;
+    const id = target?._collectionId;
+    openListAt(id && collectionsRef.current.some((c) => c._id === id) ? id : null);
   };
   const dismissPanel = () => {
     if (showOfflineMapsPanel) setShowOfflineMapsPanel(false);
@@ -11447,7 +11485,9 @@ export default function Map() {
                             : `${row.lngLat.lat.toFixed(6)}, ${row.lngLat.lng.toFixed(6)}`}
                         </span>
                       </div>
-                      {rowHidden && !selected && (
+                      {/* The icon marks only what was hidden itself; a row hidden
+                          through its folder is just dimmed. */}
+                      {!!row.ref._hidden && !selected && (
                         <IonIcon icon={eyeOffOutline} className="panel-hidden-indicator" />
                       )}
                       {selected && (
@@ -11460,12 +11500,6 @@ export default function Map() {
                               <IonIcon icon={ribbonOutline} />
                             </ActionIconButton>
                           )}
-                          <ActionIconButton
-                            label={`Set name to ${row.type}`}
-                            onClick={(e) => { e.stopPropagation(); openRenameFromListItem(row); }}
-                          >
-                            <IonIcon icon={pencilOutline} />
-                          </ActionIconButton>
                           {row.type === "path" && (
                             <ActionIconButton
                               label="Edit path"
@@ -11475,10 +11509,22 @@ export default function Map() {
                             </ActionIconButton>
                           )}
                           <ActionIconButton
+                            label={`Set name to ${row.type}`}
+                            onClick={(e) => { e.stopPropagation(); openRenameFromListItem(row); }}
+                          >
+                            <IonIcon icon={pencilOutline} />
+                          </ActionIconButton>
+                          <ActionIconButton
                             label={`Duplicate ${row.type}`}
                             onClick={(e) => { e.stopPropagation(); handleDuplicateFeature({ ...row, keepPanel: true }); }}
                           >
                             <IonIcon icon={duplicateOutline} />
+                          </ActionIconButton>
+                          <ActionIconButton
+                            label={`Delete ${row.type}`}
+                            onClick={(e) => { e.stopPropagation(); deleteFromListItem(row); }}
+                          >
+                            <IonIcon icon={trashOutline} />
                           </ActionIconButton>
                           <ActionIconButton
                             label={row.ref._hidden ? `Show ${row.type}` : `Hide ${row.type}`}
@@ -11486,11 +11532,13 @@ export default function Map() {
                           >
                             <IonIcon icon={row.ref._hidden ? eyeOffOutline : eyeOutline} />
                           </ActionIconButton>
+                          {/* What a click on the row does, spelled out — on
+                              touch that is otherwise a second, unmarked tap. */}
                           <ActionIconButton
-                            label="Delete"
-                            onClick={(e) => { e.stopPropagation(); deleteFromListItem(row); }}
+                            label={`Open ${row.type}`}
+                            onClick={(e) => { e.stopPropagation(); cancelPendingFrame(); openFeatureListItem(row); }}
                           >
-                            <IonIcon icon={trashOutline} />
+                            <IonIcon icon={chevronForwardOutline} />
                           </ActionIconButton>
                         </>
                       )}
@@ -12120,23 +12168,8 @@ export default function Map() {
               // A sight has no collection of its own — it lives wherever its
               // path lives, so the trail shown is the path's.
               const owner = isPathFeature ? selectedFeature.path : sightPath || crumbMarker;
-              // Back to the list view of the same panel. Returning to the level
-              // the list was left at puts it back where it was scrolled; any
-              // other level starts at the top anyway.
-              const openList = (collectionId) => {
-                const restore = collectionId === openCollectionId ? listRestoreRef.current : null;
-                setSkipPanelAnim(true);
-                setSelectedFeature(null);
-                setOpenCollectionId(collectionId);
-                setOpenFeaturesList(true);
-                if (restore?.scrollTop != null) {
-                  requestAnimationFrame(() => {
-                    if (listScrollRef.current) listScrollRef.current.scrollTop = restore.scrollTop;
-                  });
-                }
-              };
               const segments = [
-                { icon: folderOpenOutline, label: "$root", onClick: () => openList(null) },
+                { icon: folderOpenOutline, label: "$root", onClick: () => openListAt(null) },
               ];
               // Every folder step keeps its link here: the feature itself is
               // always the last segment, so none of them is where you are.
@@ -12144,7 +12177,7 @@ export default function Map() {
                 segments.push({
                   icon: folderOpenOutline,
                   label: c.name || "Collection",
-                  onClick: () => openList(c._id),
+                  onClick: () => openListAt(c._id),
                 });
               }
               if (sightPath) {
@@ -12207,18 +12240,9 @@ export default function Map() {
                   onPointerLeave={(e) => { if (e.pointerType === "mouse") setDetailsActionsOpen(false); }}
                   onPointerDown={noteRowPointer}
                   onClick={() => {
-                    // The path row is the switch for its sights: clicking it
-                    // lists them, clicking it again puts them away. They start
-                    // away, so a path with none shows no difference.
-                    if (isPath) {
-                      setSightsOpen((open) => {
-                        // Collapsing takes any revealed sight's actions with it.
-                        if (open) setSightActionsOpen(null);
-                        return !open;
-                      });
-                    }
-                    // Touch has no hover, so the same tap still works the
-                    // header's own actions — on a mouse the hover owns them.
+                    // The row is the feature already open, so a click opens
+                    // nothing. Touch has no hover, so a tap reveals the
+                    // header's own actions instead — on a mouse the hover owns them.
                     if (lastPointerTypeRef.current !== "mouse") {
                       setDetailsActionsOpen((open) => !open);
                     }
@@ -12230,7 +12254,7 @@ export default function Map() {
                     <span className="panel-list-name">{headerName}</span>
                     <span className="panel-list-info">{headerInfo}</span>
                   </div>
-                  {targetHidden && !detailsActionsOpen && (
+                  {!!selectedTarget?._hidden && !detailsActionsOpen && (
                     <IonIcon icon={eyeOffOutline} className="panel-hidden-indicator" />
                   )}
                   {detailsActionsOpen && (
@@ -12240,12 +12264,6 @@ export default function Map() {
                           <IonIcon icon={ribbonOutline} />
                         </ActionIconButton>
                       )}
-                      <ActionIconButton
-                        label={`Set name to ${featureNoun}`}
-                        onClick={(e) => { e.stopPropagation(); handleFeatureRename(); }}
-                      >
-                        <IonIcon icon={pencilOutline} />
-                      </ActionIconButton>
                       {isPath && (
                         <ActionIconButton label="Edit path" onClick={(e) => { e.stopPropagation(); handleEditPath(selectedFeature.path); }}>
                           <IonIcon icon={createOutline} />
@@ -12256,6 +12274,12 @@ export default function Map() {
                           <IonIcon icon={gitMergeOutline} />
                         </ActionIconButton>
                       )}
+                      <ActionIconButton
+                        label={`Set name to ${featureNoun}`}
+                        onClick={(e) => { e.stopPropagation(); handleFeatureRename(); }}
+                      >
+                        <IonIcon icon={pencilOutline} />
+                      </ActionIconButton>
                       <ActionIconButton
                         label={`Duplicate ${featureNoun}`}
                         onClick={(e) => {
@@ -12269,6 +12293,9 @@ export default function Map() {
                       >
                         <IonIcon icon={duplicateOutline} />
                       </ActionIconButton>
+                      <ActionIconButton label={`Delete ${featureNoun}`} onClick={(e) => { e.stopPropagation(); handleFeatureDelete(); }}>
+                        <IonIcon icon={trashOutline} />
+                      </ActionIconButton>
                       {(() => {
                         const target = isPath ? selectedFeature.path : selectedFeature.marker;
                         const isHidden = !!target._hidden;
@@ -12281,8 +12308,11 @@ export default function Map() {
                           </ActionIconButton>
                         );
                       })()}
-                      <ActionIconButton label={`Delete ${featureNoun}`} onClick={(e) => { e.stopPropagation(); handleFeatureDelete(); }}>
-                        <IonIcon icon={trashOutline} />
+                      <ActionIconButton
+                        label={isSight ? "Back to path" : "Back to collection"}
+                        onClick={(e) => { e.stopPropagation(); handleDetailsBack(); }}
+                      >
+                        <IonIcon icon={chevronBackOutline} />
                       </ActionIconButton>
                     </div>
                   )}
@@ -12290,10 +12320,14 @@ export default function Map() {
               );
             })()}
             <div className="panel-details">
-              {selectedFeature.type === "path" && sightsOpen &&
+              {selectedFeature.type === "path" &&
                 (selectedFeature.path.sights || []).map((sight, i) => {
                   const ll = sight.getLngLat();
-                  const sightHidden = !!sight._hidden;
+                  // A sight is out of sight with its path, so it is dimmed
+                  // whatever its own flag says; only its own flag earns the icon. The Hide/
+                  // Show action still works the sight's own flag, as a list row's
+                  // works its own and not its folder's.
+                  const sightHidden = !!sight._hidden || !!selectedFeature.path._hidden;
                   const open = sightActionsOpen === sight;
                   return (
                     <div
@@ -12318,22 +12352,22 @@ export default function Map() {
                           {`${ll.lat.toFixed(6)}, ${ll.lng.toFixed(6)}`}
                         </span>
                       </div>
-                      {sightHidden && !open && (
+                      {!!sight._hidden && !open && (
                         <IonIcon icon={eyeOffOutline} className="panel-hidden-indicator" />
                       )}
                       {open && (
                         <div className="panel-name-actions">
                           <ActionIconButton
-                            label="Set name to sight"
-                            onClick={(e) => { e.stopPropagation(); openRenameFromListItem({ type: "sight", ref: sight }); }}
-                          >
-                            <IonIcon icon={pencilOutline} />
-                          </ActionIconButton>
-                          <ActionIconButton
                             label="Detach sight"
                             onClick={(e) => { e.stopPropagation(); handleFeatureDetachSight(sight); }}
                           >
                             <IonIcon icon={gitMergeOutline} />
+                          </ActionIconButton>
+                          <ActionIconButton
+                            label="Set name to sight"
+                            onClick={(e) => { e.stopPropagation(); openRenameFromListItem({ type: "sight", ref: sight }); }}
+                          >
+                            <IonIcon icon={pencilOutline} />
                           </ActionIconButton>
                           <ActionIconButton
                             label="Duplicate sight"
@@ -12342,16 +12376,22 @@ export default function Map() {
                             <IonIcon icon={duplicateOutline} />
                           </ActionIconButton>
                           <ActionIconButton
+                            label="Delete sight"
+                            onClick={(e) => { e.stopPropagation(); clearSightRow(); queueDelete(sight, "sight"); }}
+                          >
+                            <IonIcon icon={trashOutline} />
+                          </ActionIconButton>
+                          <ActionIconButton
                             label={sight._hidden ? "Show sight" : "Hide sight"}
                             onClick={(e) => { e.stopPropagation(); handleFeatureToggleVisibility({ ref: sight }); }}
                           >
                             <IonIcon icon={sight._hidden ? eyeOffOutline : eyeOutline} />
                           </ActionIconButton>
                           <ActionIconButton
-                            label="Delete sight"
-                            onClick={(e) => { e.stopPropagation(); clearSightRow(); queueDelete(sight, "sight"); }}
+                            label="Open sight"
+                            onClick={(e) => { e.stopPropagation(); openSightRow(sight); }}
                           >
-                            <IonIcon icon={trashOutline} />
+                            <IonIcon icon={chevronForwardOutline} />
                           </ActionIconButton>
                         </div>
                       )}
