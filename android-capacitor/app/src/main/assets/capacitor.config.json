@@ -17,6 +17,9 @@
 				"portrait",
 				"landscape"
 			]
+		},
+		"Keyboard": {
+			"resize": "none"
 		}
 	},
 	"android": {

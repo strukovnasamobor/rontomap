@@ -367,7 +367,10 @@ function RenameModal({ isOpen, title, initialValue, onCancel, onClear, onSave, s
 
   // Track the center of the visual viewport so the modal sits in the middle
   // of the visible band above the soft keyboard (rather than relative to the
-  // whole window, which the keyboard partially covers).
+  // whole window, which the keyboard partially covers). On the web this is what
+  // reports the keyboard: the page itself must not move for it (the viewport
+  // meta asks for interactive-widget=resizes-visual), and only the visual
+  // viewport shrinks.
   useEffect(() => {
     if (!isOpen) return;
     const vv = window.visualViewport;
@@ -379,6 +382,27 @@ function RenameModal({ isOpen, title, initialValue, onCancel, onClear, onSave, s
     return () => {
       vv.removeEventListener("resize", update);
       vv.removeEventListener("scroll", update);
+    };
+  }, [isOpen]);
+
+  // In the native shell the WebView is deliberately never resized by the
+  // keyboard (Keyboard resize: "none"), so nothing above can tell where the
+  // keyboard is — the visual viewport stays full height and would centre this
+  // modal underneath it. The plugin's own events carry the height instead.
+  useEffect(() => {
+    if (!isOpen || !Capacitor.isNativePlatform()) return;
+    let shown = null;
+    let hidden = null;
+    const onShow = (info) => {
+      const h = info?.keyboardHeight || 0;
+      setCenterY(h > 0 ? (window.innerHeight - h) / 2 : null);
+    };
+    const onHide = () => setCenterY(null);
+    Keyboard.addListener("keyboardWillShow", onShow).then((h) => { shown = h; }).catch(() => {});
+    Keyboard.addListener("keyboardWillHide", onHide).then((h) => { hidden = h; }).catch(() => {});
+    return () => {
+      shown?.remove();
+      hidden?.remove();
     };
   }, [isOpen]);
 

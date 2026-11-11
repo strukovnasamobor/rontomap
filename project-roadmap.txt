@@ -1,3 +1,8 @@
+- on mobile why when appearing keyboard all app is moved
+- compress sights and tracing data in one row
+? hover in detail panel
+- main action and side menu option review, filter by foot/bike/car, moving features in other collections, creating new collections
+
 FEATURE COLLECTIONS - review with feature list panel and feature detail panel
     - icon: folder-open
     * main actions in folders: sort-dist, sort-name, filter, link, embedded, export, back
@@ -46,6 +51,7 @@ PARALLEL ACTIONS - review
 - https://docs.google.com/spreadsheets/d/1no5W-1mDotm4eKghzjjsqetgft5C3l7uLmeSO7iH2jw/edit?gid=1762517575#gid=1762517575
 
 - publish new version on Google Play
+- remove localhost iz url-a mapbox
 
 ============================================================================================================================================================
 CURRENT VERSION

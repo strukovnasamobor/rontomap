@@ -12,6 +12,9 @@
   "plugins": {
     "ScreenOrientation": {
       "orientations": ["portrait", "landscape"]
+    },
+    "Keyboard": {
+      "resize": "none"
     }
   },
   "android": {

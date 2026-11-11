@@ -22,6 +22,9 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 import androidx.webkit.ServiceWorkerClientCompat;
 import androidx.webkit.ServiceWorkerControllerCompat;
 import androidx.webkit.WebViewFeature;
@@ -67,6 +70,42 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(RecordingNotificationPlugin.class);
 
         super.onCreate(savedInstanceState);
+
+        // Keep the soft keyboard OFF the layout: it floats over the page
+        // instead of shrinking it.
+        //
+        // The window itself is already told not to react (manifest
+        // windowSoftInputMode="adjustNothing"), and that part works -- the
+        // window frame is unchanged when the IME opens. What still moved the
+        // page was Capacitor's own built-in SystemBars plugin: its inset
+        // listener on the WebView's parent does setPadding(0,0,0,imeBottom),
+        // so the parent keeps its size while the WebView is laid out shorter
+        // by exactly the keyboard height. Its insetsHandling config only
+        // gates safe-area CSS, not that padding, so there is nothing to
+        // switch off.
+        //
+        // Insets are dispatched down the tree, so stripping the IME here --
+        // above the WebView's parent -- means those listeners see no keyboard
+        // at all and pad nothing. System bars and the display cutout are left
+        // untouched, so env(safe-area-inset-*) keeps working.
+        //
+        // This replaces the Keyboard plugin's listener on the same view, which
+        // only acted on resizeOnFullScreen (off by default). Its
+        // keyboardWillShow/Hide events come from a window-insets ANIMATION
+        // callback on the root view, not from here, so they still fire -- the
+        // web layer needs them to place dialogs above the keyboard now that
+        // nothing resizes.
+        View contentRoot = findViewById(android.R.id.content);
+        if (contentRoot != null) {
+            ViewCompat.setOnApplyWindowInsetsListener(contentRoot, (v, insets) -> {
+                WindowInsetsCompat withoutIme = new WindowInsetsCompat.Builder(insets)
+                        .setInsets(WindowInsetsCompat.Type.ime(), Insets.NONE)
+                        .setVisible(WindowInsetsCompat.Type.ime(), false)
+                        .build();
+                ViewCompat.onApplyWindowInsets(v, withoutIme);
+                return withoutIme;
+            });
+        }
 
         // Request notification permission app-wide (Android 13+) so the
         // foreground-service notifications (tile download, routing import, and
