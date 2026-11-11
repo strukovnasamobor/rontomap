@@ -1,6 +1,4 @@
-- on mobile why when appearing keyboard all app is moved
-- compress sights and tracing data in one row
-? hover in detail panel
+- compress sights (show/collapse, delete all, hide/unhide all) and tracing data (above description) in one row (show/collapse, delete all - remove 3 in a row deletion user ask, hide/unhide all)
 - main action and side menu option review, filter by foot/bike/car, moving features in other collections, creating new collections
 
 FEATURE COLLECTIONS - review with feature list panel and feature detail panel
@@ -204,25 +202,41 @@ FEATURE DETAIL PANEL
     - Close - ion-icon name="close-outline" - closes the detail panel; the feature list reopens
       if that is where the feature was opened from
 - show name of ther feature
-- show details for marker/sight - coordinates, for path - snapping, distance, duration (for snapped paths),
-  on mouse over the feature item (on touch devices: a tap, a second tap hides them again) the side action icons appears
+- show details for marker/sight - coordinates, for path - snapping, distance, duration (for snapped paths)
+- in the detail panel the side action icons appear on CLICK, not on mouse over - a click on a row
+  shows its actions, a second click puts them away, and a press anywhere outside closes them.
+  The same from a mouse as from a tap. Hovering a row reveals nothing (a sight row still glows
+  its sight on the map, which is not a side action)
+- three colours say what state a feature is in. None of the backgrounds changes on hover, and the
+  text keeps the panel's normal colour throughout:
+    - GREY - the pointer is merely over the row: a grey glow on the map (rgba(130,130,130,.95)) and
+      nothing else. The row keeps the plain hover tint, no coloured background
+    - BLUE (rgba(0,145,255,.12), .18 in the dark panel) - selected in a list: the selected row in
+      the features list, and a selected sight row inside an open path. The feature glows blue to
+      match
+    - ORANGE (rgba(255,111,0,.12), both themes) - open: the header row of the detail panel, whose
+      feature glows orange
+  selected beats hovered on the same row, so resting on a selected row does not quieten it; on two
+  different rows both glow at once, blue and grey. An open path glows orange whole until one of its
+  sights is singled out by its row, which hands that sight the blue or the grey and takes the glow
+  off the path
 - opening a feature that belongs to a feature collection opens that collection in the feature list,
   as if the user had opened the collection there
 - a feature that belongs to a feature collection shows that collection above its name -
   ion-icon name="folder-open-outline" + name, clickable, it opens the collection in the feature list;
   a sight shows the collection of its path
-- side actions for marker showing on mouseover / tap
+- side actions for marker showing on click / tap
     - Set name to marker - ion-icon name="pencil-outline"
     - Duplicate marker - ion-icon name="duplicate-outline"
     - Hide/Unhide marker - ion-icon name="eye-outline"/ion-icon name="eye-off-outline"
     - Delete marker - ion-icon name="trash-outline"
-- side actions for sight showing on mouseover / tap
+- side actions for sight showing on click / tap
     - Set name to sight - ion-icon name="pencil-outline"
     - Detach sight - ion-icon name="git-merge-outline"
     - Duplicate sight - ion-icon name="duplicate-outline"
     - Hide/Unhide sight - ion-icon name="eye-outline"/ion-icon name="eye-off-outline"
     - Delete sight - ion-icon name="trash-outline"
--  side actions for path showing on mouseover / tap
+-  side actions for path showing on click / tap
     - Trace path - ion-icon name="ribbon-outline"
     - Set name to path - ion-icon name="pencil-outline"
     - Edit path - ion-icon name="create-outline"
@@ -235,7 +249,7 @@ FEATURE DETAIL PANEL
 - the copy takes over the detail panel only when one is already open (duplicating a marker, sight or
   path from there); undo hands the panel back to the original. From a feature list row the list stays
   as it is and the toast is the only feedback
-- side actions for description showing on mouseover / tap
+- side actions for description showing on click / tap
     - Set description - ion-icon name="pencil-outline"
 - a path lists its sights above everything else, indented under it - ion-icon name="pin-outline",
   name, coordinates; a hidden sight shows the eye-off mark. The path's detail panel is the only
@@ -244,9 +258,9 @@ FEATURE DETAIL PANEL
   them away, and each path is arrived at collapsed. So the panel opens showing what the path IS and
   its contents are one click away. On touch the same tap also works the header's own side actions,
   which have no hover to reveal them
-- a sight row behaves like a features-list row: mouse over reveals its side actions and glows that
-  sight alone, resting frames it (zoom out only), and the first click opens the sight; on touch the
-  first tap reveals, glows and frames and the second opens
+- a sight row behaves like a features-list row: mouse over glows that sight alone (no side actions
+  and no camera move), the first click selects it - soft orange row, side actions, framed (zoom out
+  only) - and the second click opens it. The same from a tap
 - one thing glows at a time: an open path glows only itself (its line and vertices, not its sights),
   and pointing at a sight row hands the glow to that sight - leaving the row hands it back
 - below the description the list of tracing records, one row per completed tracing (no icon):
@@ -254,7 +268,7 @@ FEATURE DETAIL PANEL
   the date shows below only when the record has been renamed, otherwise it is already the name
   (a recorded path arrives with one record already, for the walk that recorded it)
 - a tracing record is named for the date it was walked and can be renamed
-- side actions for a tracing record showing on mouseover / tap
+- side actions for a tracing record showing on click / tap
     - Set name to tracing record - ion-icon name="pencil-outline"
     - Delete tracing record - ion-icon name="trash-outline" - deletes at once and
       shows toast msg "Tracing record deleted" with undo option
@@ -296,13 +310,14 @@ FEATURES LIST PANEL
   opening one from the map cannot hide it), a path still being drawn or recorded, and a live
   navigation/tracing route. An import drills the list into its own folder, so what just arrived is
   never out of sight
-- mouse over a row reveals its side actions and glows the feature on the map at once, and once the
-  pointer has rested on it (~250ms) frames it - the delay is what keeps a pointer sweeping down the
-  list from dragging the camera through every row it crosses; leaving the row before it settles
-  frames nothing, and takes the actions and the glow with it. A FOLDER row never frames anything
-- the first click then opens the feature details panel or enters the folder. On touch there is no
-  hover, so the first tap stands in for it - revealing, glowing and framing at once, with no delay -
-  and the second tap opens
+- mouse over a row glows its feature GREY on the map and nothing else - no side actions, no camera
+  move, no change to the row's own background
+- the first click SELECTS the row: a soft blue background, its side actions, and the feature framed
+  and glowing blue on the map. The second click opens the feature details panel or enters the
+  folder, where it turns orange. The same from a tap
+- nothing is draggable from the list: selecting a marker only lights and frames it, and selecting a
+  path does not offer its sights either. A feature becomes draggable when its own detail panel is
+  open - picking something out of a list should not be a way to move it by accident
 - framing only ever zooms OUT, until everything the row stands for clears the panel: it never pans,
   so the user keeps their bearings, and never zooms in, so a single marker is not dived at. A row
   whose features are already in view moves the camera not at all

@@ -529,9 +529,24 @@ ion-icon.mapboxgl-ctrl-geocoder--icon-search {
   display: block;
 }
 
-/* Glow effect on selected features */
+/* Glow on the feature whose detail panel is open — orange, matching the
+   orange its header row carries. */
 .feature-glow {
   filter: drop-shadow(0 0 6px rgba(255, 111, 0, 0.8)) drop-shadow(0 0 3px rgba(255, 111, 0, 0.6)) !important;
+}
+
+/* Glow on a feature selected in a list — blue, matching the blue its row
+   carries. Three colours for three states: grey is "the pointer is over this",
+   blue is "this is selected", orange is "this one is open". */
+.feature-glow-blue {
+  filter: drop-shadow(0 0 6px rgba(0, 145, 255, 0.8)) drop-shadow(0 0 3px rgba(0, 145, 255, 0.6)) !important;
+}
+
+/* Glow on a feature the pointer is merely over. A neutral mid grey with high
+   alpha, so it reads as a halo on a pale basemap and on a dark one alike —
+   quieter than the blue it gives way to the moment the row is selected. */
+.feature-glow-grey {
+  filter: drop-shadow(0 0 6px rgba(130, 130, 130, 0.95)) drop-shadow(0 0 3px rgba(130, 130, 130, 0.7)) !important;
 }
 
 /* Temporary dot shown at right-click / long-tap location */
@@ -1280,6 +1295,15 @@ textarea.rename-modal-input {
   background: rgba(0, 0, 0, 0.03);
 }
 
+/* A row picked out in a list — in the features list, and the sight rows
+   inside an open path. Blue for "selected"; the open feature's own header
+   row is the orange. Stated for :hover too, so the pointer crossing the
+   selected row does not swap it back for the grey tint. */
+.panel-list-item-selected,
+.panel-list-item-selected:hover {
+  background: rgba(0, 145, 255, 0.12);
+}
+
 .panel-list-item-active,
 .panel-list-item-active:hover {
   background: rgba(0, 0, 0, 0.06);
@@ -1520,6 +1544,34 @@ textarea.rename-modal-input {
 
 .panel-dark .panel-list-item:hover {
   background: rgba(255, 255, 255, 0.05);
+}
+
+/* The selected row in the dark panel. More alpha than the light theme, where
+   the same tint over #1a1a1a barely shows.
+
+   Below the dark hover rule on purpose: the two tie on specificity, so
+   source order is the only thing that settles them. Up with its light-theme
+   twin it lost, and hovering a selected row swapped the colour for the grey
+   wash -- a selected row should not change colour under the pointer. */
+.panel-dark .panel-list-item-selected,
+.panel-dark .panel-list-item-selected:hover {
+  background: rgba(0, 145, 255, 0.18);
+}
+
+/* The feature the panel is showing: soft orange, the colour of "open", as
+   against the blue a row carries while it is merely selected in a list. The
+   same in both themes, with the text left at its normal colour.
+
+   :hover is stated for both themes and the whole block sits after the dark
+   hover rule above, because that rule's specificity ties with any hover
+   selector for the header -- source order is what decides it. Hovering this
+   row means nothing now that its actions open on click, so the colour holds
+   still. */
+.panel-list-item-header,
+.panel-list-item-header:hover,
+.panel-dark .panel-list-item-header,
+.panel-dark .panel-list-item-header:hover {
+  background: rgba(255, 111, 0, 0.12);
 }
 
 .panel-dark .panel-list-meta {

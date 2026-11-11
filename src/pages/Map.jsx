@@ -5117,14 +5117,16 @@ export default function Map() {
     if (selectedFeature.type === "path") {
       const path = selectedFeature.path;
       const layerId = path.layerId;
-      // An open path glows whole — its line, its vertices and its sights.
-      // Hovering or selecting one of its sight rows narrows that to the sight
-      // alone — the hovered one winning — and pointing at the path's own row
-      // to the path alone, without its sights.
+      // An open path glows whole — its line, its vertices and its sights, all
+      // orange. Singling out a sight row takes that glow off the path and
+      // gives it to the sight instead: blue for the selected one, grey for
+      // the one under the pointer, and both at once when they differ — the
+      // same three colours the rows themselves carry. Pointing at the path's
+      // own row narrows to the path alone, without its sights.
       // Dragging is untouched by this: only the glow moves.
-      const solo = path.sights?.includes(hoveredSight)
-        ? hoveredSight
-        : path.sights?.includes(sightActionsOpen) ? sightActionsOpen : null;
+      const hoveredOne = path.sights?.includes(hoveredSight) ? hoveredSight : null;
+      const selectedOne = path.sights?.includes(sightActionsOpen) ? sightActionsOpen : null;
+      const solo = hoveredOne || selectedOne;
       const pathOnly = !solo && detailsActionsOpen;
       if (!solo && map.getLayer(layerId)) {
         map.setPaintProperty(layerId, "line-width", 6);
@@ -5141,8 +5143,13 @@ export default function Map() {
       if (path.sights) {
         path.sights.forEach((m) => {
           const el = m.getElement();
-          if (solo ? solo === m : !pathOnly) {
-            el.classList.add("feature-glow");
+          const singled = m === selectedOne || m === hoveredOne;
+          if (solo ? singled : !pathOnly) {
+            // Selected beats hovered on the same sight, so resting on it does
+            // not quieten it. Without anything singled out the sight is just
+            // part of the open path, which glows orange whole.
+            el.classList.add(!solo ? "feature-glow"
+              : m === selectedOne ? "feature-glow-blue" : "feature-glow-grey");
             glowEls.push(el);
           }
           const wasDraggable = m.isDraggable();
@@ -5157,7 +5164,8 @@ export default function Map() {
           map.setPaintProperty(layerId, "line-width", ["coalesce", ["get", "width"], 3]);
           map.setPaintProperty(layerId, "line-opacity", 1);
         }
-        glowEls.forEach((el) => el.classList.remove("feature-glow"));
+        glowEls.forEach((el) => el.classList.remove(
+          "feature-glow", "feature-glow-blue", "feature-glow-grey"));
         restoreDrag.forEach((m) => m.setDraggable(false));
       };
     }
@@ -8021,7 +8029,7 @@ export default function Map() {
   // Lights a feature on the map and returns what puts it out again. A path
   // lights whole — line, vertices and sights; a marker or a sight its own pin.
   // A folder has no map presence, so it lights nothing.
-  const glowFeature = (ref) => {
+  const glowFeature = (ref, glowClass) => {
     const map = mapRef.current;
     if (!map || !ref || ref._isCollection) return () => {};
     const els = [];
@@ -8037,13 +8045,13 @@ export default function Map() {
     } else {
       els.push(ref.getElement());
     }
-    els.forEach((el) => el.classList.add("feature-glow"));
+    els.forEach((el) => el.classList.add(glowClass));
     return () => {
       if (layerId && map.getLayer(layerId)) {
         map.setPaintProperty(layerId, "line-width", ["coalesce", ["get", "width"], 3]);
         map.setPaintProperty(layerId, "line-opacity", 1);
       }
-      els.forEach((el) => el.classList.remove("feature-glow"));
+      els.forEach((el) => el.classList.remove(glowClass));
     };
   };
 
@@ -8063,24 +8071,27 @@ export default function Map() {
     else selectFeatureListRow(row);
   };
 
-  // The lit and movable state of the list's rows, held here rather than set
-  // and unset by the handlers, so it can never outlive its row. Only while the
-  // list is what the panel shows: the details view lights its own feature.
+  // The lit state of the list's rows, held here rather than set and unset by
+  // the handlers, so it can never outlive its row. Only while the list is what
+  // the panel shows: the details view lights its own feature.
+  //
+  // Selecting a row lights and frames it, and nothing more. Dragging belongs to
+  // the open detail panel — a feature you can move by accident while merely
+  // picking it out of a list is a feature you can move without meaning to.
+  //
+  // Grey for the row under the pointer, blue for the selected one, which is the
+  // colour each row shows. The selected row wins when it is also the hovered
+  // one, so resting on it does not quieten its glow.
   useEffect(() => {
     if (!showFeaturesList || selectedFeature) return;
-    const lit = [selectedFeatureListRef, hoveredListRef].filter(Boolean);
-    const cleanups = [...new Set(lit)].map(glowFeature);
-    // A selected marker or sight can be dragged into place; a selected path
-    // offers its sights. Whatever was locked goes back to being locked.
-    const sel = selectedFeatureListRef;
-    const movable = !sel || sel._isCollection ? [] : sel.vertices ? sel.sights || [] : [sel];
-    const restoreDrag = movable.filter((m) => !m.isDraggable());
-    restoreDrag.forEach((m) => m.setDraggable(true));
-    return () => {
-      cleanups.forEach((c) => c());
-      // Back to what the lock says now — it may have been toggled meanwhile.
-      restoreDrag.forEach((m) => m.setDraggable(!featuresLockedRef.current));
-    };
+    const cleanups = [];
+    if (selectedFeatureListRef) {
+      cleanups.push(glowFeature(selectedFeatureListRef, "feature-glow-blue"));
+    }
+    if (hoveredListRef && hoveredListRef !== selectedFeatureListRef) {
+      cleanups.push(glowFeature(hoveredListRef, "feature-glow-grey"));
+    }
+    return () => cleanups.forEach((c) => c());
   }, [selectedFeatureListRef, hoveredListRef, showFeaturesList, selectedFeature]);
 
   // A sight row inside a path's detail panel follows the same steps as a list
@@ -8119,14 +8130,6 @@ export default function Map() {
     if (lastPointerTypeRef.current === "mouse" || revealed) return false;
     reveal();
     return true;
-  };
-
-  // For rows that reveal but open nothing: on touch the tap toggles the actions,
-  // so the one that showed them can also put them away. A mouse click does
-  // nothing — hover already owns the reveal.
-  const toggleOnTap = (toggle) => () => {
-    if (lastPointerTypeRef.current === "mouse") return;
-    toggle();
   };
 
   // Offline rows reveal their side actions on hover / first tap like feature
@@ -11427,7 +11430,7 @@ export default function Map() {
                     || (isSight && !!row.ref._sightPath?._hidden);
                   return (
                     <div
-                      className={`panel-list-item${rowHidden ? " panel-list-item-hidden" : ""}`}
+                      className={`panel-list-item${selected ? " panel-list-item-selected" : ""}${rowHidden ? " panel-list-item-hidden" : ""}`}
                       // Indented under its path, as in the path's own panel.
                       style={isSight ? { paddingLeft: 28 } : undefined}
                       onPointerEnter={(e) => { if (e.pointerType === "mouse") setHoveredListRef(row.ref); }}
@@ -12215,17 +12218,13 @@ export default function Map() {
               return (
                 <div
                   className="panel-list-item panel-list-item-header"
-                  onPointerEnter={(e) => { if (e.pointerType === "mouse") setDetailsActionsOpen(true); }}
-                  onPointerLeave={(e) => { if (e.pointerType === "mouse") setDetailsActionsOpen(false); }}
                   onPointerDown={noteRowPointer}
-                  onClick={() => {
-                    // The row is the feature already open, so a click opens
-                    // nothing. Touch has no hover, so a tap reveals the
-                    // header's own actions instead — on a mouse the hover owns them.
-                    if (lastPointerTypeRef.current !== "mouse") {
-                      setDetailsActionsOpen((open) => !open);
-                    }
-                  }}
+                  // The row is the feature already open, so a click opens
+                  // nothing: it works this row's own actions instead, the same
+                  // from a mouse as from a tap. Hovering no longer reveals
+                  // them, so they stay until this row or something else takes
+                  // them away.
+                  onClick={() => setDetailsActionsOpen((open) => !open)}
                   onContextMenu={(e) => e.preventDefault()}
                 >
                   <IonIcon icon={headerIcon} className={`panel-list-icon panel-list-icon-${headerTypeClass}`} />
@@ -12311,7 +12310,7 @@ export default function Map() {
                   return (
                     <div
                       key={`sight-${i}`}
-                      className={`panel-list-item panel-detail-sight${sightHidden ? " panel-list-item-hidden" : ""}`}
+                      className={`panel-list-item panel-detail-sight${open ? " panel-list-item-selected" : ""}${sightHidden ? " panel-list-item-hidden" : ""}`}
                       // Indented under the path whose panel this is: a sight
                       // belongs to the path, and the step in says so.
                       style={{ paddingLeft: 28 }}
@@ -12383,10 +12382,8 @@ export default function Map() {
                 return (
                   <div
                     className="panel-description"
-                    onPointerEnter={(e) => { if (e.pointerType === "mouse") setDescActionsOpen(true); }}
-                    onPointerLeave={(e) => { if (e.pointerType === "mouse") setDescActionsOpen(false); }}
                     onPointerDown={noteRowPointer}
-                    onClick={toggleOnTap(() => setDescActionsOpen((open) => !open))}
+                    onClick={() => setDescActionsOpen((open) => !open)}
                     onContextMenu={(e) => e.preventDefault()}
                   >
                     <span className={`panel-description-text${desc ? "" : " empty"}`}>
@@ -12426,10 +12423,8 @@ export default function Map() {
                     <div
                       key={rec.id}
                       className="panel-list-item panel-trace-record"
-                      onPointerEnter={(e) => { if (e.pointerType === "mouse") setTraceActionsOpenId(rec.id); }}
-                      onPointerLeave={(e) => { if (e.pointerType === "mouse") setTraceActionsOpenId((cur) => (cur === rec.id ? null : cur)); }}
                       onPointerDown={noteRowPointer}
-                      onClick={toggleOnTap(() => setTraceActionsOpenId((cur) => (cur === rec.id ? null : rec.id)))}
+                      onClick={() => setTraceActionsOpenId((cur) => (cur === rec.id ? null : rec.id))}
                       onContextMenu={(e) => e.preventDefault()}
                     >
                       <IonIcon icon={ribbonOutline} className="panel-list-icon" />
