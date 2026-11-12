@@ -1,4 +1,3 @@
-- compress sights (show/collapse, delete all, hide/unhide all) and tracing data (above description) in one row (show/collapse, delete all - remove 3 in a row deletion user ask, hide/unhide all)
 - main action and side menu option review, filter by foot/bike/car, moving features in other collections, creating new collections
 
 FEATURE COLLECTIONS - review with feature list panel and feature detail panel
@@ -43,8 +42,6 @@ FEATURE COLLECTIONS - review with feature list panel and feature detail panel
       "Imported on yyyy-mm-dd (2)"; one share link is one import however many features it carries;
       undoing an import removes its folder if nothing is left in it
 
-- side menu action - review
-
 PARALLEL ACTIONS - review
 - https://docs.google.com/spreadsheets/d/1no5W-1mDotm4eKghzjjsqetgft5C3l7uLmeSO7iH2jw/edit?gid=1762517575#gid=1762517575
 
@@ -53,7 +50,7 @@ PARALLEL ACTIONS - review
 
 ============================================================================================================================================================
 CURRENT VERSION
-Ver. 1.3.0 (7)
+Ver. 1.4.0 (8)
 
 GOAL
 Free (no ads) and simple 3D map for orientation (online and offline), for navigation (online and offline only on Android), for creating and sharing map 
@@ -251,19 +248,34 @@ FEATURE DETAIL PANEL
   as it is and the toast is the only feedback
 - side actions for description showing on click / tap
     - Set description - ion-icon name="pencil-outline"
-- a path lists its sights above everything else, indented under it - ion-icon name="pin-outline",
-  name, coordinates; a hidden sight shows the eye-off mark. The path's detail panel is the only
-  place sights are listed
-- they start collapsed: clicking the path's own row in the panel lists them, clicking it again puts
-  them away, and each path is arrived at collapsed. So the panel opens showing what the path IS and
-  its contents are one click away. On touch the same tap also works the header's own side actions,
-  which have no hover to reveal them
-- a sight row behaves like a features-list row: mouse over glows that sight alone (no side actions
-  and no camera move), the first click selects it - soft orange row, side actions, framed (zoom out
-  only) - and the second click opens it. The same from a tap
+- a path's sights and its tracing data each fold behind ONE row, in this order: header, Sights,
+  Tracing data, description. Both start collapsed, so the panel opens showing what the path IS
+  and its contents are one click away; every path is arrived at collapsed
+    - the Sights row - "Sights", "2 sights"
+    - the Tracing data row - "Tracing data", "3 records"
+    - the icon on both is the collapse state, not the kind of thing inside (the row's own name
+      already says that): ion-icon name="chevron-down-outline" while collapsed,
+      "chevron-up-outline" while open
+    - clicking a row reveals its rows AND that row's own side actions; clicking it again puts both
+      away. That is the only thing that closes a group, so it survives working down the list, and
+      the two groups are independent. The same from a tap
+    - a group with nothing in it shows no row at all
+    - side actions on the Sights row, in this order: Delete all sights (asks first, naming the
+      count, then a toast with undo), then Hide/Show all sights (eye / eye-off, it drives the
+      whole group to one state rather than inverting each). Nothing is hidden or deleted for the
+      length of the undo window without the panel agreeing: a sight on its way out leaves the
+      list and the count too
+    - side action on the Tracing data row: Delete all tracing data (asks, then a toast with undo).
+      No hide/unhide - a record is a date and two times, never drawn on the map
+- the sight rows, revealed, are indented under their group - ion-icon name="pin-outline", name,
+  coordinates; a hidden sight shows the eye-off mark. The path's detail panel is the only place
+  sights are listed
+- a sight row behaves like a features-list row: mouse over glows that sight alone grey (no side
+  actions and no camera move), the first click selects it - soft blue row, side actions, framed
+  (zoom out only) - and the second click opens it. The same from a tap
 - one thing glows at a time: an open path glows only itself (its line and vertices, not its sights),
   and pointing at a sight row hands the glow to that sight - leaving the row hands it back
-- below the description the list of tracing records, one row per completed tracing (no icon):
+- the tracing records, revealed, are indented under their group, one row per completed tracing:
   the record name and below it the date, start time - finish time, duration; times are 24h and
   the date shows below only when the record has been renamed, otherwise it is already the name
   (a recorded path arrives with one record already, for the walk that recorded it)
@@ -272,9 +284,6 @@ FEATURE DETAIL PANEL
     - Set name to tracing record - ion-icon name="pencil-outline"
     - Delete tracing record - ion-icon name="trash-outline" - deletes at once and
       shows toast msg "Tracing record deleted" with undo option
-- after three record deletions in a row on the same path, and only while records are left,
-  ask "Delete all tracing data" - on confirm the rest go with a toast msg and undo option;
-  undoing a single delete breaks the run
 - a path with tracing records can not be edited: Edit path shows toast msg
   "Delete tracing data before editing this path."
 

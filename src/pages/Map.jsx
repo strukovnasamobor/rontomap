@@ -753,8 +753,16 @@ export default function Map() {
   const [sightActionsOpen, setSightActionsOpen] = useState(null);
   // The sight row under the mouse, which narrows the path's glow to that sight.
   const [hoveredSight, setHoveredSight] = useState(null);
+  // A path's sights and its tracing records each fold behind one row. The same
+  // boolean shows the group and that row's own side actions: clicking the row
+  // again is the only way to put either away, which is what keeps a group open
+  // while the user works down it.
+  const [sightsOpen, setSightsOpen] = useState(false);
+  const [tracesOpen, setTracesOpen] = useState(false);
   // The path whose whole tracing history is about to be dropped, pending confirm.
   const [deleteTracesAlert, setDeleteTracesAlert] = useState(null);
+  // ...and the one about to lose all of its sights.
+  const [deleteSightsAlert, setDeleteSightsAlert] = useState(null);
   const listRestoreRef = useRef(null);
   // When going back from details to list we want the re-opening list panel
   // to appear instantly (no landscape slide-in). Stays true for the whole
@@ -5197,6 +5205,10 @@ export default function Map() {
     setDescActionsOpen(false);
     setSightActionsOpen(null);
     setHoveredSight(null);
+    // Every path is arrived at collapsed, so the panel opens showing what the
+    // path is rather than everything it holds.
+    setSightsOpen(false);
+    setTracesOpen(false);
     if (!selectedFeature || !mapRef.current) return;
     if (skipNextDetailsZoomRef.current) {
       skipNextDetailsZoomRef.current = false;
@@ -6148,6 +6160,9 @@ export default function Map() {
     delete pending.target._pendingDelete;
     if (pending.type === "collection") performDeleteCollection(pending);
     else if (pending.type === "path") performDeletePath(pending.target);
+    // "sights" acts on the path's sights, never on the path: the members are
+    // the victims. performDeleteMarker also strips each from path.sights.
+    else if (pending.type === "sights") pending.members.forEach(performDeleteMarker);
     else performDeleteMarker(pending.target);
     setToastMsg((cur) =>
       cur && typeof cur === "object" && cur.__undo === pending.token ? null : cur
@@ -6160,6 +6175,9 @@ export default function Map() {
     if (pending.timerId) clearTimeout(pending.timerId);
     pendingDeleteRef.current = null;
     delete pending.target._pendingDelete;
+    if (pending.type === "sights") {
+      pending.members.forEach((m) => { delete m._pendingDelete; });
+    }
     if (pending.type === "collection") {
       (pending.folders || [pending.target]).forEach((c) => { delete c._pendingDelete; });
       if (pending.cascade) {
@@ -6199,6 +6217,13 @@ export default function Map() {
     let members = [];
     let folders = [];
     let moved = [];
+    if (type === "sights") {
+      // The path is what was acted on, but only its sights go — so unlike
+      // every other target the path itself must not be previewed as deleted.
+      delete target._pendingDelete;
+      members = (target.sights || []).filter((m) => !m._pendingDelete);
+      members.forEach((m) => { m._pendingDelete = true; });
+    }
     if (type === "collection") {
       if (opts.cascade) {
         // The whole subtree: hiding and deleting both mean "everything beneath
@@ -6241,6 +6266,7 @@ export default function Map() {
     bumpFeaturesVersion();
     const label = type === "path" ? "Path"
       : type === "sight" ? "Sight"
+      : type === "sights" ? `${members.length} sight${members.length === 1 ? "" : "s"}`
       : type === "collection" ? "Collection"
       : "Marker";
     // ms = 0: the pending-delete timer above owns this toast's lifetime, but it
@@ -7652,6 +7678,30 @@ export default function Map() {
     persistSavedFeatures();
   };
 
+  // The sights a path still has: one pending deletion is already off the map
+  // for the undo window, so the panel must not go on listing or counting it.
+  const livingSights = (path) => (path?.sights || []).filter((s) => !s._pendingDelete);
+
+  // True when every one of the path's sights is hidden, which is what decides
+  // whether the group action shows them or hides them. Not a per-sight toggle in
+  // a loop: that would invert a half-hidden group into another half-hidden one.
+  const allSightsHidden = (path) => {
+    const sights = livingSights(path);
+    return sights.length > 0 && sights.every((s) => !!s._hidden);
+  };
+
+  const toggleAllSights = (path) => {
+    const sights = livingSights(path);
+    if (!sights.length) return;
+    const hide = !allSightsHidden(path);
+    sights.forEach((s) => {
+      if (hide) s._hidden = true;
+      else delete s._hidden;
+    });
+    bumpFeaturesVersion();
+    persistSavedFeatures();
+  };
+
   const handleFeatureDelete = () => {
     if (!selectedFeature) return;
     if (selectedFeature.type === "path") {
@@ -7748,11 +7798,6 @@ export default function Map() {
     confirmTracePath(path.roadSnap ?? null, path);
   };
 
-  // Deleting records one by one is how a user clears a path's history now that
-  // there is no "delete all" link. Three in a row on the same path is the point
-  // at which offering the rest in one go stops being presumptuous.
-  const traceDeleteRunRef = useRef({ path: null, count: 0 });
-
   // A tracing record is pure data — no map layers or markers to keep alive during
   // a pending window — so unlike queueDelete this applies straight away and Undo
   // puts the record back where it was.
@@ -7769,10 +7814,6 @@ export default function Map() {
     };
     save();
 
-    const run = traceDeleteRunRef.current;
-    run.count = run.path === path ? run.count + 1 : 1;
-    run.path = path;
-
     showToast({
       text: "Tracing record deleted",
       action: {
@@ -7781,23 +7822,15 @@ export default function Map() {
           if (!path._traces) path._traces = [];
           path._traces.splice(Math.min(idx, path._traces.length), 0, removed);
           save();
-          // Putting one back says the opposite of wanting them all gone.
-          traceDeleteRunRef.current = { path: null, count: 0 };
           setToastMsg(null);
         },
       },
     }, UNDO_MS);
-
-    // Only worth asking while something is actually left to delete.
-    if (run.count >= 3 && path._traces?.length) {
-      traceDeleteRunRef.current = { path: null, count: 0 };
-      setDeleteTracesAlert(path);
-    }
   };
 
   // Clearing the whole history is the one way back to editing a path that has
-  // been traced. It is reached by repetition rather than a deliberate link, so
-  // it both asks first and offers the records back afterwards.
+  // been traced. Reached deliberately, from the tracing row's own Delete all,
+  // and it still both asks first and offers the records back afterwards.
   const confirmDeleteAllTraces = () => {
     const path = deleteTracesAlert;
     setDeleteTracesAlert(null);
@@ -10981,6 +11014,28 @@ export default function Map() {
         ]}
       />
       <IonAlert
+        isOpen={!!deleteSightsAlert}
+        cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
+        onDidDismiss={() => setDeleteSightsAlert(null)}
+        header="Delete all sights"
+        message={(() => {
+          const n = deleteSightsAlert?.sights?.length ?? 0;
+          return `Are you sure you want to delete all ${n} sight${n === 1 ? "" : "s"} of this path?`;
+        })()}
+        buttons={[
+          { text: "Cancel", role: "cancel" },
+          {
+            text: "Delete",
+            role: "destructive",
+            handler: () => {
+              const path = deleteSightsAlert;
+              setDeleteSightsAlert(null);
+              if (path) queueDelete(path, "sights");
+            },
+          },
+        ]}
+      />
+      <IonAlert
         isOpen={!!deleteTracesAlert}
         cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
         onDidDismiss={() => setDeleteTracesAlert(null)}
@@ -12298,8 +12353,49 @@ export default function Map() {
               );
             })()}
             <div className="panel-details">
-              {selectedFeature.type === "path" &&
-                (selectedFeature.path.sights || []).map((sight, i) => {
+              {/* A path's sights and its tracing records each fold behind one row:
+                  the panel opens showing what the path is, with its contents a
+                  click away. The tracing group sits above the description. */}
+              {selectedFeature.type === "path" && livingSights(selectedFeature.path).length > 0 && (() => {
+                const path = selectedFeature.path;
+                const n = livingSights(path).length;
+                const hiddenAll = allSightsHidden(path);
+                return (
+                  <div
+                    className="panel-list-item panel-detail-group"
+                    onPointerDown={noteRowPointer}
+                    onClick={() => setSightsOpen((open) => !open)}
+                    onContextMenu={(e) => e.preventDefault()}
+                  >
+                    <IonIcon
+                      icon={sightsOpen ? chevronUpOutline : chevronDownOutline}
+                      className="panel-list-icon"
+                    />
+                    <div className="panel-list-text">
+                      <span className="panel-list-name">Sights</span>
+                      <span className="panel-list-info">{`${n} sight${n === 1 ? "" : "s"}`}</span>
+                    </div>
+                    {sightsOpen && (
+                      <div className="panel-name-actions">
+                        <ActionIconButton
+                          label="Delete all sights"
+                          onClick={(e) => { e.stopPropagation(); setDeleteSightsAlert(path); }}
+                        >
+                          <IonIcon icon={trashOutline} />
+                        </ActionIconButton>
+                        <ActionIconButton
+                          label={hiddenAll ? "Show all sights" : "Hide all sights"}
+                          onClick={(e) => { e.stopPropagation(); toggleAllSights(path); }}
+                        >
+                          <IonIcon icon={hiddenAll ? eyeOffOutline : eyeOutline} />
+                        </ActionIconButton>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+              {selectedFeature.type === "path" && sightsOpen &&
+                livingSights(selectedFeature.path).map((sight, i) => {
                   const ll = sight.getLngLat();
                   // A sight is out of sight with its path, so it is dimmed
                   // whatever its own flag says; only its own flag earns the icon. The Hide/
@@ -12376,37 +12472,38 @@ export default function Map() {
                     </div>
                   );
                 })}
-              {(() => {
-                const target = selectedFeature.type === "path" ? selectedFeature.path : selectedFeature.marker;
-                const desc = target?._description || "";
+              {selectedFeature.type === "path" && (selectedFeature.path._traces || []).length > 0 && (() => {
+                const path = selectedFeature.path;
+                const n = path._traces.length;
                 return (
                   <div
-                    className="panel-description"
+                    className="panel-list-item panel-detail-group"
                     onPointerDown={noteRowPointer}
-                    onClick={() => setDescActionsOpen((open) => !open)}
+                    onClick={() => setTracesOpen((open) => !open)}
                     onContextMenu={(e) => e.preventDefault()}
                   >
-                    <span className={`panel-description-text${desc ? "" : " empty"}`}>
-                      {desc || "No description yet."}
-                    </span>
-                    {descActionsOpen && (
+                    <IonIcon
+                      icon={tracesOpen ? chevronUpOutline : chevronDownOutline}
+                      className="panel-list-icon"
+                    />
+                    <div className="panel-list-text">
+                      <span className="panel-list-name">Tracing data</span>
+                      <span className="panel-list-info">{`${n} record${n === 1 ? "" : "s"}`}</span>
+                    </div>
+                    {tracesOpen && (
                       <div className="panel-name-actions">
                         <ActionIconButton
-                          label="Set description"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            descTargetRef.current = selectedFeature;
-                            setDescAlert(true);
-                          }}
+                          label="Delete all tracing data"
+                          onClick={(e) => { e.stopPropagation(); setDeleteTracesAlert(path); }}
                         >
-                          <IonIcon icon={pencilOutline} />
+                          <IonIcon icon={trashOutline} />
                         </ActionIconButton>
                       </div>
                     )}
                   </div>
                 );
               })()}
-              {selectedFeature.type === "path" &&
+              {selectedFeature.type === "path" && tracesOpen &&
                 (selectedFeature.path._traces || []).map((rec) => {
                   // Records made before names existed have none, so the date is
                   // derived rather than assumed.
@@ -12423,6 +12520,8 @@ export default function Map() {
                     <div
                       key={rec.id}
                       className="panel-list-item panel-trace-record"
+                      // Indented under the tracing row that reveals it.
+                      style={{ paddingLeft: 28 }}
                       onPointerDown={noteRowPointer}
                       onClick={() => setTraceActionsOpenId((cur) => (cur === rec.id ? null : rec.id))}
                       onContextMenu={(e) => e.preventDefault()}
@@ -12455,6 +12554,36 @@ export default function Map() {
                     </div>
                   );
                 })}
+              {(() => {
+                const target = selectedFeature.type === "path" ? selectedFeature.path : selectedFeature.marker;
+                const desc = target?._description || "";
+                return (
+                  <div
+                    className="panel-description"
+                    onPointerDown={noteRowPointer}
+                    onClick={() => setDescActionsOpen((open) => !open)}
+                    onContextMenu={(e) => e.preventDefault()}
+                  >
+                    <span className={`panel-description-text${desc ? "" : " empty"}`}>
+                      {desc || "No description yet."}
+                    </span>
+                    {descActionsOpen && (
+                      <div className="panel-name-actions">
+                        <ActionIconButton
+                          label="Set description"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            descTargetRef.current = selectedFeature;
+                            setDescAlert(true);
+                          }}
+                        >
+                          <IonIcon icon={pencilOutline} />
+                        </ActionIconButton>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
             </div>
           </div>
