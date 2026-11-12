@@ -97,7 +97,12 @@
     <!-- Permissions -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <!-- No ACCESS_BACKGROUND_LOCATION on purpose. Track recording runs in the
+         foreground service above (foregroundServiceType="location"), which is
+         always started from a user tap while the app is visible and so keeps
+         receiving locations without that permission. Nothing ever requested it
+         at runtime, so it could never be granted anyway; it only triggered
+         Google Play's prominent-disclosure policy. Do not add it back. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />

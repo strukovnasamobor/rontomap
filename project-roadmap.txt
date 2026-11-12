@@ -50,7 +50,7 @@ PARALLEL ACTIONS - review
 
 ============================================================================================================================================================
 CURRENT VERSION
-Ver. 1.4.0 (8)
+Ver. 1.4.0 (9)
 
 GOAL
 Free (no ads) and simple 3D map for orientation (online and offline), for navigation (online and offline only on Android), for creating and sharing map 
@@ -132,6 +132,13 @@ SIDE MENU
             - when paused: Resume - ion-icon name="play-outline", Stop - ion-icon name="stop-outline"
         - while recording is running the user can still navigate, trace a path and create a path,
           the recording keeps logging the track and its dock stays on screen
+        - recording keeps running with the screen off and the app in the background through the
+          plugin's foreground service (foregroundServiceType="location"), which is always started
+          from the user's tap while the app is visible. The app deliberately does NOT declare
+          ACCESS_BACKGROUND_LOCATION: nothing ever requested it at runtime so it could never be
+          granted, and declaring it got the app rejected from Google Play for accessing background
+          location without a prominent disclosure. Do not add it back; see the comment in
+          android-capacitor/app/src/main/AndroidManifest.xml.
     ==============================
     - Features list
     - Copy link to features
@@ -158,6 +165,22 @@ NAVIGATION & TRACING PATH
   along the route, titled "Navigating" / "Tracing path", "Navigation paused" / "Tracing paused" when paused;
   it is removed on cancel or completion; it is separate from the path recording notification,
   so recording and navigating/tracing at the same time show two notifications, each with its own time and distance
+  - when nothing is recording, the navigation/tracing notification IS the location service's own
+    (taken over in place), so a trace on its own shows one notification, not two; ownership moves
+    to the recording when one starts and back again when it stops, so the service is never left
+    without a notification
+- while running (Android) navigation/tracing holds a share of the same background location watcher
+  the path recording uses, so the route keeps being followed with the screen off and the app off
+  screen. There is only ever ONE watcher, reference counted between the recording and the route:
+  the plugin's service keeps a single foreground notification and re-foregrounds on every watcher
+  added, so a second watcher would overwrite the first's notification
+  - the watcher is a failover for the route, not its source: the WebView's 500 ms geolocation poll
+    is twice the watcher's 1 Hz and keeps the camera smooth, so the watcher only feeds the route
+    once that poll has gone quiet, which is what a hidden WebView does to its timers
+  - watcher fixes are fed into the same "geolocate" event the poll fires, so camera, road
+    snapping, passed path, off-path detection and the trace completion test all stay in one place
+  - the watcher runs at a 2 m distance filter for the trace's benefit; the recorded line's old 5 m
+    thinning is applied in JS instead, so recorded geometry is unchanged
 - start/resume starts user tracking bearing, stop/cancel stops it
 - location control icons: track location - ion-icon name="locate-outline",
   start user tracking bearing - ion-icon name="navigate-outline",

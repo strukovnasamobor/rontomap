@@ -869,6 +869,14 @@ export default function Map() {
   const trackPathRef = useRef(null);
   const trackCoordsRef = useRef([]);
   const bgWatcherIdRef = useRef(null);
+  // Who currently needs the one background watcher: "recording", "route", or
+  // both. See acquireBgWatcher for why there is only ever one.
+  const bgWatcherUsersRef = useRef(new Set());
+  const bgWatcherStartingRef = useRef(null);
+  // When the WebView's own geolocation poll last delivered a fix. The shared
+  // watcher only feeds the navigation pipeline once this has gone stale, so the
+  // poll stays the sole source while the app is on screen.
+  const lastPollFixAtRef = useRef(0);
   const [isRecordingPaused, setIsRecordingPaused] = useState(false);
   const isRecordingPausedRef = useRef(false);
   const [isRecordingStarted, setIsRecordingStarted] = useState(false);
@@ -3224,7 +3232,14 @@ export default function Map() {
       }
       this._geolocationWatchID = undefined;
       this._gpsPollTimer = setInterval(() => {
-        navigator.geolocation.getCurrentPosition(this._onSuccess, this._onError, this.options.positionOptions);
+        // Each real WebView fix is stamped, so the shared background watcher can
+        // tell whether this poll is still alive and stay out of the way while it
+        // is. See feedNavigationFix.
+        navigator.geolocation.getCurrentPosition(
+          (pos) => { lastPollFixAtRef.current = Date.now(); this._onSuccess(pos); },
+          this._onError,
+          this.options.positionOptions,
+        );
       }, GPS_POLL_INTERVAL);
     };
 
@@ -8510,6 +8525,150 @@ export default function Map() {
     showToast("Click on map to add path points.", 2000);
   };
 
+  // ---------------------------------------------------------------------------
+  // The shared background location watcher
+  //
+  // A path recording and a navigation/trace can run at the same time, and both
+  // need location while the app is off screen. They share ONE watcher, because
+  // the plugin cannot sensibly hold two:
+  //
+  //   - its service keeps a single foreground notification (id 28351) and calls
+  //     startForeground() again for every watcher added, so a second watcher's
+  //     notification would overwrite the first's - and the first's is the one
+  //     RecordingNotification has taken over to show the live clock;
+  //   - removeWatcher() only demotes the service once no watcher is left, so
+  //     reference counting is what the plugin already expects.
+  //
+  // This is also what makes background location work at all without
+  // ACCESS_BACKGROUND_LOCATION: the watcher runs a foregroundServiceType
+  // "location" service, always started from a user tap while the app is
+  // visible, which Android exempts from that permission.
+  const BG_WATCHER_DISTANCE_FILTER = 2; // m - the finer of the two users' needs
+  const RECORD_MIN_STEP_M = 5;          // m - recording's own thinning, see below
+  const NAV_POLL_STALE_MS = 2500;
+
+  // A recorded fix: extend the track, the live distance and the end vertex.
+  // The watcher is set to 2 m for the trace's benefit, so the 5 m thinning the
+  // recorded line used to get from the watcher itself is applied here instead -
+  // the geometry comes out as before.
+  const onRecordingFix = (location) => {
+    if (!location || !isRecordingTrackRef.current || isRecordingPausedRef.current || !trackPathRef.current) return;
+    const coord = [location.longitude, location.latitude];
+    const prev = trackCoordsRef.current[trackCoordsRef.current.length - 1];
+    if (prev && haversinePoint(prev[1], prev[0], coord[1], coord[0]) < RECORD_MIN_STEP_M) return;
+    trackCoordsRef.current.push(coord);
+    setRecordingDistance(haversineDistance(trackCoordsRef.current));
+    // Feed the live distance to the native notification (it ticks the time itself).
+    RecordingNotification.setStats({
+      distanceText: formatDistance(haversineDistance(trackCoordsRef.current)),
+    }).catch(() => {});
+    const path = trackPathRef.current;
+    const source = mapRef.current?.getSource(path.sourceId);
+    if (source && trackCoordsRef.current.length >= 2) {
+      source.setData({
+        type: "FeatureCollection",
+        features: [pathHelpersRef.current.makeFeature(trackCoordsRef.current, "#ff0000")],
+      });
+    }
+    // Update end vertex position (hidden while recording, shown on pause/stop)
+    const h = pathHelpersRef.current;
+    if (path.vertices.length === 1) {
+      const endMarker = h.createPathVertex(coord);
+      endMarker.setDraggable(false);
+      endMarker.getElement().classList.remove("active-path-feature");
+      endMarker.getElement().style.display = "none";
+      path.vertices.push({ lngLat: coord, marker: endMarker, path });
+      h.updateVertexStyles(path);
+    } else if (path.vertices.length >= 2) {
+      const endV = path.vertices[path.vertices.length - 1];
+      endV.lngLat = coord;
+      endV.marker.setLngLat(coord);
+      endV.marker.getElement().style.display = "none";
+    }
+  };
+
+  // A fix for a navigation or trace in progress. Everything downstream - the
+  // camera, road snapping, passed path, off-path detection and the trace's own
+  // completion test - hangs off the control's "geolocate" event, so this feeds
+  // the same event rather than duplicating any of it.
+  //
+  // It is a failover, not a second source. The WebView's 500 ms poll is twice
+  // the watcher's 1 Hz and keeps the camera smooth, so while that poll is
+  // delivering this stays out. It takes over as soon as the poll goes quiet,
+  // which is what a hidden WebView does to its timers. Gating on staleness
+  // rather than document.hidden also covers the throttling that sets in after a
+  // few minutes in the background.
+  const feedNavigationFix = (location) => {
+    const ctrl = geolocateRef.current;
+    if (!ctrl || ctrl._watchState === "OFF") return;
+    if (Date.now() - lastPollFixAtRef.current < NAV_POLL_STALE_MS) return;
+    ctrl._onSuccess({
+      coords: {
+        longitude: location.longitude,
+        latitude: location.latitude,
+        accuracy: location.accuracy ?? 0,
+        altitude: location.altitude ?? null,
+        altitudeAccuracy: location.altitudeAccuracy ?? null,
+        // The plugin calls it bearing; the browser calls it heading.
+        heading: location.bearing ?? null,
+        speed: location.speed ?? null,
+      },
+      timestamp: location.time ?? Date.now(),
+    });
+  };
+
+  // Claim the watcher for "recording" or "route", starting it if nobody held it.
+  const acquireBgWatcher = async (user) => {
+    if (!Capacitor.isNativePlatform()) return;
+    bgWatcherUsersRef.current.add(user);
+    if (bgWatcherIdRef.current != null) return;
+    if (bgWatcherStartingRef.current) { await bgWatcherStartingRef.current.catch(() => {}); return; }
+    const starting = BackgroundGeolocation.addWatcher(
+      {
+        backgroundTitle: "RontoMap",
+        // Replaced in place by RecordingNotification as soon as its slot starts;
+        // this is only what shows in the gap before that.
+        backgroundMessage: user === "recording" ? "Recording your track..." : "Following your route...",
+        requestPermissions: true,
+        stale: false,
+        distanceFilter: BG_WATCHER_DISTANCE_FILTER,
+      },
+      (location, error) => {
+        if (error || !location) return;
+        onRecordingFix(location);
+        if (isNavigationTrackingRef.current) feedNavigationFix(location);
+      },
+    );
+    bgWatcherStartingRef.current = starting;
+    try {
+      bgWatcherIdRef.current = await starting;
+    } catch {
+      // Permission refused or location off - the watcher's own callback reports
+      // it; there is simply no background feed.
+    } finally {
+      bgWatcherStartingRef.current = null;
+    }
+  };
+
+  // Give the watcher up. It only really goes when the other user has gone too.
+  // Returns whether it did, because the foreground service's notification must
+  // not be cancelled while the service is still up - see the call sites.
+  const releaseBgWatcher = async (user) => {
+    bgWatcherUsersRef.current.delete(user);
+    if (bgWatcherUsersRef.current.size > 0) return false;
+    if (bgWatcherStartingRef.current) { await bgWatcherStartingRef.current.catch(() => {}); }
+    const id = bgWatcherIdRef.current;
+    if (id == null) return false;
+    bgWatcherIdRef.current = null;
+    await BackgroundGeolocation.removeWatcher({ id }).catch(() => {});
+    return true;
+  };
+
+  // Whether a recording currently holds the watcher, and with it the foreground
+  // service's notification. When it does not, a route takes that notification
+  // over instead of posting a second one of its own.
+  const recordingHoldsBgWatcher = () => bgWatcherUsersRef.current.has("recording");
+
   // The path mode is asked for before anything starts, so the dock and the
   // saved path carry it from the first point.
   const handleRecordPath = () => {
@@ -8650,57 +8809,23 @@ export default function Map() {
       setRecordingElapsed(Math.max(0, Math.floor(elapsedMs / 1000)));
     }, 1000);
 
-    // On native platforms, start a background geolocation watcher
+    // On native platforms, take a share of the background watcher. A route
+    // running at the same time already holds it, and with it the foreground
+    // service's notification, which this recording is about to take over.
     if (Capacitor.isNativePlatform()) {
-      const watcherId = await BackgroundGeolocation.addWatcher(
-        {
-          backgroundTitle: "RontoMap",
-          backgroundMessage: "Recording your track...",
-          requestPermissions: true,
-          stale: false,
-          distanceFilter: 5,
-        },
-        (location, error) => {
-          if (error) return;
-          if (!location || !isRecordingTrackRef.current || isRecordingPausedRef.current || !trackPathRef.current) return;
-          const coord = [location.longitude, location.latitude];
-          trackCoordsRef.current.push(coord);
-          setRecordingDistance(haversineDistance(trackCoordsRef.current));
-          // Feed the live distance to the native notification (it ticks the time itself).
-          RecordingNotification.setStats({
-            distanceText: formatDistance(haversineDistance(trackCoordsRef.current)),
-          }).catch(() => {});
-          const path = trackPathRef.current;
-          const source = mapRef.current?.getSource(path.sourceId);
-          if (source && trackCoordsRef.current.length >= 2) {
-            source.setData({
-              type: "FeatureCollection",
-              features: [pathHelpersRef.current.makeFeature(trackCoordsRef.current, "#ff0000")],
-            });
-          }
-          // Update end vertex position (hidden while recording, shown on pause/stop)
-          const h = pathHelpersRef.current;
-          if (path.vertices.length === 1) {
-            const endMarker = h.createPathVertex(coord);
-            endMarker.setDraggable(false);
-            endMarker.getElement().classList.remove("active-path-feature");
-            endMarker.getElement().style.display = "none";
-            path.vertices.push({ lngLat: coord, marker: endMarker, path });
-            h.updateVertexStyles(path);
-          } else if (path.vertices.length >= 2) {
-            const endV = path.vertices[path.vertices.length - 1];
-            endV.lngLat = coord;
-            endV.marker.setLngLat(coord);
-            endV.marker.getElement().style.display = "none";
-          }
-        },
-      );
-      bgWatcherIdRef.current = watcherId;
+      const routeHeldService = !recordingHoldsBgWatcher() && bgWatcherUsersRef.current.has("route");
+      await acquireBgWatcher("recording");
       // Start the native per-second elapsed ticker on the recording notification.
-      RecordingNotification.start({
+      await RecordingNotification.start({
         title: "Recording track",
         distanceText: formatDistance(recordingDistance),
       }).catch(() => {});
+      // Only now move the route onto a notification of its own: this recording's
+      // slot is already posting to the service's id, so that id is never left
+      // empty while the service behind it is running.
+      if (routeHeldService) {
+        RecordingNotification.ownService({ slot: "route", own: false }).catch(() => {});
+      }
     }
 
     showToast("Recording path is started.", 2000);
@@ -8825,19 +8950,26 @@ export default function Map() {
       map.setPaintProperty(path._arrowLayerId, "text-color", "#ff6f00");
     }
 
-    // Stop background watcher on native platforms. The notification is the
-    // location service's own, and removing the watcher takes it down — so the
-    // ticker has to be silent BEFORE that: a tick landing after the service is
-    // gone would put the notification back as a plain one nothing ever clears.
-    // The final clear is for whatever slipped through regardless.
-    if (bgWatcherIdRef.current != null) {
-      const watcherId = bgWatcherIdRef.current;
-      bgWatcherIdRef.current = null;
+    // Give up this recording's share of the background watcher. The notification
+    // is the location service's own, and taking the service down takes it with
+    // it — so the ticker has to be silent BEFORE that: a tick landing after the
+    // service is gone would put the notification back as a plain one nothing
+    // ever clears. The final clear is for whatever slipped through regardless.
+    if (bgWatcherUsersRef.current.has("recording")) {
       RecordingNotification.stop()
         .catch(() => {})
-        .then(() => BackgroundGeolocation.removeWatcher({ id: watcherId }))
-        .catch(() => {})
-        .then(() => RecordingNotification.stop({ clear: true }))
+        .then(() => releaseBgWatcher("recording"))
+        .then((serviceWentDown) => {
+          // A route still tracing keeps the watcher, so the service and its
+          // notification are still up. Cancelling that notification would pull
+          // it out from under a live foreground service, so the route takes it
+          // over instead — and gets its clock back in the bargain.
+          if (serviceWentDown) return RecordingNotification.stop({ clear: true });
+          if (bgWatcherUsersRef.current.has("route")) {
+            return RecordingNotification.ownService({ slot: "route", own: true });
+          }
+          return undefined;
+        })
         .catch(() => {});
     }
 
@@ -9408,14 +9540,24 @@ export default function Map() {
     routeTotalDistanceRef.current =
       path.routeDistance ?? haversineDistance(pathHelpersRef.current.getRenderedLine(path));
 
+    // The route's notification owns the foreground service's one unless a
+    // recording is already holding it, in which case it posts its own alongside
+    // — two activities, two notifications, as each has its own clock.
+    const routeOwnsService = !recordingHoldsBgWatcher();
     (resume
-      ? RecordingNotification.resume({ slot: "route", title: navNotifTitle(false) })
+      ? RecordingNotification.resume({ slot: "route", title: navNotifTitle(false), own: routeOwnsService })
       : RecordingNotification.start({
           slot: "route",
           title: navNotifTitle(false),
           distanceText: formatDistance(haversineDistance(passedPathCoordsRef.current)),
+          own: routeOwnsService,
         })
     ).catch(() => {});
+
+    // Take the shared background watcher, so the route keeps being followed with
+    // the app off screen. Without it the only source of fixes is the WebView's
+    // poll, which a hidden WebView throttles and then stops.
+    acquireBgWatcher("route");
 
     // Start bearing tracking, unless the bearing control is what got us here.
     if (startBearing) {
@@ -9585,7 +9727,15 @@ export default function Map() {
   // cancelling and by a trace that reached its end point.
   const endNavigation = () => {
     if (offPathTimerRef.current) { clearTimeout(offPathTimerRef.current); offPathTimerRef.current = null; }
-    RecordingNotification.stop({ slot: "route", clear: true }).catch(() => {});
+    // Silence the ticker, then give up the watcher, then clear — in that order,
+    // because this notification may BE the foreground service's own (it is
+    // whenever no recording is running), and a tick or a cancel landing on the
+    // wrong side of the service going down leaves a notification behind.
+    RecordingNotification.stop({ slot: "route" })
+      .catch(() => {})
+      .then(() => releaseBgWatcher("route"))
+      .then(() => RecordingNotification.stop({ slot: "route", clear: true }))
+      .catch(() => {});
     pathHelpersRef.current.removePassedPathLayer();
 
     const path = activePathRef.current;

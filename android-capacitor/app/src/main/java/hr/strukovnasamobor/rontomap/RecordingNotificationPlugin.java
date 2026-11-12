@@ -30,8 +30,14 @@ import java.util.concurrent.TimeUnit;
  *  - "recording" (the default) replaces the background-geolocation plugin's
  *    foreground-service notification in place (same channel + id 28351), so a
  *    recording shows a single notification. Its removeWatcher() clears it.
- *  - "route" (navigation and path tracing) is a plain ongoing notification of
- *    its own. No service stands behind it, so JS passes clear=true to stop().
+ *  - "route" (navigation and path tracing) normally a plain ongoing notification
+ *    of its own, with no service behind it, so JS passes clear=true to stop().
+ *    But a route can also run with no recording alongside it, and then it is the
+ *    route that holds the background watcher and its foreground service. Rather
+ *    than show the service's notification plus its own, it takes the service's
+ *    over in place exactly as a recording does, on JS's say-so (own / the
+ *    ownService method). Ownership moves back and forth as recordings start and
+ *    stop under a running route, so the service is never left without one.
  *
  * Elapsed time is ticked NATIVELY (a 1s ScheduledExecutorService) so it keeps
  * counting every second even when the app is backgrounded — JS setInterval is
@@ -59,8 +65,16 @@ public class RecordingNotificationPlugin extends Plugin {
         volatile String distanceText = "";
         volatile String title = "";
         volatile boolean running = false;
+        // True when this slot has taken over the background-geolocation
+        // service's notification instead of posting its own.
+        volatile boolean ownsService = false;
 
         Slot(int notificationId) { this.notificationId = notificationId; }
+
+        /** The id this slot currently posts to. */
+        int activeId() {
+            return ownsService ? RECORDING_NOTIFICATION_ID : notificationId;
+        }
 
         long elapsedSec() {
             long now = System.currentTimeMillis();
@@ -77,9 +91,51 @@ public class RecordingNotificationPlugin extends Plugin {
         return "route".equals(call.getString("slot", "recording")) ? route : recording;
     }
 
+    private Slot other(Slot s) {
+        return s == recording ? route : recording;
+    }
+
+    private boolean isLiveOn(Slot s, int notificationId) {
+        return s.running && s.activeId() == notificationId;
+    }
+
+    private void cancel(int notificationId) {
+        Context ctx = getContext();
+        NotificationManager nm = ctx == null ? null
+                : (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nm != null) nm.cancel(notificationId);
+    }
+
+    /**
+     * Move a slot on or off the service's notification, clearing the id it
+     * leaves so the handover never shows two. The recording slot already posts
+     * to the service's id, so for it this is a no-op.
+     */
+    private void setOwnsService(Slot s, boolean own) {
+        synchronized (s) {
+            if (s == recording || s.ownsService == own) return;
+            int vacated = s.activeId();
+            s.ownsService = own;
+            // Only clear the id being left if nothing else is showing there. The
+            // service's own id is handed over while the service is still running,
+            // and cancelling it out from under a live foreground service would
+            // leave it without the notification Android requires it to have.
+            if (vacated != s.activeId() && !isLiveOn(other(s), vacated)) cancel(vacated);
+            post(s);
+        }
+    }
+
+    /** Hand the service's notification to this slot, or take it back. */
+    @PluginMethod
+    public void ownService(PluginCall call) {
+        setOwnsService(slotFor(call), Boolean.TRUE.equals(call.getBoolean("own", false)));
+        call.resolve();
+    }
+
     @PluginMethod
     public void start(PluginCall call) {
         Slot s = slotFor(call);
+        setOwnsService(s, Boolean.TRUE.equals(call.getBoolean("own", false)));
         synchronized (s) {
             s.title = call.getString("title", "Recording track");
             s.distanceText = call.getString("distanceText", "");
@@ -115,6 +171,9 @@ public class RecordingNotificationPlugin extends Plugin {
     @PluginMethod
     public void resume(PluginCall call) {
         Slot s = slotFor(call);
+        if (call.hasOption("own")) {
+            setOwnsService(s, Boolean.TRUE.equals(call.getBoolean("own", false)));
+        }
         if (s.running && s.pauseStartMs > 0) {
             s.pauseAccumulatedMs += System.currentTimeMillis() - s.pauseStartMs;
             s.pauseStartMs = 0;
@@ -141,7 +200,10 @@ public class RecordingNotificationPlugin extends Plugin {
                 Context ctx = getContext();
                 NotificationManager nm = ctx == null ? null
                         : (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
-                if (nm != null) nm.cancel(s.notificationId);
+                if (nm != null) nm.cancel(s.activeId());
+                // Nothing of this slot is on screen any more, so it holds no
+                // claim on the service's notification either.
+                s.ownsService = false;
             }
         }
         call.resolve();
@@ -188,7 +250,7 @@ public class RecordingNotificationPlugin extends Plugin {
                     .setOnlyAlertOnce(true)
                     .setContentIntent(pi)
                     .build();
-            nm.notify(s.notificationId, n);
+            nm.notify(s.activeId(), n);
         }
     }
 }
