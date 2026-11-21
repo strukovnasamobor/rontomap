@@ -65,7 +65,7 @@ import { Share } from "@capacitor/share";
 import { Keyboard } from "@capacitor/keyboard";
 import polyline from "@mapbox/polyline";
 import { db } from "../../firebase";
-import { collection, addDoc, doc, getDoc, getDocFromCache, serverTimestamp } from "firebase/firestore";
+import { collection, addDoc, doc, getDoc, getDocFromCache, getDocFromServer, serverTimestamp } from "firebase/firestore";
 import { collectFeatures, collectMarker, collectPath, materializeFeatures, materializePathFromShape } from "../services/io/converters/rontoJson";
 import { importFeatures, importFromContent, exportFeatures } from "../services/io";
 
@@ -77,6 +77,45 @@ const readFeaturesCollection = (collectionId) => {
   const ref = doc(db, "featuresCollections", collectionId);
   if (!navigator.onLine) return getDocFromCache(ref).catch(() => getDoc(ref));
   return getDoc(ref);
+};
+
+// The embedded map's read: whatever the local cache holds is drawn straight
+// away, then the server is asked in the background. navigator.onLine cannot be
+// trusted for this - an Android WebView on mobile data with no signal still
+// reports true, and getDoc() then sat out the 10s timeout before drawing the
+// cached path. onData(data) runs for the cached copy, and again only if the
+// server's copy differs from it; onFail() only when neither read found the doc.
+const loadFeaturesCollection = (collectionId, onData, onFail) => {
+  const ref = doc(db, "featuresCollections", collectionId);
+  let cachedJson = null;
+
+  const fromServer = () =>
+    getDocFromServer(ref).then(
+      (snap) => {
+        if (!snap.exists()) {
+          if (cachedJson === null) onFail?.();
+          return;
+        }
+        const data = snap.data();
+        if (JSON.stringify(data) === cachedJson) return;
+        onData(data);
+      },
+      (err) => {
+        // With the cached copy already on the map, offline is not a failure.
+        if (cachedJson === null) onFail?.(err);
+        else console.log("featuresCollection > server refresh skipped:", collectionId, err?.code || err);
+      },
+    );
+
+  getDocFromCache(ref)
+    .then((snap) => {
+      if (!snap.exists()) return;
+      const data = snap.data();
+      cachedJson = JSON.stringify(data);
+      onData(data);
+    })
+    .catch(() => {})
+    .finally(fromServer);
 };
 
 // base64url helpers (no padding, URL-safe)
@@ -990,6 +1029,13 @@ export default function Map() {
   // Which features collection is on the map right now. The URL puts the first
   // one there; an embedding page can swap it for another without reloading.
   const embedFeaturesIdRef = useRef(new URLSearchParams(window.location.search).get("features_collection"));
+  // Swaps the features on the map for a collection's data in place; assigned
+  // in the embed command effect, also used when the server has a fresher copy
+  // of what was first drawn from the cache.
+  const replaceEmbeddedFeaturesRef = useRef(null);
+  // The collection most recently asked for. Reads finish in any order, so one
+  // for a collection that has since been swapped away must not land.
+  const embedWantedIdRef = useRef(embedFeaturesIdRef.current);
   // Guards prepare-offline: the tile sweep is long, and a second one
   // started on top of it would double the work and the progress numbers.
   const embedOfflineBusyRef = useRef(false);
@@ -5882,6 +5928,28 @@ export default function Map() {
       }
     };
 
+    // Swaps everything on the map for a collection's features. Used by
+    // set-features, and when the server answers with a newer copy of what was
+    // drawn from the cache. A collection asked for since wins over this one.
+    const replaceEmbeddedFeatures = (collectionId, features) => {
+      if (collectionId !== embedWantedIdRef.current) return;
+      whenStyleReady(() => {
+        if (collectionId !== embedWantedIdRef.current) return;
+        confirmDeleteAllFeatures();
+        const result = materializeFeatures(features, {
+          createMarker: createMarkerRef.current,
+          pathHelpersRef,
+          updateMarkerLabel,
+          deserializeSnappedSegments,
+          pathsRef,
+        });
+        syncLabelsNow();
+        embedFeaturesIdRef.current = collectionId;
+        console.log(`Embed > set-features: ${collectionId} (${result.markerCount} markers, ${result.pathCount} paths)`);
+      });
+    };
+    replaceEmbeddedFeaturesRef.current = replaceEmbeddedFeatures;
+
     const handleCommand = (event) => {
       if (event.source !== window.parent) return;
       const data = event.data;
@@ -5893,31 +5961,16 @@ export default function Map() {
           console.warn("Embed > set-features without a collection id");
           return;
         }
+        embedWantedIdRef.current = collectionId;
         if (collectionId === embedFeaturesIdRef.current) return;
         // Fetch first, swap second: a failed read must leave the map holding
-        // the features it already has rather than emptying it.
-        readFeaturesCollection(collectionId)
-          .then((snap) => {
-            if (!snap.exists()) {
-              console.warn("Embed > set-features: no collection", collectionId);
-              return;
-            }
-            const features = snap.data();
-            whenStyleReady(() => {
-              confirmDeleteAllFeatures();
-              const result = materializeFeatures(features, {
-                createMarker: createMarkerRef.current,
-                pathHelpersRef,
-                updateMarkerLabel,
-                deserializeSnappedSegments,
-                pathsRef,
-              });
-              syncLabelsNow();
-              embedFeaturesIdRef.current = collectionId;
-              console.log(`Embed > set-features: ${collectionId} (${result.markerCount} markers, ${result.pathCount} paths)`);
-            });
-          })
-          .catch((err) => console.warn("Embed > set-features failed:", err));
+        // the features it already has rather than emptying it. The cached
+        // copy swaps in at once, and a fresher one from the server after it.
+        loadFeaturesCollection(
+          collectionId,
+          (features) => replaceEmbeddedFeatures(collectionId, features),
+          (err) => console.warn("Embed > set-features: no collection", collectionId, err || ""),
+        );
         return;
       }
 
@@ -6712,35 +6765,52 @@ export default function Map() {
     // Recreate markers from a Firebase features collection
     const featuresCollectionId = link.get("features_collection");
     if (featuresCollectionId) {
-      readFeaturesCollection(featuresCollectionId)
-        .then((snap) => {
-          if (!snap.exists()) {
-            onLinkImportFailed();
-            postEmbedReady();
-            return;
-          }
-          const data = snap.data();
-          // The fetch can outrun the style; materializing before it is ready
-          // throws "Style is not done loading" out of ensurePathLayer.
-          whenStyleReady(() => {
-            const beforeM = new Set(markersRef.current);
-            const beforeP = new Set(pathsRef.current);
-            const result = materializeFeatures(data, { createMarker, pathHelpersRef, updateMarkerLabel, deserializeSnappedSegments, pathsRef });
-            const parts = [];
-            if (result.markerCount > 0) parts.push(`${result.markerCount} marker${result.markerCount > 1 ? "s" : ""}`);
-            if (result.pathCount > 0) parts.push(`${result.pathCount} path${result.pathCount > 1 ? "s" : ""}`);
-            let msg = parts.length ? `Imported ${parts.join(", ")}.` : "Imported 0 features.";
-            if (result.skipped > 0) msg += ` ${result.skipped} skipped.`;
-            finishLinkImport(beforeM, beforeP, msg);
-            // The features are on the map now, so a page waiting on ready can
-            // ask for one of them straight away.
-            postEmbedReady();
-          });
-        })
-        .catch(() => {
-          onLinkImportFailed();
+      const failImport = () => {
+        onLinkImportFailed();
+        postEmbedReady();
+      };
+      const drawLinkFeatures = (data) => {
+        // The fetch can outrun the style; materializing before it is ready
+        // throws "Style is not done loading" out of ensurePathLayer.
+        whenStyleReady(() => {
+          const beforeM = new Set(markersRef.current);
+          const beforeP = new Set(pathsRef.current);
+          const result = materializeFeatures(data, { createMarker, pathHelpersRef, updateMarkerLabel, deserializeSnappedSegments, pathsRef });
+          const parts = [];
+          if (result.markerCount > 0) parts.push(`${result.markerCount} marker${result.markerCount > 1 ? "s" : ""}`);
+          if (result.pathCount > 0) parts.push(`${result.pathCount} path${result.pathCount > 1 ? "s" : ""}`);
+          let msg = parts.length ? `Imported ${parts.join(", ")}.` : "Imported 0 features.";
+          if (result.skipped > 0) msg += ` ${result.skipped} skipped.`;
+          finishLinkImport(beforeM, beforeP, msg);
+          // The features are on the map now, so a page waiting on ready can
+          // ask for one of them straight away.
           postEmbedReady();
         });
+      };
+
+      if (isEmbeddedRef.current) {
+        // Drawn from the cache at once, then swapped in place if the server
+        // has something newer. Standalone keeps the single read below: its
+        // import is undoable, and a later swap would pull it out from under
+        // the undo toast.
+        let drawn = false;
+        loadFeaturesCollection(
+          featuresCollectionId,
+          (data) => {
+            if (!drawn) {
+              drawn = true;
+              drawLinkFeatures(data);
+            } else {
+              replaceEmbeddedFeaturesRef.current?.(featuresCollectionId, data);
+            }
+          },
+          failImport,
+        );
+      } else {
+        readFeaturesCollection(featuresCollectionId)
+          .then((snap) => (snap.exists() ? drawLinkFeatures(snap.data()) : failImport()))
+          .catch(failImport);
+      }
     }
   };
   importFromLinkRef.current = importFromLink;
