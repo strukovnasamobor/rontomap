@@ -41,6 +41,10 @@ FEATURE COLLECTIONS - review with feature list panel and feature detail panel
       app, so the one obvious place to find it wins; a second import the same day is
       "Imported on yyyy-mm-dd (2)"; one share link is one import however many features it carries;
       undoing an import removes its folder if nothing is left in it
+    - the import toast stays until the user dismisses it (its x, or swiping it away), unlike
+      every other undo toast, which expires after 5 s: it names what arrived and is meant to
+      stay readable. Its Undo lives exactly as long, so an Undo pressed much later still
+      removes the import - any renaming or sights added since included. Dismissing commits it
 
 PARALLEL ACTIONS - review
 - https://docs.google.com/spreadsheets/d/1no5W-1mDotm4eKghzjjsqetgft5C3l7uLmeSO7iH2jw/edit?gid=1762517575#gid=1762517575
@@ -87,11 +91,33 @@ UI DESIGN & INTERACTIONS
 - top
     - left - search icon (in embedded rontomap icon)
     - middle - path actions (in embedded hidden)
-    - right - menu (in embedded zoom in/out icons) & compass icon
+    - right - menu (in embedded zoom in/out icons)
 - bottom
     - left - attribute icon & scale
     - middle - toast msg
-    - right - map change style & location icon (in embedded hidden, unless &geolocation=true)
+    - right - compass icon & map change style & location icon (location in embedded hidden,
+      unless &geolocation=true)
+      - the compass sits immediately LEFT of the map-change-style icon, sharing a row with it,
+        and identically so in embedded mode
+      - facing north there is nothing to reset, so the whole compass control is hidden (not just
+        its button, which would leave the control group painting an empty box and holding a gap
+        in the row); the style icon does not move as the compass comes and goes
+      - the heading cone on the blue location dot is HIDDEN until walking has shown which way it
+        really points. Mapbox drives that cone from the device compass, which on Android is -alpha
+        of deviceorientationabsolute - a true compass heading only while the phone is flat. Out of
+        a pocket the phone is near vertical, that axis degenerates and alpha flips by ~180 degrees,
+        which is why the cone so often pointed backwards on opening the app.
+      - so the compass is calibrated, not replaced: while the user walks a straight stretch the
+        reported course is compared with the compass, and the difference - quantised to 0/90/180/270,
+        since GPS course noise would otherwise nudge a compass that is already right - becomes a
+        correction added to every later compass reading. Once calibrated the cone is live off the
+        compass again, so turning the phone on the spot still turns the cone.
+      - three straight stretches agreeing on a different correction replace it, so a phone moved
+        from pocket to hand re-calibrates instead of staying wrong
+      - withholding a heading IS the hidden state: Mapbox shows the cone only while its _heading is
+        a number, so there is no CSS of our own for this
+      - the map's own bearing in bearing-tracking mode is deliberately NOT part of this; it keeps
+        coming from the reported course, falling back to the current map bearing
 - right sidebar - side menu 
 - left mouse click / tap on map => features list panel opens (in embedded disabled) default sorted by the distance from map center when clicked
 - left mouse click / tap on feature => feature detail panel opens (in embedded disabled, posts marker-click/path-click to the embedding page instead)
@@ -109,6 +135,8 @@ UI DESIGN & INTERACTIONS
     - Add marker here
     - Add sight here (if clicked near path)
     - Create path here
+    - Record path (no "here": a recording starts from the user's position, not the clicked
+      point; hidden while a recording is running, as in the side menu)
 - mouse wheel => zoom in/out
 - mouse over feature (alias cursor icon)
 - mouse over draggable feature (grab cursor icon)
@@ -124,8 +152,16 @@ SIDE MENU
     - Add marker
     - Create path
     - Record path
-        - before it starts, a dialog asks how the user for path recording mode: Free, Foot, Bike or Car (Free preselected);
-          the mode is only a label for the path icon and info line, the recorded trail is never snapped to roads
+        - nothing is asked first - recording starts straight away and is always Free, so a recorded
+          track carries no Foot/Bike/Car label; the recorded trail is never snapped to roads
+        - there is no separate Start: tapping the menu item begins recording at once (the dock's pill
+          appears straight away). Backing out is the side menu's "Stop path recording", which asks to
+          confirm and then saves nothing, per the 5 m gate below
+        - paths recorded before this, and imported ones, still carry a mode and still show its label
+        - a recorded track takes a new point only once the user has moved 5 m (one shared gate for
+          both the native watcher and the web branch), which keeps GPS jitter out of the line and out
+          of the measured distance. A recording that never moved therefore stays a single point and
+          is discarded on stop - starting by accident and stopping saves nothing
         - recording pill (elapsed & distance) actions, left to right
             - Show/Hide recording path - ion-icon name="eye-outline"/ion-icon name="eye-off-outline"
             - Pause recording - ion-icon name="pause-outline"
@@ -219,8 +255,12 @@ FEATURE DETAIL PANEL
     - Set name to marker/sight/path - ion-icon name="pencil-outline"
     - Copy embedded marker/sight/path - ion-icon name="code-slash-outline"
     - Export marker/sight/path - ion-icon name="download-outline"
-    - Close - ion-icon name="close-outline" - closes the detail panel; the feature list reopens
-      if that is where the feature was opened from
+    - Back to collection / Back to path (for a sight) - ion-icon name="arrow-back-outline" -
+      LAST in the row, in the slot the Close used to hold, and there is no Close: leaving a
+      feature means going back, not shutting everything. A sight returns to its path's details,
+      anything else to the feature list at the feature's own folder. It is not one of the header
+      row's side actions - those act ON the feature. The panel can still be dismissed outright by
+      swiping it left, or by dragging the bottom sheet down past its minimum
 - show name of ther feature
 - show details for marker/sight - coordinates, for path - snapping, distance, duration (for snapped paths)
 - in the detail panel the side action icons appear on CLICK, not on mouse over - a click on a row
@@ -339,9 +379,19 @@ FEATURES LIST PANEL
   path. It tracks the active folder, which outlives the list panel, so closing the list does not
   bring everything back; stepping out to the root does
 - three things are drawn whatever the folder says: the feature whose detail panel is open (so
-  opening one from the map cannot hide it), a path still being drawn or recorded, and a live
-  navigation/tracing route. An import drills the list into its own folder, so what just arrived is
-  never out of sight
+  opening one from the map cannot hide it), a path still being drawn or recorded, and the path
+  currently being navigated or traced. An import drills the list into its own folder, so what just
+  arrived is never out of sight
+  - "being navigated or traced" means the ACTIVE path, not any path flagged as a route: that flag
+    is persisted, so testing it exempted every route ever saved for the rest of its life, and
+    after a reload a route filed in a folder was drawn at root while the list correctly left it
+    out. A trace in progress is deliberately left "finished", so being the active path is what
+    keeps it on the map while it is walked
+  - the scope pass runs again whenever a path's map layers are created, not just when the
+    folder or filter changes: layers are added with no visibility, so they come up visible, and
+    on a reload they are added LATE - the helper defers itself every 100 ms until the style has
+    loaded. A pass that ran in between hid the path's vertices but found no layer to hide, which
+    showed a path in a closed folder as a bare line with no start or end vertex
 - mouse over a row glows its feature GREY on the map and nothing else - no side actions, no camera
   move, no change to the row's own background
 - the first click SELECTS the row: a soft blue background, its side actions, and the feature framed

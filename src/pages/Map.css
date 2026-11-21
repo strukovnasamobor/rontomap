@@ -190,6 +190,16 @@ ion-page:has(#map-ioncontent) {
   order: 1;
 }
 
+/* The compass and the map-style switcher side by side, compass on the left.
+   The bottom-right group itself is a column, so this row is what puts the two
+   next to each other; it takes the slot the style switcher held on its own. */
+.mapboxgl-ctrl-bottom-right .ctrl-bottom-row {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-end;
+  order: 1;
+}
+
 .mapboxgl-ctrl-bottom-right .ctrl-location-container {
   order: 2;
 }

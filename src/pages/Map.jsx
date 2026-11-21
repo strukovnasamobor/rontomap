@@ -28,7 +28,7 @@ import {
   chevronUpOutline,
   chevronDownOutline,
   chevronForwardOutline,
-  chevronBackOutline,
+  arrowBackOutline,
   locationOutline,
   pinOutline,
   analyticsOutline,
@@ -728,6 +728,18 @@ export default function Map() {
   const mapContainerRef = useRef(null);
   const geolocateRef = useRef(null);
   const locationControlRef = useRef(null);
+  // The heading cone on the user dot. Mapbox drives it from the device compass,
+  // which on Android is -alpha of deviceorientationabsolute - a real compass
+  // heading only while the phone is FLAT. Out of a pocket the phone is near
+  // vertical, that axis degenerates and alpha flips by ~180 degrees, which is why
+  // the cone so often pointed backwards. So the compass is not trusted until
+  // walking has shown how far out it is; see applyUserHeading / observeHeadingFromMovement.
+  const compassRawRef = useRef(null);      // latest raw compass angle, 0-360
+  const headingOffsetRef = useRef(0);      // correction to add: 0, 90, 180 or 270
+  const headingTrustedRef = useRef(false); // false hides the cone - the state on every open
+  const headingSamplesRef = useRef([]);    // { course, compass, t } while walking straight
+  const headingLastFixRef = useRef(null);  // { lng, lat, t }, to derive a course from movement
+  const headingRecalibRef = useRef([]);    // consecutive offsets disagreeing with the stored one
   const markersRef = useRef([]);
   const [fullscreen, setFullscreen] = useState(false);
   const LABEL_ZOOM_THRESHOLD = 12;
@@ -820,6 +832,22 @@ export default function Map() {
   // which is declared before the callbacks are defined.
   const persistSavedFeaturesRef = useRef(null);
   const hydrateSavedFeaturesRef = useRef(null);
+  // applyFeatureVisibility is declared far below, but ensurePathLayer needs it:
+  // path layers are added with no explicit visibility, so any layer created
+  // after the scope pass has already run comes up visible - and ensurePathLayer
+  // defers itself by 100 ms for as long as the style is still loading, which on
+  // a reload is exactly what happens. Coalesced, because it is called once per
+  // path and hydration brings them in together.
+  const applyFeatureVisibilityRef = useRef(null);
+  const visibilityPassQueuedRef = useRef(false);
+  const scheduleFeatureVisibility = () => {
+    if (visibilityPassQueuedRef.current) return;
+    visibilityPassQueuedRef.current = true;
+    Promise.resolve().then(() => {
+      visibilityPassQueuedRef.current = false;
+      applyFeatureVisibilityRef.current?.();
+    });
+  };
   // Same bridge for the share-link importer: the setup effect has [] deps and
   // would otherwise capture the first render's closure.
   const importFromLinkRef = useRef(null);
@@ -860,6 +888,9 @@ export default function Map() {
   // showing a toast always cancels the pending clear first. Callers that own
   // their own lifetime (the undo windows) pass ms = 0 and clear it themselves.
   const toastTimerRef = useRef(null);
+  // commitPendingImport is defined thousands of lines below but dismissToast
+  // needs it: an import's Undo has no expiry and ends when its toast does.
+  const commitPendingImportRef = useRef(null);
   const showToast = useCallback((msg, ms = 2000) => {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     toastTimerRef.current = null;
@@ -874,6 +905,9 @@ export default function Map() {
   const dismissToast = useCallback(() => {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     toastTimerRef.current = null;
+    // An import's Undo has no expiry timer and lives on its toast, so taking
+    // the toast away - by the X or by swiping it off - is what commits it.
+    commitPendingImportRef.current?.();
     setToastMsg(null);
   }, []);
   useEffect(() => () => { if (toastTimerRef.current) clearTimeout(toastTimerRef.current); }, []);
@@ -916,6 +950,7 @@ export default function Map() {
   // watcher only feeds the navigation pipeline once this has gone stale, so the
   // poll stays the sole source while the app is on screen.
   const lastPollFixAtRef = useRef(0);
+  const bgInjectingRef = useRef(false);
   const [isRecordingPaused, setIsRecordingPaused] = useState(false);
   const isRecordingPausedRef = useRef(false);
   const [isRecordingStarted, setIsRecordingStarted] = useState(false);
@@ -927,10 +962,6 @@ export default function Map() {
   const recordingTimerRef = useRef(null);
   const [recordingDistance, setRecordingDistance] = useState(0);
   const [stopRecordingAlert, setStopRecordingAlert] = useState(false);
-  // How the path is being recorded. A label on the saved path, never routing —
-  // see _pathRecordingMode. null is Free.
-  const [recordModeAlert, setRecordModeAlert] = useState(false);
-  const recordModeRef = useRef(null);
   const [routeDistance, setNavRouteDistance] = useState(null);
   const [routeDuration, setNavRouteDuration] = useState(null);
   const [cancelNavigationAlert, setCancelNavigationAlert] = useState(false);
@@ -1445,6 +1476,19 @@ export default function Map() {
     return 6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   };
 
+  // How far the user must have moved before a recorded track takes another
+  // point. It keeps GPS jitter out of the line and out of the measured
+  // distance, and it is what makes a recording that never moved stay a single
+  // point, so the degenerate-track guard in confirmStopTrackRecording discards
+  // it instead of saving a zero-length path of one repeated coordinate.
+  // Both recording paths gate on this - the native background watcher's
+  // onRecordingFix and the web-only branch of the "geolocate" handler.
+  const RECORD_MIN_STEP_M = 5;
+  const recordingStepTooSmall = (coord) => {
+    const prev = trackCoordsRef.current[trackCoordsRef.current.length - 1];
+    return !!prev && haversinePoint(prev[1], prev[0], coord[1], coord[0]) < RECORD_MIN_STEP_M;
+  };
+
   const formatDistance = (meters) => {
     if (meters == null) return "";
     if (meters < 1000) return `${Math.round(meters)} m`;
@@ -1709,6 +1753,13 @@ export default function Map() {
           },
         });
         path._arrowLayerId = arrowLayerId;
+        // All three were just added with no visibility, so they are visible.
+        // If this path belongs to a folder that is not the open one, the scope
+        // pass has to run again now that there is something to hide: it may
+        // well have run already - while the style was still loading and this
+        // function was deferring itself - and hidden the path's vertices while
+        // finding no layer, which is what left a bare line on the map.
+        scheduleFeatureVisibility();
       }
       // If we deferred above, materialisation already ran updatePathLine while
       // the source did not exist yet - and that returns silently, which is how
@@ -2973,7 +3024,7 @@ export default function Map() {
           this._pitchOnStopTrackingBearing != null
             ? this._pitchOnStopTrackingBearing
             : defaultPitchOnUserTrackingBearing;
-        let bearing = this._lastPositionBearing ? this._lastPositionBearing : this._map.getBearing();
+        let bearing = Number.isFinite(this._lastPositionBearing) ? this._lastPositionBearing : this._map.getBearing();
 
         // Set map to last position with bearing
         if (lat != null && long != null) {
@@ -3013,7 +3064,7 @@ export default function Map() {
         let long = this._lastPostionLong;
         let zoom = this._zoomOnStartTrackingBearing;
         let pitch = this._pitchOnStartTrackingBearing;
-        let bearing = this._lastPositionBearing ? this._lastPositionBearing : this._map.getBearing();
+        let bearing = Number.isFinite(this._lastPositionBearing) ? this._lastPositionBearing : this._map.getBearing();
 
         this.disableUserInteractions();
         mapRef.current.getContainer().classList.remove("geolocate-track-user-bearing");
@@ -3263,11 +3314,172 @@ export default function Map() {
     // All camera movement is handled by the custom "geolocate" event handler below.
     geolocateRef.current._updateCamera = () => {};
 
+    // DEAD CODE, kept only so the intent is not lost: in mapbox-gl 3.x `_setup`
+    // is a BOOLEAN FLAG (`this._setup = true` at the end of `_setupUI`), not a
+    // method. So `originalSetupFn` below is undefined, nothing ever calls this
+    // function, and `_setupUI` overwrites it with `true` when the control is
+    // added to the map. The control therefore uses its normal watchPosition and
+    // there is no 500 ms poll. Either wire this up properly against `_setupUI`
+    // or delete it - do not read it as a description of what happens.
     // Override the internal geolocation watcher to poll at a custom interval
     // for more frequent updates than the default watchPosition provides.
     const GPS_POLL_INTERVAL = 500; // ms — poll every 500ms for faster updates
-    geolocateRef.current._onSuccess = geolocateRef.current._onSuccess.bind(geolocateRef.current);
+    const boundOnSuccess = geolocateRef.current._onSuccess.bind(geolocateRef.current);
+    geolocateRef.current._onSuccess = (position) => {
+      // Every fix that came from the WebView's own geolocation stamps the clock
+      // the background watcher's failover gate reads. The watcher's own
+      // injections must NOT stamp it, or the gate would hold itself shut.
+      if (!bgInjectingRef.current) lastPollFixAtRef.current = Date.now();
+      boundOnSuccess(position);
+    };
     geolocateRef.current._onError = geolocateRef.current._onError.bind(geolocateRef.current);
+    // ---- The user dot's heading cone --------------------------------------
+    // Mapbox shows the cone whenever its _heading is a number and hides it for
+    // anything else, so withholding a heading IS the "we don't know which way
+    // you are facing" state - no CSS of our own needed. What follows replaces
+    // its compass handler so the raw compass is corrected before it gets there.
+    //
+    // This must be assigned before the control is added to the map (:4037),
+    // because Mapbox registers the bound _onDeviceOrientation inside
+    // _addDeviceOrientationListener(), called from trigger().
+    const norm360 = (deg) => ((deg % 360) + 360) % 360;
+    // Signed smallest angle from a to b, -180..180.
+    const circDiff = (a, b) => {
+      const d = norm360(b - a);
+      return d > 180 ? d - 360 : d;
+    };
+    // Initial great-circle bearing from one point to another, 0-360.
+    const bearingBetween = (lat1, lon1, lat2, lon2) => {
+      const toRad = (d) => (d * Math.PI) / 180;
+      const dLon = toRad(lon2 - lon1);
+      const y = Math.sin(dLon) * Math.cos(toRad(lat2));
+      const x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) -
+        Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(dLon);
+      return norm360((Math.atan2(y, x) * 180) / Math.PI);
+    };
+    const circMean = (degs) => {
+      let x = 0, y = 0;
+      degs.forEach((d) => { x += Math.cos((d * Math.PI) / 180); y += Math.sin((d * Math.PI) / 180); });
+      return norm360((Math.atan2(y, x) * 180) / Math.PI);
+    };
+
+    const applyUserHeading = () => {
+      const ctrl = geolocateRef.current;
+      if (!ctrl) return;
+      const raw = compassRawRef.current;
+      // Anything but a number makes Mapbox hide the cone for us.
+      ctrl._heading = headingTrustedRef.current && raw != null
+        ? norm360(raw + headingOffsetRef.current)
+        : undefined;
+      ctrl._updateMarkerRotationThrottled();
+    };
+
+    geolocateRef.current._onDeviceOrientation = (ev) => {
+      const ctrl = geolocateRef.current;
+      if (!ctrl?._userLocationDotMarker) return;
+      // The same extraction Mapbox does - webkitCompassHeading is iOS-only, and
+      // only the absolute event's alpha means anything - but tested with
+      // Number.isFinite so a genuine 0 survives.
+      let raw = null;
+      if (Number.isFinite(ev.webkitCompassHeading)) raw = ev.webkitCompassHeading;
+      else if (ev.absolute === true && Number.isFinite(ev.alpha)) raw = -1 * ev.alpha;
+      if (raw == null) return;
+      compassRawRef.current = norm360(raw);
+      applyUserHeading();
+    };
+
+    // How far out the compass is, learnt from walking. Called for every fix,
+    // including the ones the background watcher injects through _onSuccess.
+    const HEADING_MIN_SPEED = 1.0;     // m/s - a walk, not GPS jitter
+    const HEADING_MIN_STEP = 8;        // m between fixes to trust a derived course
+    const HEADING_MAX_FIX_AGE = 6000;  // ms
+    const HEADING_MAX_ACCURACY = 25;   // m
+    const HEADING_SAMPLES = 5;
+    const HEADING_SAMPLE_WINDOW = 10000; // ms
+    const HEADING_MAX_SPREAD = 40;     // deg - wider means they were turning
+    // The offsets worth believing. The degenerate-alpha failure lands on 180
+    // (phone upright) or +-90 (phone on its side), and screen orientation shifts
+    // alpha by 90 too. Quantising keeps GPS course noise, which runs +-10-20 deg,
+    // from nudging a compass that is already right.
+    const HEADING_QUANTA = [0, 90, 180, 270];
+    const HEADING_QUANTUM_TOLERANCE = 35; // deg
+
+    const quantiseHeadingOffset = (offset) => {
+      let best = null;
+      HEADING_QUANTA.forEach((q) => {
+        const d = Math.abs(circDiff(q, offset));
+        if (d <= HEADING_QUANTUM_TOLERANCE && (best == null || d < best.d)) best = { q, d };
+      });
+      return best?.q ?? null;
+    };
+
+    const observeHeadingFromMovement = (coords, timestamp) => {
+      if (!Number.isFinite(coords?.latitude) || !Number.isFinite(coords?.longitude)) return;
+      const t = Number.isFinite(timestamp) ? timestamp : Date.now();
+      if (Number.isFinite(coords.accuracy) && coords.accuracy > HEADING_MAX_ACCURACY) return;
+
+      // Where we are going. The reported course is preferred when it comes with
+      // enough speed to mean something; otherwise it is measured off the ground
+      // covered since the last fix.
+      let course = null;
+      if (Number.isFinite(coords.heading) && Number.isFinite(coords.speed) && coords.speed >= HEADING_MIN_SPEED) {
+        course = norm360(coords.heading);
+      }
+      const prev = headingLastFixRef.current;
+      if (course == null && prev && t - prev.t <= HEADING_MAX_FIX_AGE) {
+        const moved = haversinePoint(prev.lat, prev.lng, coords.latitude, coords.longitude);
+        if (moved >= HEADING_MIN_STEP) {
+          course = bearingBetween(prev.lat, prev.lng, coords.latitude, coords.longitude);
+        }
+      }
+      if (!prev || t - prev.t > HEADING_MAX_FIX_AGE ||
+          haversinePoint(prev.lat, prev.lng, coords.latitude, coords.longitude) >= HEADING_MIN_STEP) {
+        headingLastFixRef.current = { lng: coords.longitude, lat: coords.latitude, t };
+      }
+      if (course == null) return;
+
+      const compass = compassRawRef.current;
+      if (compass == null) return;
+
+      const samples = headingSamplesRef.current.filter((x) => t - x.t <= HEADING_SAMPLE_WINDOW);
+      samples.push({ course, compass, t });
+      while (samples.length > HEADING_SAMPLES) samples.shift();
+      headingSamplesRef.current = samples;
+      if (samples.length < HEADING_SAMPLES) return;
+
+      // Only a straight stretch can settle the offset; a turn would smear it.
+      const meanCourse = circMean(samples.map((x) => x.course));
+      const spread = Math.max(...samples.map((x) => Math.abs(circDiff(meanCourse, x.course))));
+      if (spread > HEADING_MAX_SPREAD) return;
+
+      const offset = quantiseHeadingOffset(circMean(samples.map((x) => norm360(x.course - x.compass))));
+      if (offset == null) return;   // between quanta: the phone moved mid-stride
+
+      headingSamplesRef.current = [];
+      if (!headingTrustedRef.current) {
+        headingOffsetRef.current = offset;
+        headingTrustedRef.current = true;
+        headingRecalibRef.current = [];
+        applyUserHeading();
+        return;
+      }
+      if (offset === headingOffsetRef.current) {
+        headingRecalibRef.current = [];
+        return;
+      }
+      // Already trusted but the evidence now says otherwise - the phone has gone
+      // from pocket to hand, say. Take three straight stretches agreeing on the
+      // new value before moving, so one bad stretch cannot throw it.
+      const run = headingRecalibRef.current.filter((o) => o === offset);
+      run.push(offset);
+      headingRecalibRef.current = run;
+      if (run.length >= 3) {
+        headingOffsetRef.current = offset;
+        headingRecalibRef.current = [];
+        applyUserHeading();
+      }
+    };
+
     const originalSetupFn = geolocateRef.current._setup;
     geolocateRef.current._setup = function () {
       originalSetupFn.call(this);
@@ -3303,7 +3515,16 @@ export default function Map() {
       console.log("Event > geolocate");
       const long = e.coords.longitude;
       const lat = e.coords.latitude;
-      const bearing = e.coords.heading ? e.coords.heading : mapRef.current.getBearing();
+
+      // Let movement judge the compass. Done first, and before any early return
+      // below, so every fix counts - including the ones the background watcher
+      // injects while the app is off screen.
+      observeHeadingFromMovement(e.coords, e.timestamp);
+      // Number.isFinite, not a truthy test and not ??: the Geolocation API gives
+      // heading as null when it has none and as NaN while the device is stationary,
+      // so ?? would let NaN through into flyTo({bearing}). A truthy test rejects all
+      // three but also throws away a real course of 0, due north.
+      const bearing = Number.isFinite(e.coords.heading) ? e.coords.heading : mapRef.current.getBearing();
 
       // Snap user display position to road during navigation tracking
       const OFF_PATH_THRESHOLD = 30;
@@ -3555,6 +3776,7 @@ export default function Map() {
       if (!Capacitor.isNativePlatform() && isRecordingTrackRef.current && trackPathRef.current) {
         if (isRecordingPausedRef.current) return;
         const recCoord = [long, lat];
+        if (recordingStepTooSmall(recCoord)) return;
         trackCoordsRef.current.push(recCoord);
         setRecordingDistance(haversineDistance(trackCoordsRef.current));
         const recPath = trackPathRef.current;
@@ -4337,22 +4559,31 @@ export default function Map() {
       }
     }
 
-    // Add custom className to the compass container
-    if (isEmbeddedRef.current) {
-      nav._container.style.position = "absolute";
-      nav._container.style.top = "82px";
-      nav._container.style.right = "0px";
-    } else {
-      nav._container.classList.add("ctrl-compass-container");
+    // The compass sits immediately left of the map-style switcher, in the
+    // bottom-right corner, embedded or not. It cannot simply be ordered next to
+    // it: .mapboxgl-ctrl-bottom-right is a column-reverse flex container, so
+    // its children stack vertically. The two therefore share a row of their
+    // own, which takes the slot the style switcher held (order: 1).
+    nav._container.classList.add("ctrl-compass-container");
+    if (bottomRight) {
+      const bottomRow = document.createElement("div");
+      bottomRow.className = "ctrl-bottom-row";
+      bottomRow.appendChild(nav._container);        // left
+      if (mapstyleDiv) bottomRow.appendChild(mapstyleDiv);
+      bottomRight.appendChild(bottomRow);
     }
 
-    // Hide compass when bearing is 0
+    // Facing north there is nothing to reset, so the compass goes away. The
+    // whole container, not just the button: display:none on the only child does
+    // not make the parent :empty, so .mapboxgl-ctrl-group:not(:empty) would keep
+    // painting its background and shadow around a zero-sized box, and it would
+    // hold a gap in the row besides.
     const compassBtn = nav._container.querySelector(".mapboxgl-ctrl-compass");
     if (compassBtn) {
       addMapControlTooltip(compassBtn, "Reset North", "left");
       const updateCompassVisibility = () => {
         const bearing = mapRef.current?.getBearing() ?? 0;
-        compassBtn.style.display = Math.abs(bearing) < 0.5 ? "none" : "";
+        nav._container.style.display = Math.abs(bearing) < 0.5 ? "none" : "";
       };
       mapRef.current.on("rotate", updateCompassVisibility);
       updateCompassVisibility();
@@ -4763,13 +4994,26 @@ export default function Map() {
     // Three things are drawn whatever the scope says. The feature whose panel is
     // open: the drill effect only ever drills in, so opening a root feature from
     // the map while a folder is open would otherwise hide the very thing being
-    // looked at. And a path still being drawn or recorded, or carrying a live
-    // route — none of those are in the list either, and blanking what the user
-    // is in the middle of would be far worse than showing one thing too many.
+    // looked at. And a path still being drawn or recorded, or the one carrying a
+    // live route — none of those are in the list either, and blanking what the
+    // user is in the middle of would be far worse than showing one thing too
+    // many.
+    //
+    // "Live route" has to mean THIS path is the active one, not p.isRoute:
+    // isRoute is persisted and restored (see rontoJson's collectPath /
+    // materializePathFromShape), so testing it exempted every route ever saved,
+    // for the rest of its life. After a reload a route filed in a folder was
+    // drawn at root while the feature list correctly left it out - the two
+    // disagreeing, which is the one thing the scope rule is meant to prevent.
+    //
+    // activePathRef is the right handle and covers what !isFinished cannot: a
+    // trace in progress is deliberately left finished (see handleStartTracing)
+    // yet must stay on the map while it is being walked.
     const shown = selectedFeatureRef.current;
     const shownFeature = shown?.type === "path" ? shown.path : shown?.marker || null;
+    const activePath = activePathRef.current;
     const exemptPath = (p) =>
-      !p.isFinished || !!p.isRoute || p === shownFeature || p === shownFeature?._sightPath;
+      !p.isFinished || p === activePath || p === shownFeature || p === shownFeature?._sightPath;
     const exemptMarker = (m) =>
       m === shownFeature || (!!m._sightPath && exemptPath(m._sightPath));
     for (const m of markersRef.current) {
@@ -4816,6 +5060,7 @@ export default function Map() {
       }
     }
   }, []);
+  applyFeatureVisibilityRef.current = applyFeatureVisibility;
 
   // When changing map style preserve the current camera state
   useEffect(() => {
@@ -6388,6 +6633,7 @@ export default function Map() {
       cur && typeof cur === "object" && cur.__undo === pending.token ? null : cur
     );
   };
+  commitPendingImportRef.current = commitPendingImport;
 
   useEffect(() => () => {
     if (pendingImportRef.current) clearTimeout(pendingImportRef.current.timerId);
@@ -6469,10 +6715,15 @@ export default function Map() {
     // menu and file imports, and the toast only has room for one.
     if (pendingImportRef.current) commitPendingImport();
     const token = Symbol("undoImport");
-    const timerId = setTimeout(() => {
-      if (pendingImportRef.current?.token === token) commitPendingImport();
-    }, UNDO_MS);
-    pendingImportRef.current = { markers, paths, lockToggled, timerId, token, collection };
+    // No UNDO_MS timer, unlike every other undoable action: an import's toast
+    // names what arrived and is meant to stay readable, so it lives until the
+    // user dismisses it and the Undo lives exactly as long. dismissToast is
+    // what commits it.
+    //
+    // The cost, accepted deliberately: the payload holds the imported features
+    // for as long as the toast is up, so an Undo pressed long after the import
+    // still removes them - including any renaming or sights added since.
+    pendingImportRef.current = { markers, paths, lockToggled, timerId: null, token, collection };
     // The import is stored as it lands — there is nothing to confirm, only
     // something to take back. Filed in its own folder first, so the whole
     // import can be found and removed as a unit.
@@ -8614,18 +8865,16 @@ export default function Map() {
   // "location" service, always started from a user tap while the app is
   // visible, which Android exempts from that permission.
   const BG_WATCHER_DISTANCE_FILTER = 2; // m - the finer of the two users' needs
-  const RECORD_MIN_STEP_M = 5;          // m - recording's own thinning, see below
   const NAV_POLL_STALE_MS = 2500;
 
   // A recorded fix: extend the track, the live distance and the end vertex.
-  // The watcher is set to 2 m for the trace's benefit, so the 5 m thinning the
-  // recorded line used to get from the watcher itself is applied here instead -
-  // the geometry comes out as before.
+  // The watcher is set to 2 m for the trace's benefit, so the thinning the
+  // recorded line used to get from the watcher itself comes from
+  // recordingStepTooSmall instead - the geometry comes out as before.
   const onRecordingFix = (location) => {
     if (!location || !isRecordingTrackRef.current || isRecordingPausedRef.current || !trackPathRef.current) return;
     const coord = [location.longitude, location.latitude];
-    const prev = trackCoordsRef.current[trackCoordsRef.current.length - 1];
-    if (prev && haversinePoint(prev[1], prev[0], coord[1], coord[0]) < RECORD_MIN_STEP_M) return;
+    if (recordingStepTooSmall(coord)) return;
     trackCoordsRef.current.push(coord);
     setRecordingDistance(haversineDistance(trackCoordsRef.current));
     // Feed the live distance to the native notification (it ticks the time itself).
@@ -8672,19 +8921,26 @@ export default function Map() {
     const ctrl = geolocateRef.current;
     if (!ctrl || ctrl._watchState === "OFF") return;
     if (Date.now() - lastPollFixAtRef.current < NAV_POLL_STALE_MS) return;
-    ctrl._onSuccess({
-      coords: {
-        longitude: location.longitude,
-        latitude: location.latitude,
-        accuracy: location.accuracy ?? 0,
-        altitude: location.altitude ?? null,
-        altitudeAccuracy: location.altitudeAccuracy ?? null,
-        // The plugin calls it bearing; the browser calls it heading.
-        heading: location.bearing ?? null,
-        speed: location.speed ?? null,
-      },
-      timestamp: location.time ?? Date.now(),
-    });
+    // Marked as ours so the _onSuccess wrapper does not stamp the poll clock
+    // with a fix the poll never produced.
+    bgInjectingRef.current = true;
+    try {
+      ctrl._onSuccess({
+        coords: {
+          longitude: location.longitude,
+          latitude: location.latitude,
+          accuracy: location.accuracy ?? 0,
+          altitude: location.altitude ?? null,
+          altitudeAccuracy: location.altitudeAccuracy ?? null,
+          // The plugin calls it bearing; the browser calls it heading.
+          heading: location.bearing ?? null,
+          speed: location.speed ?? null,
+        },
+        timestamp: location.time ?? Date.now(),
+      });
+    } finally {
+      bgInjectingRef.current = false;
+    }
   };
 
   // Claim the watcher for "recording" or "route", starting it if nobody held it.
@@ -8739,16 +8995,16 @@ export default function Map() {
   // over instead of posting a second one of its own.
   const recordingHoldsBgWatcher = () => bgWatcherUsersRef.current.has("recording");
 
-  // The path mode is asked for before anything starts, so the dock and the
-  // saved path carry it from the first point.
+  // Nothing is asked first: recording begins as Free, which is what every mode
+  // but Foot/Bike/Car amounted to anyway. There is still a way straight back
+  // out - while recording the side menu offers "Stop path recording", and
+  // handleStopPathRecording leaves the mode silently when nothing was started.
   const handleRecordPath = () => {
     setMapClickMenu(null);
-    setRecordModeAlert(true);
+    enterPathRecordingMode();
   };
 
-  const startRecordingWithMode = async (mode) => {
-    recordModeRef.current = mode;
-
+  const enterPathRecordingMode = async () => {
     // Finish any active unfinished path
     if (activePathRef.current && !activePathRef.current.isFinished) {
       const prev = activePathRef.current;
@@ -8843,7 +9099,9 @@ export default function Map() {
       isFinished: false,
       isTrack: true,
       // Deliberately not roadSnap: the recorded trail is measured, never routed.
-      ...(recordModeRef.current ? { _pathRecordingMode: recordModeRef.current } : {}),
+      // No _pathRecordingMode either: recording is always Free, and Free is the
+      // absence of a mode. Paths saved before that, and imported ones, still
+      // carry one and are still read - only this write went.
     };
     pathsRef.current.push(newPath);
     trackPathRef.current = newPath;
@@ -11205,24 +11463,6 @@ export default function Map() {
         }}
       />
       <IonAlert
-        isOpen={recordModeAlert}
-        cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
-        onDidDismiss={() => setRecordModeAlert(false)}
-        header="Record path"
-        inputs={[
-          // "free" rather than null: a radio with a null value cannot be
-          // pre-checked, and Free is the default.
-          { type: "radio", label: "Free", value: "free", checked: true },
-          { type: "radio", label: "Foot", value: "foot" },
-          { type: "radio", label: "Bike", value: "bike" },
-          { type: "radio", label: "Car", value: "car" },
-        ]}
-        buttons={[
-          { text: "Cancel", role: "cancel" },
-          { text: "Start", handler: (value) => startRecordingWithMode(value === "free" ? null : value) },
-        ]}
-      />
-      <IonAlert
         isOpen={stopRecordingAlert}
         cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
         onDidDismiss={() => setStopRecordingAlert(false)}
@@ -11468,6 +11708,12 @@ export default function Map() {
             <button onClick={handleAddMarkerHere}>Add marker here</button>
             {mapClickMenu.path && <button onClick={handleAddSight}>Add sight here</button>}
             <button onClick={handleCreatePath}>Create path here</button>
+            {/* No "here": every other entry acts on the clicked point, but a
+                recording starts from the user's live position and ignores it.
+                Hidden while one is running, as the side menu's entry is - it
+                swaps to "Stop path recording" there, which has no business in a
+                menu about a place. */}
+            {!isRecordingTrack && <button onClick={handleRecordPath}>Record path</button>}
           </div>
         </>
       )}
@@ -12410,8 +12656,17 @@ export default function Map() {
                     <ActionIconButton label={`Export ${featureNoun}`} onClick={handleFeatureExport}>
                       <IonIcon icon={downloadOutline} />
                     </ActionIconButton>
-                    <ActionIconButton label="Close" onClick={closeFeaturePanel}>
-                      <IonIcon icon={closeOutline} />
+                    {/* Last, in the slot the Close used to hold. Returning is
+                        what this panel offers instead of closing: a sight goes
+                        back to its path, anything else to the list at its own
+                        folder. It is deliberately not one of the header row's
+                        side actions - those act ON the feature, rather than
+                        leaving it. */}
+                    <ActionIconButton
+                      label={isSight ? "Back to path" : "Back to collection"}
+                      onClick={handleDetailsBack}
+                    >
+                      <IonIcon icon={arrowBackOutline} />
                     </ActionIconButton>
                   </div>
                 </>
@@ -12561,12 +12816,6 @@ export default function Map() {
                           </ActionIconButton>
                         );
                       })()}
-                      <ActionIconButton
-                        label={isSight ? "Back to path" : "Back to collection"}
-                        onClick={(e) => { e.stopPropagation(); handleDetailsBack(); }}
-                      >
-                        <IonIcon icon={chevronBackOutline} />
-                      </ActionIconButton>
                     </div>
                   )}
                 </div>
