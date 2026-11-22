@@ -35,6 +35,7 @@ import {
   trashOutline,
   globeOutline,
   shareSocialOutline,
+  filterOutline,
   timeOutline,
   createOutline,
   pencilOutline,
@@ -220,6 +221,11 @@ const uniqueName = (base, taken) => {
 // a label only, kept out of roadSnap so nothing ever routes the trail that was
 // actually walked — roadSnap still means "this geometry is routed".
 const pathDisplayMode = (p) => p?.roadSnap ?? p?._pathRecordingMode ?? null;
+
+// Does the filter admit this path's travel mode? Used by BOTH the features list
+// and applyFeatureVisibility - the map shows what the list shows, so a single
+// test keeps them from drifting apart.
+const pathModeAllowed = (filter, p) => filter?.modes?.[pathDisplayMode(p) ?? "free"] !== false;
 
 /**
  * One share link's worth of URL, decoupled from window.location so the same
@@ -532,6 +538,132 @@ function RenameModal({ isOpen, title, initialValue, onCancel, onClear, onSave, s
   );
 }
 
+// The features list's filter. A modal of our own rather than an IonAlert of
+// checkboxes, for three reasons that all point the same way: Ionic styles its
+// checkbox labels against our dark card (.alert-dark reaches the wrapper, title
+// and inputs, not .alert-checkbox-label), its button row is not ours to centre,
+// and - the decisive one - an alert will not let one checkbox drive another.
+// AlertInput does carry a per-input handler, but flipping the OTHER boxes from
+// it means writing Ionic's internal state or synthesising clicks on its own
+// DOM. In plain React the nesting is four lines.
+//
+// Shaped after RenameModal above: backdrop, centred card, isDark variant, and a
+// draft copied in on open so Cancel discards and Apply commits.
+const PATH_MODES = [
+  { key: "free", label: "Free" },
+  { key: "foot", label: "Foot" },
+  { key: "bike", label: "Bike" },
+  { key: "car", label: "Car" },
+];
+
+function FilterModal({ isOpen, isDark, value, onCancel, onApply }) {
+  const [draft, setDraft] = useState(value);
+
+  // Re-seed whenever it opens, so a cancelled edit never leaks into the next one.
+  useEffect(() => {
+    if (isOpen) setDraft(value);
+    // value is a fresh object on every filter change; depending on it would
+    // reset the draft mid-edit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e) => { if (e.key === "Escape") onCancel(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [isOpen, onCancel]);
+
+  if (!isOpen) return null;
+
+  const modes = draft.modes;
+  const onCount = PATH_MODES.filter((m) => modes[m.key]).length;
+  // "Paths" is not stored: it IS "any mode on". One fact, one source, so the
+  // parent and its children cannot contradict each other.
+  const pathsState = onCount === 0 ? "off" : onCount === PATH_MODES.length ? "on" : "some";
+
+  const setAllModes = (on) =>
+    setDraft((d) => ({ ...d, modes: Object.fromEntries(PATH_MODES.map((m) => [m.key, on])) }));
+  const toggleMode = (key) =>
+    setDraft((d) => ({ ...d, modes: { ...d.modes, [key]: !d.modes[key] } }));
+
+  const Row = ({ label, state, onToggle, sub }) => (
+    <button
+      type="button"
+      className={`filter-modal-row${sub ? " filter-modal-sub" : ""}`}
+      onClick={onToggle}
+      aria-checked={state === "on" ? "true" : state === "some" ? "mixed" : "false"}
+      role="checkbox"
+    >
+      <span className={`filter-modal-box filter-modal-box-${state}`} aria-hidden="true">
+        {state === "on" ? "✓" : state === "some" ? "–" : ""}
+      </span>
+      <span className="filter-modal-label">{label}</span>
+    </button>
+  );
+
+  return (
+    <>
+      <div
+        className="filter-modal-backdrop"
+        onClick={onCancel}
+        onContextMenu={(e) => { e.preventDefault(); onCancel(); }}
+      />
+      <div
+        className={`filter-modal${isDark ? " filter-modal-dark" : ""}`}
+        role="dialog"
+        aria-modal="true"
+      >
+        <h2 className="filter-modal-header">Filter</h2>
+        <Row
+          label="Markers"
+          state={draft.markers ? "on" : "off"}
+          onToggle={() => setDraft((d) => ({ ...d, markers: !d.markers }))}
+        />
+        <Row
+          label="Sights"
+          state={draft.sights ? "on" : "off"}
+          onToggle={() => setDraft((d) => ({ ...d, sights: !d.sights }))}
+        />
+        <Row
+          label="Paths"
+          state={pathsState}
+          // From anything but "all on", the obvious intent is to want them all.
+          onToggle={() => setAllModes(pathsState !== "on")}
+        />
+        {PATH_MODES.map((m) => (
+          <Row
+            key={m.key}
+            sub
+            label={m.label}
+            state={modes[m.key] ? "on" : "off"}
+            onToggle={() => toggleMode(m.key)}
+          />
+        ))}
+        <Row
+          label="Hidden features"
+          state={draft.hidden ? "on" : "off"}
+          onToggle={() => setDraft((d) => ({ ...d, hidden: !d.hidden }))}
+        />
+        <div className="filter-modal-buttons">
+          <button type="button" className="filter-modal-button" onClick={onCancel}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="filter-modal-button filter-modal-apply"
+            // paths is written derived, so every reader downstream - the list
+            // builder and applyFeatureVisibility - keeps working untouched.
+            onClick={() => onApply({ ...draft, paths: onCount > 0 })}
+          >
+            Apply
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
 // Create an <ion-icon> DOM element for use in Mapbox map controls.
 function createIonIcon(iconData, size = "20px", color) {
   const el = document.createElement("ion-icon");
@@ -800,7 +932,17 @@ export default function Map() {
     const stored = localStorage.getItem("rontomap_feat_list_sort");
     return /^(dist|name)-(asc|desc)$/.test(stored || "") ? stored : "dist-asc";
   });
-  const [featListFilter, setFeatListFilter] = useState({ markers: true, sights: true, paths: true, hidden: true });
+  // modes filter paths by travel mode - the thing already shown as each path
+  // row's icon. pathDisplayMode returns null for a free path, so null reads as
+  // "free" wherever this is tested.
+  const [featListFilter, setFeatListFilter] = useState({
+    markers: true, sights: true, paths: true, hidden: true,
+    modes: { free: true, foot: true, bike: true, car: true },
+  });
+  // True when the filter is doing something, so the icon can say so.
+  const featListFiltered =
+    !featListFilter.markers || !featListFilter.sights || !featListFilter.paths
+    || !featListFilter.hidden || Object.values(featListFilter.modes).some((v) => !v);
   // Which collection the features list is drilled into; null is the root list.
   // Folders nest to any depth, so this is the leaf of the trail on screen — the
   // list only ever shows one level and the breadcrumb walks back out.
@@ -1025,10 +1167,14 @@ export default function Map() {
 
 
   const [exportAlert, setExportAlert] = useState(null); // { data, scope, baseName }
-  const [shareAlert, setShareAlert] = useState(false);
-  // Which share choice to run AFTER the chooser has closed. "Export to file"
-  // opens an alert of its own, and two overlays must never be up at once.
-  const pendingShareRef = useRef(null);
+  // One chooser serves the detail panel's Share, the features list's Add and the
+  // list's Share: { title, options: [{ text, run }] }, or null when none is up.
+  const [filterAlert, setFilterAlert] = useState(false);
+  const [chooser, setChooser] = useState(null);
+  // The chosen action, run only once the chooser has CLOSED. Most choices open
+  // an overlay of their own - a file picker, the naming modal, the export
+  // format alert - and two must never be up at once.
+  const pendingChoiceRef = useRef(null);
   const [featuresLocked, setFeaturesLocked] = useState(false);
   const featuresLockedRef = useRef(false);
 
@@ -5156,7 +5302,11 @@ export default function Map() {
       m === shownFeature || (!!m._sightPath && exemptPath(m._sightPath));
     for (const m of markersRef.current) {
       const isSight = !!m._sightPath;
-      const typeAllowed = isSight ? (filter.sights && filter.paths) : filter.markers;
+      // A sight has no mode of its own, so it follows its path's - the list
+      // collects sights inside the path loop, which does the same.
+      const typeAllowed = isSight
+        ? (filter.sights && filter.paths && pathModeAllowed(filter, m._sightPath))
+        : filter.markers;
       // A sight has no collection of its own — it follows its parent path.
       const owner = isSight ? m._sightPath : m;
       const hidden = !typeAllowed
@@ -5169,7 +5319,7 @@ export default function Map() {
       if (el) el.style.display = hidden ? "none" : "";
     }
     for (const p of pathsRef.current) {
-      const hidden = !filter.paths || !!p._hidden || !!p._pendingDelete
+      const hidden = !filter.paths || !pathModeAllowed(filter, p) || !!p._hidden || !!p._pendingDelete
         || inHiddenCollection(p)
         || (outOfScope(p) && !exemptPath(p));
       const vis = hidden ? "none" : "visible";
@@ -8461,6 +8611,8 @@ export default function Map() {
         if (p._pendingDelete) continue;
         if (!inScope(p)) continue;
         if (!featListFilter.hidden && p._hidden) continue;
+        // Its sights go with it: they are collected inside this loop.
+        if (!pathModeAllowed(featListFilter, p)) continue;
         if (!p.vertices || p.vertices.length === 0) continue;
         const bounds = new mapboxgl.LngLatBounds();
         let extended = false;
@@ -11206,6 +11358,11 @@ export default function Map() {
   const handleOpenOfflineMaps = () => {
     refreshOfflineRegions();
     setSelectedFeature(null);
+    // The offline panel renders on showOfflineMapsPanel && !selectedFeature,
+    // and the features list on showFeaturesList alone - so without this the two
+    // stack. Clearing it here covers the side-menu route as well as the list's
+    // own offline button.
+    setOpenFeaturesList(false);
     setSheetLevel(preferredSheetLevel.current);
     setShowOfflineMapsPanel(true);
     showToast("Map view prepared for offline maps.", 3000);
@@ -11838,27 +11995,33 @@ export default function Map() {
           { text: isTracingPathRef.current ? "Cancel tracing" : "Cancel navigation", handler: confirmCancelNavigation },
         ]}
       />
+      <FilterModal
+        isOpen={filterAlert}
+        isDark={idMapStyle === "rontomap_streets_dark"}
+        value={featListFilter}
+        onCancel={() => setFilterAlert(false)}
+        onApply={(next) => { setFeatListFilter(next); setFilterAlert(false); }}
+      />
       <IonAlert
-        isOpen={shareAlert}
+        isOpen={!!chooser}
         // choice-alert is what the chooser styling hooks onto; alert-dark stays so
         // the shared dark-wrapper rules keep applying.
         cssClass={`choice-alert${idMapStyle === "rontomap_streets_dark" ? " alert-dark" : ""}`}
-        // The choice is remembered and run from here, not from the button
-        // handlers: "Export to file" opens the format alert, and starting it
-        // while this one is still dismissing puts two overlays on screen.
+        // The choice is remembered and run from HERE, not from the button
+        // handler: a choice that opens another overlay would otherwise start it
+        // while this one is still dismissing, putting two on screen.
         onDidDismiss={() => {
-          setShareAlert(false);
-          const choice = pendingShareRef.current;
-          pendingShareRef.current = null;
-          if (choice === "link") handleFeatureShare();
-          else if (choice === "embed") handleFeatureEmbed();
-          else if (choice === "file") handleFeatureExport();
+          setChooser(null);
+          const run = pendingChoiceRef.current;
+          pendingChoiceRef.current = null;
+          run?.();
         }}
-        header="Share"
+        header={chooser?.title ?? ""}
         buttons={[
-          { text: "Copy link", handler: () => { pendingShareRef.current = "link"; } },
-          { text: "Copy embedded code", handler: () => { pendingShareRef.current = "embed"; } },
-          { text: "Export to file", handler: () => { pendingShareRef.current = "file"; } },
+          ...(chooser?.options || []).map((o) => ({
+            text: o.text,
+            handler: () => { pendingChoiceRef.current = o.run; },
+          })),
           { text: "Cancel", role: "cancel" },
         ]}
       />
@@ -12122,22 +12285,6 @@ export default function Map() {
           if (row.count > 0) parts.push(`${row.count} feature${row.count === 1 ? "" : "s"}`);
           return parts.length ? parts.join(" · ") : "Empty";
         };
-        // The create row sits with the collections block, on the far side from
-        // the features: above them when sorting by name (collections lead the
-        // list), below them when sorting by distance (collections trail it).
-        // It shows inside a folder too — that is how a folder gets a child,
-        // handleCreateCollection reading the parent off the open level.
-        const createCollectionRow = (forField) => {
-          if (sortField !== forField) return null;
-          return (
-            <div className="panel-list-item panel-list-item-add" onClick={handleCreateCollection}>
-              <IonIcon icon={addOutline} className="panel-list-icon" />
-              <div className="panel-list-text">
-                <span className="panel-list-name">Create new feature collection</span>
-              </div>
-            </div>
-          );
-        };
         // Keep the list mounted while details are shown so scroll position
         // is preserved — just hide it visually.
         const hiddenClass = selectedFeature ? " panel-hidden" : "";
@@ -12157,6 +12304,21 @@ export default function Map() {
               <div className="panel-handle-bar" />
             </div>
             <div className="panel-actions">
+              <ActionIconButton
+                label="Add"
+                onClick={() => setChooser({
+                  title: "Add",
+                  options: [
+                    { text: "New marker", run: handleAddMarkerAtCenter },
+                    { text: "New path", run: () => handleCreatePath({ noAutoVertex: true }) },
+                    { text: "Record path", run: handleRecordPath },
+                    { text: "Import features", run: handleImportFeatures },
+                    { text: "New collection", run: handleCreateCollection },
+                  ],
+                })}
+              >
+                <IonIcon icon={addOutline} />
+              </ActionIconButton>
               <ActionIconButton label={`Sort by distance${sortField === "dist" ? (sortDir === "asc" ? " (nearest)" : " (farthest)") : ""}`} onClick={() => toggleFeatListSort("dist")}>
                 <IonIcon icon={radioOutline} />
                 {sortField === "dist" && <IonIcon icon={sortDir === "asc" ? chevronUpOutline : chevronDownOutline} className="sort-dir-icon" />}
@@ -12165,17 +12327,29 @@ export default function Map() {
                 <IonIcon icon={textOutline} />
                 {sortField === "name" && <IonIcon icon={sortDir === "asc" ? chevronUpOutline : chevronDownOutline} className="sort-dir-icon" />}
               </ActionIconButton>
-              <ActionIconButton label={featListFilter.markers ? "Hide markers" : "Show markers"} onClick={() => setFeatListFilter((f) => ({ ...f, markers: !f.markers }))}>
-                <IonIcon icon={locationOutline} style={featListFilter.markers ? undefined : { opacity: 0.3 }} />
+              {/* The four show/hide toggles that used to sit here are one Filter
+                  now, which freed these slots for add, share and offline. */}
+              <ActionIconButton
+                label={featListFiltered ? "Filter (on)" : "Filter"}
+                onClick={() => setFilterAlert(true)}
+              >
+                <IonIcon icon={filterOutline} className={featListFiltered ? "filter-icon-active" : undefined} />
               </ActionIconButton>
-              <ActionIconButton label={featListFilter.sights ? "Hide sights" : "Show sights"} onClick={() => setFeatListFilter((f) => ({ ...f, sights: !f.sights }))}>
-                <IonIcon icon={pinOutline} style={featListFilter.sights ? undefined : { opacity: 0.3 }} />
+              <ActionIconButton
+                label="Share features"
+                onClick={() => setChooser({
+                  title: "Share features",
+                  options: [
+                    { text: "Copy link to features", run: handleCopyFeatures },
+                    { text: "Copy embedded features", run: handleCopyEmbeddedFeatures },
+                    { text: "Export features", run: handleExportAll },
+                  ],
+                })}
+              >
+                <IonIcon icon={shareSocialOutline} />
               </ActionIconButton>
-              <ActionIconButton label={featListFilter.paths ? "Hide paths" : "Show paths"} onClick={() => setFeatListFilter((f) => ({ ...f, paths: !f.paths }))}>
-                <IonIcon icon={analyticsOutline} style={featListFilter.paths ? undefined : { opacity: 0.3 }} />
-              </ActionIconButton>
-              <ActionIconButton label={featListFilter.hidden ? "Hide hidden features" : "Show hidden features"} onClick={() => setFeatListFilter((f) => ({ ...f, hidden: !f.hidden }))}>
-                <IonIcon icon={eyeOffOutline} style={featListFilter.hidden ? undefined : { opacity: 0.3 }} />
+              <ActionIconButton label="Offline map" onClick={handleOpenOfflineMaps}>
+                <IonIcon icon={globeOutline} />
               </ActionIconButton>
               <ActionIconButton label="Close" onClick={closeFeaturePanel}>
                 <IonIcon icon={closeOutline} />
@@ -12195,7 +12369,6 @@ export default function Map() {
                   })),
                 ])}
               />
-              {createCollectionRow("name")}
               {items.map((item, i) => {
                 const renderRow = (row) => {
                   const isCollection = row.type === "collection";
@@ -12352,7 +12525,6 @@ export default function Map() {
                   </div>
                 );
               })()}
-              {createCollectionRow("dist")}
             </div>
           </div>
         );
@@ -12912,7 +13084,17 @@ export default function Map() {
                     {/* One Share action in place of the three it used to take:
                         the chooser offers link, embed code and file, so nothing
                         that used to be here has gone. */}
-                    <ActionIconButton label={`Share ${featureNoun}`} onClick={() => setShareAlert(true)}>
+                    <ActionIconButton
+                      label={`Share ${featureNoun}`}
+                      onClick={() => setChooser({
+                        title: "Share",
+                        options: [
+                          { text: "Copy link", run: handleFeatureShare },
+                          { text: "Copy embedded code", run: handleFeatureEmbed },
+                          { text: "Export to file", run: handleFeatureExport },
+                        ],
+                      })}
+                    >
                       <IonIcon icon={shareSocialOutline} />
                     </ActionIconButton>
                     <ActionIconButton label="Offline map" onClick={handleOpenOfflineMaps}>

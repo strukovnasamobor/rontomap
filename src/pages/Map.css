@@ -878,6 +878,126 @@ textarea.rename-modal-input {
   color: #888;
 }
 
+/* The features-list filter. Deliberately a sibling of .rename-modal above:
+   same backdrop, card, radius and button voice, so the app's two dialogs look
+   related. Ionic styles none of this, which is the point - its alert gave us
+   unreadable labels on the dark card and a button row we could not centre. */
+.filter-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.filter-modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 2001;
+  background: white;
+  color: #1a1a1a;
+  border-radius: 10px;
+  padding: 18px 14px 14px 14px;
+  min-width: 260px;
+  max-width: calc(100vw - 40px);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.25);
+}
+
+.filter-modal-header {
+  margin: 0 0 8px 4px;
+  font-size: 16px;
+  font-weight: 600;
+  color: inherit;
+}
+
+.filter-modal-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 40px;
+  padding: 0 8px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 14px;
+  text-align: left;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+/* The four travel modes, indented under Paths - the nesting IS the meaning. */
+.filter-modal-sub {
+  padding-left: 34px;
+}
+
+.filter-modal-box {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid #b0b0b0;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  line-height: 1;
+  color: white;
+}
+
+/* On and partly-on are both the app's orange; a dash rather than a tick says
+   some of the children are off without claiming they all are. */
+.filter-modal-box-on,
+.filter-modal-box-some {
+  background: #ff6f00;
+  border-color: #ff6f00;
+}
+
+.filter-modal-buttons {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.filter-modal-button {
+  padding: 8px 18px;
+  border: none;
+  background: transparent;
+  color: #ff6f00;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.filter-modal-apply {
+  font-weight: 600;
+}
+
+.filter-modal-dark {
+  background: #1e1e1e;
+  color: #f0f0f0;
+}
+
+.filter-modal-dark .filter-modal-box {
+  border-color: #5a5a5a;
+}
+
+/* hover: hover only, so a tap does not leave a row looking stuck. */
+@media (hover: hover) {
+  .filter-modal-row:hover {
+    background: rgba(0, 0, 0, 0.06);
+  }
+  .filter-modal-dark .filter-modal-row:hover {
+    background: rgba(255, 255, 255, 0.08);
+  }
+  .filter-modal-button:hover {
+    background: rgba(255, 111, 0, 0.1);
+  }
+}
+
 .rename-modal-dark .rename-modal-input:focus {
   border-color: #ff6f00;
 }
@@ -1483,20 +1603,6 @@ textarea.rename-modal-input {
   padding: 10px 4px;
 }
 
-/* "Create new feature collection": a text affordance pinned to the end of the
-   folders block, at whatever level the list is showing — creating one inside an
-   open folder is how a folder gets a child. Single-line, so the text block
-   centres in the 50px row. */
-.panel-list-item-add .panel-list-icon,
-.panel-list-item-add .panel-list-name,
-.panel-dark .panel-list-item-add .panel-list-icon,
-.panel-dark .panel-list-item-add .panel-list-name {
-  color: #ff6f00 !important;
-}
-
-.panel-list-item-add .panel-list-text {
-  justify-content: center;
-}
 
 /* Collection breadcrumb: the sticky trail of the folder you are inside, and the
    only way back out — every earlier step is a link to that level, the last is
@@ -1689,6 +1795,13 @@ textarea.rename-modal-input {
    .choice-alert so no other alert in the app changes. */
 .choice-alert .alert-button-group {
   padding: 6px !important;
+}
+
+/* The filter is one icon standing in for what used to be four toggles, each of
+   which dimmed itself when off. Tinted when the filter is doing something, so
+   a filtered list cannot be mistaken for an empty one. */
+.filter-icon-active {
+  color: #ff6f00 !important;
 }
 
 .choice-alert .alert-button {

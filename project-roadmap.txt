@@ -449,13 +449,41 @@ FEATURES LIST PANEL
 - opening on menu option "Features list"
 - on landscape - left sidebar
 - on portrait - peeking bottom sheet (peek lvl. 0. - height: 25dvh, mid lvl. 1. - height: 50dvh, expanded lvl. 2. - height: 75dvh)
-- action icons
+- action icons: Add, Sort by distance, Sort by name, Filter, Share, Offline map, Close
+    - Add - ion-icon name="add-outline" - a chooser: New marker, New path, Record path,
+      Import features, New collection. All of these are in the side menu too, which keeps them;
+      the row is the quick route while you are looking at features
+      - there is no longer a "Create new feature collection" row at the foot of the list: the
+        chooser's New collection does the same thing, filing into whatever folder is on screen
+        (handleCreateCollection reads the open level itself, wherever it is called from)
     - Sort by distance (asc/desc) - ion-icon name="radio-outline", distances are always measured from the map center
     - Sort by name (asc/desc) - ion-icon "text-outline"
-    - Show/Hide Markers (toggle on/off for filtering) - ion-icon name="location-outline"
-    - Show/Hide Sights (toggle on/off for filtering) - ion-icon name="pin-outline"
-    - Show/Hide Paths (toggle on/off for filtering) - ion-icon name="analytics-outline"
-    - Show/Hide Hidden Features (toggle on/off for filtering, on by default) - ion-icon name="eye-off-outline"
+    - Filter - ion-icon name="filter-outline" - one dialog in place of the four show/hide
+      toggles that used to sit in this row: Markers, Sights, Paths with the four travel modes
+      (Free/Foot/Bike/Car - the icon each path row already shows) NESTED and indented under it,
+      and Hidden features. Cancel discards, Apply commits
+      - a modal of our own, not an IonAlert: Ionic's .alert-dark reaches the wrapper, title and
+        inputs but not .alert-checkbox-label, so the labels were unreadable on the dark card;
+        its button row was not ours to centre; and an alert will not let one checkbox drive
+        another (AlertInput's handler reports only its own box). Built like RenameModal
+      - "Paths" is NOT stored: it IS "any mode on". Ticking it ticks all four modes, unticking it
+        unticks all four, ticking any mode shows it ticked, unticking the last shows it unticked,
+        and a partial selection shows a DASH rather than a tick - one fact with one source, so
+        parent and children cannot contradict each other. Apply writes the derived paths flag, so
+        every reader downstream is untouched
+      - with every mode off no path shows, whatever else is ticked
+      - a sight has no mode of its own and follows its path's: filtering out a path's mode takes
+        its sights with it, even with Sights still ticked
+      - the filter governs the MAP as well as the list, like every other filter here - the mode
+        test lives in one helper (pathModeAllowed) read by both the list builder and
+        applyFeatureVisibility, so the two cannot drift apart
+      - the icon is tinted orange while any box is off, since one summary icon has to say what
+        four self-dimming toggles used to, or a filtered list looks like an empty one
+    - Share - ion-icon name="share-social-outline" - a chooser: Copy link to features, Copy
+      embedded features, Export features (chooser style as in the detail panel)
+    - Offline map - ion-icon name="globe-outline" - opens the offline maps panel; the features
+      list gives way to it, because the two panels' render conditions are independent and would
+      otherwise stack (same for the side-menu route)
     - Close - ion-icon name="close-outline"
 - list of features with name and details showing for marker/sight - coordinates, for path - snapping, distance, duration (for snapped paths)
 - path item/header icon by snapping 
