@@ -190,16 +190,6 @@ ion-page:has(#map-ioncontent) {
   order: 1;
 }
 
-/* The compass and the map-style switcher side by side, compass on the left.
-   The bottom-right group itself is a column, so this row is what puts the two
-   next to each other; it takes the slot the style switcher held on its own. */
-.mapboxgl-ctrl-bottom-right .ctrl-bottom-row {
-  display: flex;
-  flex-direction: row;
-  align-items: flex-end;
-  order: 1;
-}
-
 .mapboxgl-ctrl-bottom-right .ctrl-location-container {
   order: 2;
 }
@@ -1641,6 +1631,59 @@ textarea.rename-modal-input {
 .alert-dark .alert-input {
   background: #2a2a2a !important;
   color: white !important;
+}
+
+/* The choosers (Share, and Export format) are menus of actions, so choices are dressed as
+   full-width rows rather than Ionic's shouted text buttons. Scoped to
+   .choice-alert so no other alert in the app changes. */
+.choice-alert .alert-button-group {
+  padding: 6px !important;
+}
+
+.choice-alert .alert-button {
+  width: 100% !important;
+  margin: 2px 0 !important;
+  border-radius: 6px !important;
+  /* A menu is not shouted; Ionic MD uppercases alert buttons by default. */
+  text-transform: none !important;
+  font-weight: 500 !important;
+}
+
+/* Ionic centres the label in an inner span, so alignment is set there. */
+.choice-alert .alert-button-inner {
+  justify-content: flex-start !important;
+}
+
+/* Cancel is not one of the choices: set apart, centred and quiet. */
+.choice-alert .alert-button.alert-button-role-cancel {
+  margin-top: 8px !important;
+  border-top: 1px solid rgba(0, 0, 0, 0.12) !important;
+  border-radius: 0 !important;
+  color: #8c8c8c !important;
+}
+
+.choice-alert .alert-button.alert-button-role-cancel .alert-button-inner {
+  justify-content: center !important;
+}
+
+.choice-alert.alert-dark .alert-button.alert-button-role-cancel {
+  border-top-color: rgba(255, 255, 255, 0.16) !important;
+}
+
+/* hover: hover only - a tap must not leave a row looking stuck. */
+@media (hover: hover) {
+  .choice-alert .alert-button:hover {
+    background: rgba(0, 0, 0, 0.06) !important;
+  }
+  .choice-alert .alert-button.alert-button-role-cancel:hover {
+    background: rgba(0, 0, 0, 0.03) !important;
+  }
+  .choice-alert.alert-dark .alert-button:hover {
+    background: rgba(255, 255, 255, 0.08) !important;
+  }
+  .choice-alert.alert-dark .alert-button.alert-button-role-cancel:hover {
+    background: rgba(255, 255, 255, 0.04) !important;
+  }
 }
 
 /* Path vertex - solid fill for start/end */

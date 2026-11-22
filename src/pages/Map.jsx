@@ -11,8 +11,6 @@ import {
   locateOutline,
   rocketOutline,
   navigateOutline,
-  linkOutline,
-  codeSlashOutline,
   downloadOutline,
   closeOutline,
   searchOutline,
@@ -27,7 +25,7 @@ import {
   radioOutline,
   chevronUpOutline,
   chevronDownOutline,
-  chevronForwardOutline,
+  arrowForwardOutline,
   arrowBackOutline,
   locationOutline,
   pinOutline,
@@ -36,6 +34,7 @@ import {
   refreshOutline,
   trashOutline,
   globeOutline,
+  shareSocialOutline,
   timeOutline,
   createOutline,
   pencilOutline,
@@ -567,10 +566,18 @@ function addMapControlTooltip(button, label, position = "left") {
 
   // Mobile long-press (500ms to show, 1200ms display)
   let longPressTimer = null;
+  // A long press is a request to READ the button, not to press it. Recorded
+  // here and surrendered through consumeLongPress below, because the only
+  // caller that needs it - the compass - intercepts its own click in the
+  // capture phase on an ancestor, which runs before anything this helper could
+  // attach to the button itself.
+  let longPressFired = false;
   button.addEventListener("touchstart", () => {
     recentTouch = true;
+    longPressFired = false;
     longPressTimer = setTimeout(() => {
       tooltip.classList.add("map-ctrl-tooltip-visible");
+      longPressFired = true;
       longPressTimer = null;
     }, 500);
   }, { passive: true });
@@ -588,7 +595,15 @@ function addMapControlTooltip(button, label, position = "left") {
     setTimeout(() => { recentTouch = false; }, 500);
   });
 
-  return tooltip;
+  return {
+    tooltip,
+    // True once, for the click a long press is about to produce.
+    consumeLongPress: () => {
+      const fired = longPressFired;
+      longPressFired = false;
+      return fired;
+    },
+  };
 }
 
 // Icon button used in the feature panel: shows a tooltip with the action name on
@@ -940,6 +955,10 @@ export default function Map() {
   // start button's label changes, from Start to Resume.
   const [isNavigationPaused, setIsNavigationPaused] = useState(false);
   const completeTracingRef = useRef(null);
+  // Sight visits added by the trace in progress: [{ sight, recId }]. A trace
+  // that completes keeps them, a trace that is cancelled records nothing, so
+  // they stay claimable until one or the other happens.
+  const traceSightRecordsRef = useRef([]);
   const pauseNavigationRef = useRef(null);
   const resumeNavigationRef = useRef(null);
   const [isRecordingTrack, setIsRecordingRoute] = useState(false);
@@ -998,6 +1017,10 @@ export default function Map() {
 
 
   const [exportAlert, setExportAlert] = useState(null); // { data, scope, baseName }
+  const [shareAlert, setShareAlert] = useState(false);
+  // Which share choice to run AFTER the chooser has closed. "Export to file"
+  // opens an alert of its own, and two overlays must never be up at once.
+  const pendingShareRef = useRef(null);
   const [featuresLocked, setFeaturesLocked] = useState(false);
   const featuresLockedRef = useRef(false);
 
@@ -1659,8 +1682,15 @@ export default function Map() {
       // Sync cursor with draggable state
       const origSetDraggable = marker.setDraggable.bind(marker);
       marker.setDraggable = (v) => {
-        origSetDraggable(v);
-        if (!isEmbeddedRef.current) setCursor(v ? "grab" : "alias");
+        // A record says the user was AT this spot, so the position is frozen
+        // while any record exists - the same rule that freezes a recorded
+        // path's geometry, and deleting the records unlocks it again. Enforced
+        // here rather than at the call sites because every caller then gets it
+        // right for free, and because sights are created through this same
+        // function, so they are covered too.
+        const allowed = v && !marker._traces?.length;
+        origSetDraggable(allowed);
+        if (!isEmbeddedRef.current) setCursor(allowed ? "grab" : "alias");
       };
       marker._markerName = "";
       markersRef.current.push(marker);
@@ -3761,6 +3791,18 @@ export default function Map() {
                 const passed = sightSnap.segmentIndex < si || (sightSnap.segmentIndex === si && sightSnap.t <= st);
                 if (passed && !m._passed) {
                   m._passed = true;
+                  // Walking past a sight records a visit to it, with no toast:
+                  // one per sight would interrupt the whole walk. NOT persisted
+                  // here - completeTracing explains why it must wait for the
+                  // teardown - so the record lives in memory, claimed on
+                  // completion and dropped if the trace is cancelled.
+                  if (!m._traces) m._traces = [];
+                  // Called straight, not through a ref: this handler lives in
+                  // an effect, so by the time a sight is passed the component
+                  // body has long since defined makeVisitRecord.
+                  const sightRec = makeVisitRecord(Date.now());
+                  m._traces.push(sightRec);
+                  traceSightRecordsRef.current.push({ sight: m, recId: sightRec.id });
                   const el = m.getElement();
                   const svg = el.querySelector("svg");
                   if (svg) {
@@ -4588,19 +4630,11 @@ export default function Map() {
       }
     }
 
-    // The compass sits immediately left of the map-style switcher, in the
-    // bottom-right corner, embedded or not. It cannot simply be ordered next to
-    // it: .mapboxgl-ctrl-bottom-right is a column-reverse flex container, so
-    // its children stack vertically. The two therefore share a row of their
-    // own, which takes the slot the style switcher held (order: 1).
+    // The compass stays where addControl put it: the top-right container, which
+    // the menu has already claimed as its firstChild - so the compass lands
+    // directly below the menu icon, in both modes. Nothing to position by hand,
+    // and no absolute offset like the old embedded branch had.
     nav._container.classList.add("ctrl-compass-container");
-    if (bottomRight) {
-      const bottomRow = document.createElement("div");
-      bottomRow.className = "ctrl-bottom-row";
-      bottomRow.appendChild(nav._container);        // left
-      if (mapstyleDiv) bottomRow.appendChild(mapstyleDiv);
-      bottomRight.appendChild(bottomRow);
-    }
 
     // Facing north there is nothing to reset, so the compass goes away. The
     // whole container, not just the button: display:none on the only child does
@@ -4609,7 +4643,8 @@ export default function Map() {
     // hold a gap in the row besides.
     const compassBtn = nav._container.querySelector(".mapboxgl-ctrl-compass");
     if (compassBtn) {
-      const compassTip = addMapControlTooltip(compassBtn, "Reset to North", "left");
+      const { tooltip: compassTip, consumeLongPress } =
+        addMapControlTooltip(compassBtn, "Reset to North", "left");
       // Mapbox titles this button "Reset bearing to north" in onAdd, which the
       // browser then shows as a second, native tooltip next to ours. Note WHERE
       // it puts it: _setButtonTitle sets aria-label on the button but `title` on
@@ -4651,6 +4686,9 @@ export default function Map() {
         if (!map || !ev.target?.closest?.(".mapboxgl-ctrl-compass")) return;
         ev.preventDefault();
         ev.stopImmediatePropagation();
+        // A long press asked what this button does; it did not ask for it to be
+        // done. The tooltip is already up, so leave the camera alone.
+        if (consumeLongPress()) return;
         // The tooltip is deliberately LEFT up. stopImmediatePropagation already
         // keeps its own hide-on-click listener from firing, and the pointer is
         // still over the button, so it relabels itself to the next stage -
@@ -7627,6 +7665,8 @@ export default function Map() {
           pos: [ll.lat, ll.lng],
           ...(m._hidden ? { hidden: true } : {}),
           ...(m._description ? { description: m._description } : {}),
+          // Visits recorded at this marker, same shape a path's traces take.
+          ...(m._traces?.length ? { traces: m._traces } : {}),
         };
         tagCollection(entry, m);
         savedMarkers.push(entry);
@@ -7668,6 +7708,9 @@ export default function Map() {
             if (s._markerName) am.name = s._markerName;
             if (s._hidden) am.hidden = true;
             if (s._description) am.description = s._description;
+            // A sight has no entry of its own, so its visits ride inside the
+            // path's, like everything else about it.
+            if (s._traces?.length) am.traces = s._traces;
             return am;
           });
         }
@@ -7787,6 +7830,7 @@ export default function Map() {
         const entry = savedMarkerData[mIdx++];
         if (entry?.id) m._id = entry.id;
         if (entry?.hidden) m._hidden = true;
+        if (entry?.traces?.length) m._traces = entry.traces;
         if (entry?.description) m._description = entry.description;
         restoreCollection(m, entry);
       }
@@ -7803,6 +7847,7 @@ export default function Map() {
         if (entry?.sights && p.sights) {
           for (let j = 0; j < Math.min(entry.sights.length, p.sights.length); j++) {
             if (entry.sights[j]?.hidden) p.sights[j]._hidden = true;
+            if (entry.sights[j]?.traces?.length) p.sights[j]._traces = entry.sights[j].traces;
             if (entry.sights[j]?.description) p.sights[j]._description = entry.sights[j].description;
           }
         }
@@ -8212,6 +8257,70 @@ export default function Map() {
     setOpenFeaturesList(false);
     // A trace keeps the path's own snapping — a free-drawn path is traced free.
     confirmTracePath(path.roadSnap ?? null, path);
+  };
+
+  // One visit: the same shape a trace leaves, minus the span. A trace covers a
+  // stretch of time, a visit is a moment, so finishedAt and durationMs are
+  // simply absent and the record row leaves the range and duration off.
+  const makeVisitRecord = (at) => ({
+    id: generateFeatureId(),
+    name: formatDateYMD(new Date(at)),
+    startedAt: at,
+  });
+
+  // The freeze lives in createMarker's setDraggable wrapper, which only
+  // re-evaluates when something calls setDraggable - and the panel called it
+  // when it opened, before this record existed. Without re-asserting here, a
+  // marker stays draggable for as long as its panel stays open after recording:
+  // precisely the moment the user is holding it. recordVisit and its Undo are
+  // only reachable from an open panel, where the intent is "draggable", so
+  // re-asserting that intent lets the veto (and the cursor) take hold now.
+  const reapplyDragFreeze = (target) => {
+    if (target?.setDraggable) target.setDraggable(true);
+  };
+
+  // Add a visit to a marker or sight, but only from where it actually is. The
+  // position handling mirrors isUserNearTraceAnchor, down to the voice of the
+  // messages, because this is the same question asked of a different feature.
+  const recordVisit = (target) => {
+    if (!target) return;
+    const noun = target._sightPath ? "sight" : "marker";
+    const ctrl = locationControlRef.current;
+    if (!ctrl || ctrl._lastPostionLat == null || ctrl._lastPostionLong == null) {
+      showToast("Enable location to record a visit.", 3000);
+      return;
+    }
+    const pos = target.getLngLat();
+    const userPos = [ctrl._lastPostionLong, ctrl._lastPostionLat];
+    if (haversineDistance([userPos, [pos.lng, pos.lat]]) > TRACE_NEAR_M) {
+      showToast(`You need to be near the ${noun} to record a visit.`, 3000);
+      return;
+    }
+    const rec = makeVisitRecord(Date.now());
+    if (!target._traces) target._traces = [];
+    target._traces.push(rec);
+    reapplyDragFreeze(target);
+    const save = () => {
+      persistSavedFeatures();
+      bumpFeaturesVersion();
+    };
+    save();
+    const name = target._markerName || (noun === "sight" ? "Sight" : "Marker");
+    showToast({
+      text: `${name} recorded.`,
+      action: {
+        label: "Undo",
+        onClick: () => {
+          const list = target._traces;
+          const idx = list ? list.findIndex((r) => r.id === rec.id) : -1;
+          if (idx >= 0) list.splice(idx, 1);
+          if (list && list.length === 0) delete target._traces;
+          reapplyDragFreeze(target);
+          save();
+          setToastMsg(null);
+        },
+      },
+    }, UNDO_MS);
   };
 
   // A tracing record is pure data — no map layers or markers to keep alive during
@@ -10135,6 +10244,17 @@ export default function Map() {
   // cancelling and by a trace that reached its end point.
   const endNavigation = () => {
     if (offPathTimerRef.current) { clearTimeout(offPathTimerRef.current); offPathTimerRef.current = null; }
+    // A cancelled tracing records nothing - the rule the path's own record has
+    // always followed. Anything still listed here belongs to a trace that did
+    // not finish, because completeTracing claims its records before calling us.
+    const unclaimed = traceSightRecordsRef.current;
+    traceSightRecordsRef.current = [];
+    unclaimed.forEach(({ sight, recId }) => {
+      const list = sight._traces;
+      const idx = list ? list.findIndex((r) => r.id === recId) : -1;
+      if (idx >= 0) list.splice(idx, 1);
+      if (list && list.length === 0) delete sight._traces;
+    });
     // Silence the ticker, then give up the watcher, then clear — in that order,
     // because this notification may BE the foreground service's own (it is
     // whenever no recording is running), and a tick or a cancel landing on the
@@ -10257,6 +10377,10 @@ export default function Map() {
         durationMs: Math.max(0, finishedAt - startedAt - paused),
       });
     }
+    // Claimed BEFORE the teardown: endNavigation drops whatever is still
+    // listed, on the grounds that reaching it with records outstanding means
+    // the trace ended without completing.
+    traceSightRecordsRef.current = [];
     endNavigation();
     // Persist only now: the teardown has just put the path back to its
     // pre-trace self. Doing it before would save the trace's route styling
@@ -11682,11 +11806,34 @@ export default function Map() {
         ]}
       />
       <IonAlert
+        isOpen={shareAlert}
+        // choice-alert is what the chooser styling hooks onto; alert-dark stays so
+        // the shared dark-wrapper rules keep applying.
+        cssClass={`choice-alert${idMapStyle === "rontomap_streets_dark" ? " alert-dark" : ""}`}
+        // The choice is remembered and run from here, not from the button
+        // handlers: "Export to file" opens the format alert, and starting it
+        // while this one is still dismissing puts two overlays on screen.
+        onDidDismiss={() => {
+          setShareAlert(false);
+          const choice = pendingShareRef.current;
+          pendingShareRef.current = null;
+          if (choice === "link") handleFeatureShare();
+          else if (choice === "embed") handleFeatureEmbed();
+          else if (choice === "file") handleFeatureExport();
+        }}
+        header="Share"
+        buttons={[
+          { text: "Copy link", handler: () => { pendingShareRef.current = "link"; } },
+          { text: "Copy embedded code", handler: () => { pendingShareRef.current = "embed"; } },
+          { text: "Export to file", handler: () => { pendingShareRef.current = "file"; } },
+          { text: "Cancel", role: "cancel" },
+        ]}
+      />
+      <IonAlert
         isOpen={!!exportAlert}
-        cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
+        cssClass={`choice-alert${idMapStyle === "rontomap_streets_dark" ? " alert-dark" : ""}`}
         onDidDismiss={() => setExportAlert(null)}
         header="Export format"
-        message="Select export format:"
         buttons={[
           { text: "RontoJSON", handler: () => confirmExport("rontoJson") },
           { text: "GeoJSON", handler: () => confirmExport("geoJson") },
@@ -12069,14 +12216,6 @@ export default function Map() {
                         <>
                           {row.type === "path" && (
                             <ActionIconButton
-                              label="Trace path"
-                              onClick={(e) => { e.stopPropagation(); handleFeatureTrace(row.ref); }}
-                            >
-                              <IonIcon icon={ribbonOutline} />
-                            </ActionIconButton>
-                          )}
-                          {row.type === "path" && (
-                            <ActionIconButton
                               label="Edit path"
                               onClick={(e) => { e.stopPropagation(); handleEditPath(row.ref); }}
                             >
@@ -12121,7 +12260,7 @@ export default function Map() {
                             label={`Open ${row.type}`}
                             onClick={(e) => { e.stopPropagation(); openFeatureListItem(row); }}
                           >
-                            <IonIcon icon={chevronForwardOutline} />
+                            <IonIcon icon={arrowForwardOutline} />
                           </ActionIconButton>
                         </>
                       )}
@@ -12727,14 +12866,24 @@ export default function Map() {
                     >
                       <IonIcon icon={navigateOutline} />
                     </ActionIconButton>
-                    <ActionIconButton label={`Copy link to ${featureNoun}`} onClick={handleFeatureShare}>
-                      <IonIcon icon={linkOutline} />
+                    {/* The ribbon means "record this". On a path that is still
+                        tracing it; on a marker or a sight it notes that you were
+                        here, which only works from where the feature actually
+                        is - see recordVisit. */}
+                    <ActionIconButton
+                      label={isPath ? "Trace path" : `Record visit to ${featureNoun}`}
+                      onClick={isPath ? () => handleFeatureTrace() : () => recordVisit(selectedTarget)}
+                    >
+                      <IonIcon icon={ribbonOutline} />
                     </ActionIconButton>
-                    <ActionIconButton label={`Copy embedded ${featureNoun}`} onClick={handleFeatureEmbed}>
-                      <IonIcon icon={codeSlashOutline} />
+                    {/* One Share action in place of the three it used to take:
+                        the chooser offers link, embed code and file, so nothing
+                        that used to be here has gone. */}
+                    <ActionIconButton label={`Share ${featureNoun}`} onClick={() => setShareAlert(true)}>
+                      <IonIcon icon={shareSocialOutline} />
                     </ActionIconButton>
-                    <ActionIconButton label={`Export ${featureNoun}`} onClick={handleFeatureExport}>
-                      <IonIcon icon={downloadOutline} />
+                    <ActionIconButton label="Offline map" onClick={handleOpenOfflineMaps}>
+                      <IonIcon icon={globeOutline} />
                     </ActionIconButton>
                     {/* Last, in the slot the Close used to hold. Returning is
                         what this panel offers instead of closing: a sight goes
@@ -12847,11 +12996,6 @@ export default function Map() {
                   )}
                   {detailsActionsOpen && (
                     <div className="panel-name-actions">
-                      {isPath && (
-                        <ActionIconButton label="Trace path" onClick={(e) => { e.stopPropagation(); handleFeatureTrace(); }}>
-                          <IonIcon icon={ribbonOutline} />
-                        </ActionIconButton>
-                      )}
                       {isPath && (
                         <ActionIconButton label="Edit path" onClick={(e) => { e.stopPropagation(); handleEditPath(selectedFeature.path); }}>
                           <IonIcon icon={createOutline} />
@@ -13014,15 +13158,18 @@ export default function Map() {
                             label="Open sight"
                             onClick={(e) => { e.stopPropagation(); openSightRow(sight); }}
                           >
-                            <IonIcon icon={chevronForwardOutline} />
+                            <IonIcon icon={arrowForwardOutline} />
                           </ActionIconButton>
                         </div>
                       )}
                     </div>
                   );
                 })}
-              {selectedFeature.type === "path" && (selectedFeature.path._traces || []).length > 0 && (() => {
-                const path = selectedFeature.path;
+              {(selectedTarget?._traces || []).length > 0 && (() => {
+                // Markers and sights keep records too now, so this follows
+                // selectedTarget - "the path or the marker" - rather than
+                // asking whether the open feature is a path.
+                const path = selectedTarget;
                 const n = path._traces.length;
                 return (
                   <div
@@ -13052,18 +13199,24 @@ export default function Map() {
                   </div>
                 );
               })()}
-              {selectedFeature.type === "path" && tracesOpen &&
-                (selectedFeature.path._traces || []).map((rec) => {
+              {tracesOpen &&
+                (selectedTarget?._traces || []).map((rec) => {
                   // Records made before names existed have none, so the date is
                   // derived rather than assumed.
                   const dateName = formatDateYMD(new Date(rec.startedAt));
                   const name = rec.name || dateName;
+                  // A visit is a moment, not a stretch: it carries no
+                  // finishedAt or durationMs, so it shows its time alone where
+                  // a trace shows a range and how long it took.
+                  const isSpan = rec.finishedAt != null;
                   const info = [
                     // Repeated below only once renamed: otherwise the date
                     // would show on both lines.
                     name === dateName ? null : dateName,
-                    `${formatClock(rec.startedAt)} \u2013 ${formatClock(rec.finishedAt)}`,
-                    formatDuration(rec.durationMs / 1000),
+                    isSpan
+                      ? `${formatClock(rec.startedAt)} \u2013 ${formatClock(rec.finishedAt)}`
+                      : formatClock(rec.startedAt),
+                    isSpan && rec.durationMs != null ? formatDuration(rec.durationMs / 1000) : null,
                   ].filter(Boolean).join(" \u00b7 ");
                   return (
                     <div
@@ -13094,7 +13247,7 @@ export default function Map() {
                           </ActionIconButton>
                           <ActionIconButton
                             label="Delete tracing record"
-                            onClick={(e) => { e.stopPropagation(); deleteTraceRecord(selectedFeature.path, rec.id); }}
+                            onClick={(e) => { e.stopPropagation(); deleteTraceRecord(selectedTarget, rec.id); }}
                           >
                             <IonIcon icon={trashOutline} />
                           </ActionIconButton>

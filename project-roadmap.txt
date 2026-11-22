@@ -91,14 +91,15 @@ UI DESIGN & INTERACTIONS
 - top
     - left - search icon (in embedded rontomap icon)
     - middle - path actions (in embedded hidden)
-    - right - menu (in embedded zoom in/out icons)
+    - right - menu (in embedded zoom in/out icons) & compass icon BELOW it
 - bottom
     - left - attribute icon & scale
     - middle - toast msg
-    - right - compass icon & map change style & location icon (location in embedded hidden,
+    - right - map change style & location icon (location in embedded hidden,
       unless &geolocation=true)
-      - the compass sits immediately LEFT of the map-change-style icon, sharing a row with it,
-        and identically so in embedded mode
+      - the compass lives in the TOP right, directly below the menu icon, in both modes: it is
+        left where addControl puts it and the menu is inserted as the container's first child, so
+        nothing has to be positioned by hand and there is no absolute offset
       - the compass is hidden only when there is nothing to reset: facing north AND unpitched. A
         PITCHED camera keeps it on screen whatever the bearing, because the control resets the
         tilt too (visualizePitch). The whole control is hidden, not just its button - hiding only
@@ -112,6 +113,10 @@ UI DESIGN & INTERACTIONS
         so the click is intercepted (capture phase on the container - at the button itself the
         library's listener was added first; the button is not replaced, because Mapbox keeps its own
         reference to the needle icon it rotates)
+      - a LONG PRESS on a touch device only shows the description - it never resets anything. The
+        tooltip helper records that a long press fired and the compass's click interception bails
+        on it; a quick tap still resets. (Only the compass: the zoom and attribution buttons are
+        clicked through Mapbox's own listeners, registered before ours, so they are unchanged)
       - the tooltip names the stage the next click will do: "Reset to North" while off north, then
         "Reset Pitch" once north is reached. It relabels in place and is NOT hidden on click, so
         after the first click the next stage names itself without the pointer having to leave the
@@ -269,9 +274,13 @@ NAVIGATION & TRACING PATH
       and the whole path is passed (unwalked path length is 0):
       show toast msg "Tracing completed.", the path returns to its normal look
       and user tracking bearing is stopped
+    - walking past a sight while tracing records a visit on that SIGHT, silently - no toast per
+      sight would survive a whole walk. They are written when the trace completes, with the
+      path's own record
     - a completed tracing is recorded on the path (date, start time, finish time, duration);
       the duration counts only the time spent tracing, paused time is not part of it
-    - a cancelled tracing records nothing
+    - a cancelled tracing records nothing - not on the path and not on the sights it had already
+      passed, which are taken back out
     - a finished path recording leaves the same kind of record on the path it creates,
       for the walk that recorded it; paused time is not part of its duration either
 
@@ -283,16 +292,45 @@ FEATURE DETAIL PANEL
     - Center to marker/sight/path - ion-icon name="locate-outline"
     - Fly to marker/sight/path - ion-icon name="rocket-outline"
     - Navigate to marker/sight/path - ion-icon name="navigate-outline"
-    - Copy link to marker/sight/path - ion-icon name="link-outline"
     - Set name to marker/sight/path - ion-icon name="pencil-outline"
-    - Copy embedded marker/sight/path - ion-icon name="code-slash-outline"
-    - Export marker/sight/path - ion-icon name="download-outline"
+    - Record / Trace - ion-icon name="ribbon-outline". On a path it starts tracing it; on a
+      marker or sight it records a visit - see RECORDS below. It is NOT one of the header row's
+      side actions any more
+    - Share marker/sight/path - ion-icon name="share-social-outline" - opens a chooser:
+      Copy link, Copy embedded code, Export to file. The three used to be three icons of their
+      own; the chooser runs the same handlers, and "Export to file" opens the format alert only
+      once the chooser has closed, so there is never more than one overlay up
+      - CHOOSER STYLE, shared by this and the Export format alert (class .choice-alert): choices
+        are full-width rows in sentence case - so "RontoJSON" keeps its own casing rather than
+        being shouted - that light up on mouse over (hover: hover only, so a tap leaves nothing
+        stuck); Cancel is set apart by a top border, centred and muted. Alerts that ask a question
+        rather than offer a menu keep Ionic's own look
+      - the Export format alert carries no sub-heading: its header already says what the list is
+    - Offline map - ion-icon name="globe-outline" - opens the offline maps panel (the detail
+      panel gives way, as it does from the side menu)
     - Back to collection / Back to path (for a sight) - ion-icon name="arrow-back-outline" -
       LAST in the row, in the slot the Close used to hold, and there is no Close: leaving a
       feature means going back, not shutting everything. A sight returns to its path's details,
       anything else to the feature list at the feature's own folder. It is not one of the header
       row's side actions - those act ON the feature. The panel can still be dismissed outright by
       swiping it left, or by dragging the bottom sheet down past its minimum
+- RECORDS (markers and sights, alongside a path's tracing data)
+    - pressing the ribbon on a marker or sight records that the user was there: one record
+      holding the date and the time. It is the same kind of record a trace leaves, minus the span
+      - no finish time and no duration - so the row reads "yyyy-mm-dd hh:mm" where a path's trace
+      reads "yyyy-mm-dd hh:mm - hh:mm . 48 min". Stored under the same key, so the collapsible
+      "Tracing data" group, per-record delete with undo and "Delete all tracing data" with undo
+      all work on a marker or sight exactly as they do on a path
+    - it only records from where the feature actually is: within 10 m (the same threshold tracing
+      uses). Too far shows "You need to be near the marker/sight to record a visit.", with no
+      location fix at all "Enable location to record a visit.", and a success shows
+      "<name> recorded." with an undo option
+    - a marker or sight carrying a record CANNOT BE MOVED, the same rule that freezes a recorded
+      path's geometry: the record says the user was at that spot. Deleting the records unlocks it.
+      The cue is the cursor (alias rather than grab), not a toast - dragging is direct
+      manipulation, and a press on a frozen marker just opens its panel, where the records are
+    - a duplicate never inherits records: the interchange format carries none, so a copy arrives
+      unrecorded and movable
 - show name of ther feature
 - show details for marker/sight - coordinates, for path - snapping, distance, duration (for snapped paths)
 - in the detail panel the side action icons appear on CLICK, not on mouse over - a click on a row
@@ -328,8 +366,11 @@ FEATURE DETAIL PANEL
     - Duplicate sight - ion-icon name="duplicate-outline"
     - Hide/Unhide sight - ion-icon name="eye-outline"/ion-icon name="eye-off-outline"
     - Delete sight - ion-icon name="trash-outline"
+- the "Open <feature>" side action (feature list rows and the sight rows in a path's panel) uses
+  ion-icon name="arrow-forward-outline", the mirror of the detail panel's arrow-back-outline:
+  forward goes in, back comes out. Tracing a path is reached only from the path's own detail
+  panel now, not from its row in the list
 -  side actions for path showing on click / tap
-    - Trace path - ion-icon name="ribbon-outline"
     - Set name to path - ion-icon name="pencil-outline"
     - Edit path - ion-icon name="create-outline"
     - Duplicate path - ion-icon name="duplicate-outline"
