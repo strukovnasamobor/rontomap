@@ -931,6 +931,14 @@ export default function Map() {
     setToastMsg(null);
   }, []);
   useEffect(() => () => { if (toastTimerRef.current) clearTimeout(toastTimerRef.current); }, []);
+
+  // The attribution button keeps its ring for as long as About is open. Neither
+  // :active nor :focus covers that stretch - the press is over and focus has
+  // moved into the alert - so it is held by a class on the map container, the
+  // same way attrib-open marks the expanded credits.
+  useEffect(() => {
+    mapRef.current?.getContainer()?.classList.toggle("about-open", showAbout);
+  }, [showAbout]);
   const [snapMode, setSnapMode] = useState(null);
   const [forceMode, setForceMode] = useState(false);
   const forceModeRef = useRef(false);
@@ -4626,7 +4634,19 @@ export default function Map() {
       observer.observe(attribEl, { attributes: true, attributeFilter: ["class"] });
 
       if (attribBtn) {
-        addMapControlTooltip(attribBtn, "Attribution", "above");
+        const { consumeLongPress: attribLongPress } =
+          addMapControlTooltip(attribBtn, "Attribution & About", "above");
+        attribBtn.addEventListener("click", (e) => {
+          // isTrusted tells a real press from the .click() closeAttrib() uses
+          // to collapse the credits - without this, every dismissal elsewhere
+          // on the map would pop About open.
+          if (!e.isTrusted) return;
+          // A long press asked to read the label, not to act on it. Mapbox's own
+          // listener still toggles the credits (it is on this button and was
+          // registered first), but About stays shut.
+          if (attribLongPress()) return;
+          setShowAbout(true);
+        });
       }
     }
 
@@ -11555,11 +11575,24 @@ export default function Map() {
         onDidDismiss={() => setShowAbout(false)}
         header="RontoMap"
         message={
-          "Add features: Long-press or right-click on the map to add a marker or path.\n\n" +
-          "Tilt the map: Use two fingers in parallel on touchscreen or right/wheel-click and drag with mouse.\n\n" +
-          "Location tracking: Click location icon for tracking, click once more to follow direction. \n\n" +
-          "Full screen: Double-click to enter/exit.\n\n" +
-          "Web App:\nrontomap.web.app"
+          // Embedded, most of the full app's instructions are untrue: there is no
+          // context menu to add features with, no detail panels and no side menu.
+          // About is reachable there at all only because the attribution icon
+          // opens it. So an embed gets its own, shorter list.
+          isEmbeddedRef.current
+            ? [
+                "Tilt the map: Use two fingers in parallel on a touchscreen, or right/wheel-click and drag with a mouse.",
+                ...(embedGeolocationRef.current
+                  ? ["Location tracking: Click location icon for tracking, click once more to follow direction."]
+                  : []),
+                "Full screen: Double-click to enter/exit.",
+                "Open the full app: Click the RontoMap logo, top left.",
+              ].join("\n\n")
+            : "Add features: Long-press or right-click on the map to add a marker or path.\n\n" +
+              "Tilt the map: Use two fingers in parallel on touchscreen or right/wheel-click and drag with mouse.\n\n" +
+              "Location tracking: Click location icon for tracking, click once more to follow direction. \n\n" +
+              "Full screen: Double-click to enter/exit.\n\n" +
+              "Web App:\nrontomap.web.app"
         }
         buttons={[
           {

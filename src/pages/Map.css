@@ -229,11 +229,43 @@ ion-page:has(#map-ioncontent) {
   position: relative;
   overflow: visible !important;
 }
-.mapboxgl-ctrl-attrib-button:focus,
+/* The ring marks the press, not the aftermath. Plain :focus is deliberately
+   absent: clicking this button opens About, and Ionic hands focus back to it
+   when the alert closes - a :focus ring would light up at that moment, long
+   after the click. :focus-visible still covers keyboard users, and a mouse
+   click does not match it. */
+.mapboxgl-ctrl-attrib-button:focus {
+  outline: none !important;
+  /* Mapbox's own stylesheet rings focused controls in #0096ff. Suppressing it
+     here is what stops a ring appearing when the alert hands focus back; the
+     rule below then re-adds ours for a press or a keyboard focus, and wins on
+     source order. */
+  box-shadow: none !important;
+}
+
 .mapboxgl-ctrl-attrib-button:focus-visible,
 .mapboxgl-ctrl-attrib-button:active {
   outline: none !important;
   box-shadow: 0 0 0 2px #ff6f00 !important;
+}
+
+/* The dark style inverts this button so its glyph reads on dark, and that
+   inverts the ring with it - which is why the orange came out blue. Feed it
+   the inverse instead: invert(1) of #0090ff is #ff6f00. */
+.map-style-dark .mapboxgl-ctrl-attrib-button:focus-visible,
+.map-style-dark .mapboxgl-ctrl-attrib-button:active {
+  box-shadow: 0 0 0 2px #0090ff !important;
+}
+
+/* ...and it stays on while the About alert it opened is up. After the :focus
+   rules above so it wins on source order, and dark is pre-inverted for the
+   same reason. about-open sits on the map container, beside map-style-dark. */
+.about-open .mapboxgl-ctrl-attrib-button {
+  box-shadow: 0 0 0 2px #ff6f00 !important;
+}
+
+.map-style-dark.about-open .mapboxgl-ctrl-attrib-button {
+  box-shadow: 0 0 0 2px #0090ff !important;
 }
 .map-style-dark .mapboxgl-ctrl-attrib-button {
   filter: invert(1) !important;
@@ -1599,6 +1631,25 @@ textarea.rename-modal-input {
 .alert-about .alert-button-group {
   flex-direction: row !important;
   flex-wrap: nowrap !important;
+}
+
+/* The app's own icon beside the About heading. Done as a ::before rather than
+   markup because IonAlert's header is a plain string - Ionic strips HTML from
+   alert strings unless innerHTMLTemplatesEnabled is turned on globally, which
+   is not worth switching on for a logo. Same file the side menu shows. */
+.alert-about .alert-title {
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+}
+
+.alert-about .alert-title::before {
+  content: "";
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 6px;
+  background: url("/icons/icon-192.png") center / cover no-repeat;
 }
 
 .name-alert-dark .alert-wrapper {

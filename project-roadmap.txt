@@ -94,6 +94,21 @@ UI DESIGN & INTERACTIONS
     - right - menu (in embedded zoom in/out icons) & compass icon BELOW it
 - bottom
     - left - attribute icon & scale
+      - clicking the attribution (i) does BOTH: it expands the data credits, as Mapbox's own
+        control always has, and it opens About. Tooltip: "Attribution & About"
+      - only a real press does that. The app collapses the credits by calling .click() on the
+        same button whenever something else on the map is pressed, so the handler ignores any
+        click with isTrusted false - otherwise every dismissal would pop About open
+      - the orange ring is on for the press AND for as long as About stays open, then off: it
+        shows while the button is held (and on keyboard focus), is held by an about-open class on
+        the map container while the alert is up - neither :active nor :focus spans that - and is
+        gone once the alert closes, even though focus returns to the button. Mapbox's own
+        stylesheet rings focused controls in #0096ff, so plain :focus has to be overridden to
+        none for that last part to hold
+      - in the dark style the button is inverted so its glyph reads, which inverts the ring too;
+        the colour is pre-inverted there (#0090ff) so it comes out the same orange
+      - a long press shows the tooltip without opening About (the credits still toggle: that
+        listener is Mapbox's own, on the button, registered before ours)
     - middle - toast msg
     - right - map change style & location icon (location in embedded hidden,
       unless &geolocation=true)
@@ -219,7 +234,14 @@ SIDE MENU
     ==============================
     - Offline maps
     ==============================
-    - About
+    - About (also reached by clicking the attribution icon, bottom left - which is the ONLY way
+      to reach it in embedded mode, where there is no side menu)
+      - the heading carries the app icon, as a ::before on .alert-title: IonAlert's header is a
+        plain string and Ionic strips HTML from alert strings, so CSS is the way in
+      - embedded mode gets its own shorter text, because most of the full app's instructions are
+        untrue there: no context menu to add features with, no detail panels, no side menu. It
+        lists tilting, full screen and "Open the full app: Click the RontoMap logo, top left",
+        plus the location-tracking line only when &geolocation=true
 
 CREATING & EDITING PATH
 - path actions bar: Undo, Redo, Cancel, Done + snap toggle (Free/Foot/Bike/Car, Force)
