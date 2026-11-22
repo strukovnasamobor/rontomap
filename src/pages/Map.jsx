@@ -546,6 +546,8 @@ function createIonIcon(iconData, size = "20px", color) {
 
 // Add a hover/long-press tooltip to a DOM button (mirrors ActionIconButton behavior).
 // position: "left" | "right"
+// Returns the tooltip element, for the one caller whose label changes with the
+// camera (the compass); everyone else can ignore it.
 function addMapControlTooltip(button, label, position = "left") {
   const tooltip = document.createElement("span");
   tooltip.className = `map-ctrl-tooltip map-ctrl-tooltip-${position}`;
@@ -585,6 +587,8 @@ function addMapControlTooltip(button, label, position = "left") {
     tooltip.classList.remove("map-ctrl-tooltip-visible");
     setTimeout(() => { recentTouch = false; }, 500);
   });
+
+  return tooltip;
 }
 
 // Icon button used in the feature panel: shows a tooltip with the action name on
@@ -740,6 +744,7 @@ export default function Map() {
   const headingSamplesRef = useRef([]);    // { course, compass, t } while walking straight
   const headingLastFixRef = useRef(null);  // { lng, lat, t }, to derive a course from movement
   const headingRecalibRef = useRef([]);    // consecutive offsets disagreeing with the stored one
+  const headingCourseRef = useRef(null);   // { course, t } - the direction last walked in
   const markersRef = useRef([]);
   const [fullscreen, setFullscreen] = useState(false);
   const LABEL_ZOOM_THRESHOLD = 12;
@@ -3363,14 +3368,29 @@ export default function Map() {
       return norm360((Math.atan2(y, x) * 180) / Math.PI);
     };
 
+    // How long a walking course stands in for "which way the user faces" once
+    // they stop moving. Long enough to ride out a pause at a crossing, short
+    // enough that a real turn on the spot is picked up by the compass instead.
+    const HEADING_COURSE_FRESH_MS = 8000;
+
     const applyUserHeading = () => {
       const ctrl = geolocateRef.current;
       if (!ctrl) return;
+      // The direction of walking wins whenever it is recent: it is measured
+      // rather than sensed, so it needs no calibration and cannot be 180 out.
+      // That is also what puts the cone on screen while tracking location or
+      // bearing - the map is already turning with this same course, so there is
+      // no reason to wait for the compass to be vouched for first.
+      const walked = headingCourseRef.current;
+      const fresh = walked && Date.now() - walked.t <= HEADING_COURSE_FRESH_MS ? walked.course : null;
+      // Standing still, the compass takes over - but only once walking has
+      // shown how far out it is. Anything but a number hides the cone, which is
+      // Mapbox's own behaviour and exactly the "direction unknown" state.
       const raw = compassRawRef.current;
-      // Anything but a number makes Mapbox hide the cone for us.
-      ctrl._heading = headingTrustedRef.current && raw != null
+      const calibrated = headingTrustedRef.current && raw != null
         ? norm360(raw + headingOffsetRef.current)
         : undefined;
+      ctrl._heading = fresh != null ? fresh : calibrated;
       ctrl._updateMarkerRotationThrottled();
     };
 
@@ -3437,6 +3457,12 @@ export default function Map() {
         headingLastFixRef.current = { lng: coords.longitude, lat: coords.latitude, t };
       }
       if (course == null) return;
+
+      // Show it straight away. This is above the compass work on purpose: with
+      // no compass at all (no sensor, or permission refused) everything below
+      // returns early, and the cone would never appear however far you walked.
+      headingCourseRef.current = { course, t };
+      applyUserHeading();
 
       const compass = compassRawRef.current;
       if (compass == null) return;
@@ -3567,7 +3593,10 @@ export default function Map() {
         mapRef.current
           .flyTo({
             center: [long, lat],
-            zoom: defaultZoomOnUserTrackingLocation,
+            // Only ever zoom IN to the default: someone who had zoomed right in
+            // to place something asked for that detail, and starting location
+            // tracking is not a request to throw it away.
+            zoom: Math.max(mapRef.current.getZoom(), defaultZoomOnUserTrackingLocation),
             duration: 1000,
           })
           .once("moveend", () => {
@@ -4580,12 +4609,63 @@ export default function Map() {
     // hold a gap in the row besides.
     const compassBtn = nav._container.querySelector(".mapboxgl-ctrl-compass");
     if (compassBtn) {
-      addMapControlTooltip(compassBtn, "Reset North", "left");
+      const compassTip = addMapControlTooltip(compassBtn, "Reset to North", "left");
+      // Mapbox titles this button "Reset bearing to north" in onAdd, which the
+      // browser then shows as a second, native tooltip next to ours. Note WHERE
+      // it puts it: _setButtonTitle sets aria-label on the button but `title` on
+      // the button's firstElementChild - the icon span - so removing it from the
+      // button itself does nothing at all. The label lives on in aria-label,
+      // which we keep up to date below, so screen readers still get it.
+      compassBtn.querySelectorAll("[title]").forEach((el) => el.removeAttribute("title"));
+      compassBtn.removeAttribute("title");
+
+      const isOffNorth = () => Math.abs(mapRef.current?.getBearing() ?? 0) >= 0.5;
+      const isPitched = () => (mapRef.current?.getPitch() ?? 0) >= 0.5;
+
       const updateCompassVisibility = () => {
-        const bearing = mapRef.current?.getBearing() ?? 0;
-        nav._container.style.display = Math.abs(bearing) < 0.5 ? "none" : "";
+        const map = mapRef.current;
+        if (!map) return;
+        // The control is built with visualizePitch, so it resets the tilt as
+        // well as the bearing - which makes it worth showing on a pitched
+        // camera even when that camera faces due north.
+        const show = isOffNorth() || isPitched();
+        const next = show ? "" : "none";
+        if (nav._container.style.display !== next) nav._container.style.display = next;
+        // The label says which of the two stages the next click will do.
+        const label = isOffNorth() ? "Reset to North" : "Reset Pitch";
+        if (compassTip.textContent !== label) compassTip.textContent = label;
+        if (compassBtn.getAttribute("aria-label") !== label) {
+          compassBtn.setAttribute("aria-label", label);
+        }
       };
+
+      // Two clicks, two stages: straighten the map first, then flatten it.
+      // Mapbox's own handler does both at once (resetNorthPitch, since the
+      // control is built with visualizePitch), so it has to be headed off -
+      // and in the CAPTURE phase on the container, because at the target itself
+      // listeners run in the order they were added and Mapbox's was first.
+      // Intercepting rather than replacing the button keeps Mapbox's needle
+      // rotation working: it holds its own reference to the icon element.
+      nav._container.addEventListener("click", (ev) => {
+        const map = mapRef.current;
+        if (!map || !ev.target?.closest?.(".mapboxgl-ctrl-compass")) return;
+        ev.preventDefault();
+        ev.stopImmediatePropagation();
+        // The tooltip is deliberately LEFT up. stopImmediatePropagation already
+        // keeps its own hide-on-click listener from firing, and the pointer is
+        // still over the button, so it relabels itself to the next stage -
+        // "Reset Pitch" - in place, with no need to move away and back.
+        // updateCompassVisibility does the relabelling as the camera moves.
+        if (isOffNorth()) map.easeTo({ bearing: 0, duration: 400 });
+        else if (isPitched()) map.easeTo({ pitch: 0, duration: 400 });
+      }, true);
+      // "move" as well: a pitch change fires no "rotate", and the middle-drag
+      // rotate goes through setFreeCameraOptions, which fires neither of the
+      // two specific events. Writing only on a change keeps this cheap enough
+      // to hang off every frame of a camera animation.
+      mapRef.current.on("move", updateCompassVisibility);
       mapRef.current.on("rotate", updateCompassVisibility);
+      mapRef.current.on("pitch", updateCompassVisibility);
       updateCompassVisibility();
     }
 

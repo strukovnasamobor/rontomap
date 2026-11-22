@@ -99,10 +99,37 @@ UI DESIGN & INTERACTIONS
       unless &geolocation=true)
       - the compass sits immediately LEFT of the map-change-style icon, sharing a row with it,
         and identically so in embedded mode
-      - facing north there is nothing to reset, so the whole compass control is hidden (not just
-        its button, which would leave the control group painting an empty box and holding a gap
-        in the row); the style icon does not move as the compass comes and goes
-      - the heading cone on the blue location dot is HIDDEN until walking has shown which way it
+      - the compass is hidden only when there is nothing to reset: facing north AND unpitched. A
+        PITCHED camera keeps it on screen whatever the bearing, because the control resets the
+        tilt too (visualizePitch). The whole control is hidden, not just its button - hiding only
+        the button leaves the control group painting an empty box and holding a gap in the row;
+        the style icon does not move as the compass comes and goes
+      - visibility is refreshed on move as well as rotate and pitch: a pitch change fires no
+        "rotate", and the middle-drag rotate goes through setFreeCameraOptions, which fires
+        neither of the two specific events
+      - clicking it resets in TWO stages, one per click: the first straightens the map to north and
+        leaves the tilt alone, the second flattens the tilt. Mapbox's own button does both at once,
+        so the click is intercepted (capture phase on the container - at the button itself the
+        library's listener was added first; the button is not replaced, because Mapbox keeps its own
+        reference to the needle icon it rotates)
+      - the tooltip names the stage the next click will do: "Reset to North" while off north, then
+        "Reset Pitch" once north is reached. It relabels in place and is NOT hidden on click, so
+        after the first click the next stage names itself without the pointer having to leave the
+        button and come back
+      - Mapbox's own "Reset bearing to north" is removed so the browser shows no second native
+        tooltip beside ours. Note where it lives: _setButtonTitle puts aria-label on the BUTTON
+        but `title` on the button's firstElementChild - the icon span - so removing title from the
+        button achieves nothing. The zoom buttons never had this problem because the app replaces
+        their icon span outright with an Ionic icon; the compass keeps its own, since Mapbox holds
+        a reference to it for the needle rotation. The text lives on in aria-label, kept in step
+        with the stage, for screen readers
+      - the heading cone on the blue location dot comes from the DIRECTION OF WALKING whenever that
+        is known, and that is what shows it while tracking location or bearing: the course is
+        measured rather than sensed, so it needs no calibration and cannot be 180 out, and the map
+        is already turning with the same course. It holds for 8 s after the user stops - long
+        enough to ride out a pause at a crossing - and then the compass takes over. With no
+        compass at all (no sensor, or permission refused) walking alone still shows the cone.
+      - with no course yet, the cone is HIDDEN until walking has shown which way the compass
         really points. Mapbox drives that cone from the device compass, which on Android is -alpha
         of deviceorientationabsolute - a true compass heading only while the phone is flat. Out of
         a pocket the phone is near vertical, that axis degenerates and alpha flips by ~180 degrees,
@@ -110,8 +137,10 @@ UI DESIGN & INTERACTIONS
       - so the compass is calibrated, not replaced: while the user walks a straight stretch the
         reported course is compared with the compass, and the difference - quantised to 0/90/180/270,
         since GPS course noise would otherwise nudge a compass that is already right - becomes a
-        correction added to every later compass reading. Once calibrated the cone is live off the
-        compass again, so turning the phone on the spot still turns the cone.
+        correction added to every later compass reading. Once calibrated, and once the walking
+        course has gone stale, the cone is live off the compass again, so turning the phone on the
+        spot still turns it. While walking the course wins, so turning the phone in your hand does
+        NOT swing the cone away from where you are heading.
       - three straight stretches agreeing on a different correction replace it, so a phone moved
         from pocket to hand re-calibrates instead of staying wrong
       - withholding a heading IS the hidden state: Mapbox shows the cone only while its _heading is
@@ -218,6 +247,9 @@ NAVIGATION & TRACING PATH
   - the watcher runs at a 2 m distance filter for the trace's benefit; the recorded line's old 5 m
     thinning is applied in JS instead, so recorded geometry is unchanged
 - start/resume starts user tracking bearing, stop/cancel stops it
+- starting track location only ever zooms IN to the default zoom (14): a closer view was asked
+  for deliberately, and starting to track is not a request to give it up. Below the default it
+  zooms in to it; at or above it the zoom is left alone
 - location control icons: track location - ion-icon name="locate-outline",
   start user tracking bearing - ion-icon name="navigate-outline",
   stop user tracking bearing (= pause) - ion-icon name="pause-outline"
