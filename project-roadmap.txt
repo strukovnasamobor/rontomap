@@ -13,7 +13,8 @@ FEATURE COLLECTIONS - review with feature list panel and feature detail panel
     - duplicate on a folder copies the folder, its sub-folders and all of their contents; the copy is
       a sibling of the original and the copies keep their own names inside the new folders
     - back affordance: the sticky ← <name> row at the top of the list is clickable and leaves the
-      collection; there is no back button in the toolbar, the last toolbar button always closes the panel
+      collection, and inside a folder the last toolbar button is a back arrow that goes up one
+      level too (see FEATURES LIST PANEL) - it closes the panel only at the root
     - everything is saved as it is created - added, drawn, recorded, imported - there is no save action
     - every date and time the app writes itself - import folder names, recorded path names, tracing
       records - is yyyy-mm-dd and 24h regardless of the device locale: unambiguous everywhere, and
@@ -34,6 +35,19 @@ FEATURE COLLECTIONS - review with feature list panel and feature detail panel
       sub-folders alike, one level up to the deleted folder's parent; delete takes the whole
       subtree. Skip the dialog only when the folder holds nothing at all. Either way the list
       falls back to that parent if it was standing inside what went
+    - three features deleted in a row out of ONE folder reads as clearing it out, so the app
+      offers to finish the job: "Delete the remaining N in <folder>? The collection itself
+      stays." It deletes the folder's features AND its sub-folders, leaving the folder empty -
+      so the view being stood in survives, which is why this is not the delete-collection
+      dialog above. One undo toast covers the lot
+      - counted wherever a feature is deleted from, list or detail panel, so the run is the
+        user's run and not one panel's
+      - the run is per folder: a delete somewhere else restarts the count at one
+      - an UNDO resets the run to zero - putting one back says the opposite of wanting them all
+        gone - and so does the offer itself, however it is answered
+      - only a real folder can be cleared: at the root "everything in here" is every feature
+        there is, which is the side menu's Delete all features, a different question
+      - asked only while something is actually left to delete
     * to collections, paths, sights and markers add move-icon to move them in another collection or at root
     - after stopped recording path name it "Path created at yyyy-mm-dd" and save it in the root
     - imported features go in one folder per import, named "Imported on yyyy-mm-dd" and always
@@ -91,7 +105,9 @@ UI DESIGN & INTERACTIONS
 - top
     - left - search icon (in embedded rontomap icon)
     - middle - path actions (in embedded hidden)
-    - right - menu (in embedded zoom in/out icons) & compass icon BELOW it
+    - right - zoom in/out icons & compass icon BELOW them, in BOTH modes. The hamburger menu
+      that used to stand here is gone, and with it the only way to open the side menu - see the
+      note under MAIN MENU
 - bottom
     - left - attribute icon & scale
       - clicking the attribution (i) does BOTH: it expands the data credits, as Mapbox's own
@@ -167,7 +183,12 @@ UI DESIGN & INTERACTIONS
         a number, so there is no CSS of our own for this
       - the map's own bearing in bearing-tracking mode is deliberately NOT part of this; it keeps
         coming from the reported course, falling back to the current map bearing
-- right sidebar - side menu 
+- right sidebar - side menu: STILL IN THE CODE BUT NO LONGER REACHABLE, since the hamburger that
+  opened it was replaced by the zoom in/out icons. Everything it offered has another route -
+  Features list: click empty map; Add marker / Create path / Record path / Import features: the
+  features list's Add chooser, or the map context menu; Copy link / Copy embedded / Export
+  features: the list's Share chooser; Offline maps: the list's Offline icon; About: the
+  attribution icon - EXCEPT "Delete all features", which now has no route at all
 - left mouse click / tap on map => features list panel opens (in embedded disabled) default sorted by the distance from map center when clicked
 - left mouse click / tap on feature => feature detail panel opens (in embedded disabled, posts marker-click/path-click to the embedding page instead)
 - in embedded, panning/zooming needs an activating tap (touch) or click (desktop) first, unless &interact=true
@@ -449,7 +470,7 @@ FEATURES LIST PANEL
 - opening on menu option "Features list"
 - on landscape - left sidebar
 - on portrait - peeking bottom sheet (peek lvl. 0. - height: 25dvh, mid lvl. 1. - height: 50dvh, expanded lvl. 2. - height: 75dvh)
-- action icons: Add, Sort by distance, Sort by name, Filter, Share, Offline map, Close
+- action icons: Add, Sort by distance, Sort by name, Filter, Share, Offline map, Close/Up
     - Add - ion-icon name="add-outline" - a chooser: New marker, New path, Record path,
       Import features, New collection. All of these are in the side menu too, which keeps them;
       the row is the quick route while you are looking at features
@@ -484,7 +505,11 @@ FEATURES LIST PANEL
     - Offline map - ion-icon name="globe-outline" - opens the offline maps panel; the features
       list gives way to it, because the two panels' render conditions are independent and would
       otherwise stack (same for the side-menu route)
-    - Close - ion-icon name="close-outline"
+    - Close - ion-icon name="close-outline" - at the ROOT only. Inside a folder this slot is
+      the way out of it instead: ion-icon name="arrow-back-outline", one level up to the
+      folder's parent, the same back arrow the detail panel returns with (forward means going
+      IN, which is what the rows' Open uses). Nothing is closed from inside a folder - there is
+      a level to leave first
 - list of features with name and details showing for marker/sight - coordinates, for path - snapping, distance, duration (for snapped paths)
 - path item/header icon by snapping 
     - free - ion-icon name="analytics-outline"

@@ -14,7 +14,6 @@ import {
   downloadOutline,
   closeOutline,
   searchOutline,
-  menuOutline,
   pauseOutline,
   layersOutline,
   addOutline,
@@ -1031,6 +1030,11 @@ export default function Map() {
   const [deleteAllAlert, setDeleteAllAlert] = useState(false);
   // { collection, count } — only opened for a collection that has members.
   const [deleteCollectionAlert, setDeleteCollectionAlert] = useState(null);
+  // { collection, count, folders } — the "you seem to be clearing this folder
+  // out" offer, raised by the run counter below rather than by any one button.
+  const [deleteContentsAlert, setDeleteContentsAlert] = useState(null);
+  // How many features have gone in a row from one folder, { id, count }.
+  const deleteRunRef = useRef({ id: null, count: 0 });
   const [cancelPathAlert, setCancelPathAlert] = useState(false);
   const cancelPathAlertRef = useRef(false);
   const [circuitAlert, setCircuitAlert] = useState(false);
@@ -4689,46 +4693,30 @@ export default function Map() {
     });
     mapRef.current.addControl(nav, "top-right");
 
-    // Add menu/zoom controls at top-right
+    // Zoom in/out at top-right, in both modes - the hamburger menu that used to
+    // stand here in the full app is gone. The compass added just above sits
+    // below these, since they are inserted as the container's first child.
     const topRight = mapRef.current.getContainer().querySelector(".mapboxgl-ctrl-top-right");
     if (topRight) {
-      if (isEmbeddedRef.current) {
-        // In embedded mode: show zoom in/out controls
-        const zoomNav = new mapboxgl.NavigationControl({
-          showZoom: true,
-          showCompass: false,
-        });
-        mapRef.current.addControl(zoomNav, "top-right");
-        topRight.insertBefore(zoomNav._container, topRight.firstChild);
+      const zoomNav = new mapboxgl.NavigationControl({
+        showZoom: true,
+        showCompass: false,
+      });
+      mapRef.current.addControl(zoomNav, "top-right");
+      topRight.insertBefore(zoomNav._container, topRight.firstChild);
 
-        // Replace zoom icons with Ionic icons
-        const zoomInBtn = zoomNav._container.querySelector(".mapboxgl-ctrl-zoom-in");
-        const zoomOutBtn = zoomNav._container.querySelector(".mapboxgl-ctrl-zoom-out");
-        if (zoomInBtn) {
-          zoomInBtn.querySelector("span.mapboxgl-ctrl-icon")?.remove();
-          zoomInBtn.appendChild(createIonIcon(addOutline));
-          addMapControlTooltip(zoomInBtn, "Zoom In", "left");
-        }
-        if (zoomOutBtn) {
-          zoomOutBtn.querySelector("span.mapboxgl-ctrl-icon")?.remove();
-          zoomOutBtn.appendChild(createIonIcon(removeOutline));
-          addMapControlTooltip(zoomOutBtn, "Zoom Out", "left");
-        }
-      } else {
-        // Normal mode: hamburger menu button
-        const menuContainer = document.createElement("div");
-        menuContainer.className = "mapboxgl-ctrl mapboxgl-ctrl-group ctrl-menu-container";
-        const menuBtn = document.createElement("button");
-        menuBtn.type = "button";
-        menuBtn.className = "ctrl-menu-btn";
-        menuBtn.setAttribute("aria-label", "Menu");
-        menuBtn.appendChild(createIonIcon(menuOutline));
-        addMapControlTooltip(menuBtn, "Menu", "left");
-        menuBtn.addEventListener("click", () => {
-          setIsSideMenuOpen((prev) => !prev);
-        });
-        menuContainer.appendChild(menuBtn);
-        topRight.insertBefore(menuContainer, topRight.firstChild);
+      // Replace zoom icons with Ionic icons
+      const zoomInBtn = zoomNav._container.querySelector(".mapboxgl-ctrl-zoom-in");
+      const zoomOutBtn = zoomNav._container.querySelector(".mapboxgl-ctrl-zoom-out");
+      if (zoomInBtn) {
+        zoomInBtn.querySelector("span.mapboxgl-ctrl-icon")?.remove();
+        zoomInBtn.appendChild(createIonIcon(addOutline));
+        addMapControlTooltip(zoomInBtn, "Zoom In", "left");
+      }
+      if (zoomOutBtn) {
+        zoomOutBtn.querySelector("span.mapboxgl-ctrl-icon")?.remove();
+        zoomOutBtn.appendChild(createIonIcon(removeOutline));
+        addMapControlTooltip(zoomOutBtn, "Zoom Out", "left");
       }
     }
 
@@ -6753,6 +6741,24 @@ export default function Map() {
     bumpFeaturesVersion();
   };
 
+  // "Delete everything in here". Unlike performDeleteCollection the folder
+  // itself survives, so there is nowhere to move the view to — except out of a
+  // sub-folder that just went, and the surviving parent is where that lands.
+  const performDeleteContents = (pending) => {
+    const { target, members = [], folders = [] } = pending;
+    if (!target) return;
+    members.forEach((f) => { delete f._pendingDelete; });
+    members.filter((f) => f.vertices).forEach((p) => performDeletePath(p));
+    members.filter((f) => !f.vertices).forEach((m) => performDeleteMarker(m));
+    folders.forEach((c) => { delete c._pendingDelete; });
+    const doomed = new Set(folders);
+    collectionsRef.current = collectionsRef.current.filter((c) => !doomed.has(c));
+    const doomedIds = new Set(folders.map((c) => c._id));
+    setOpenCollectionId((cur) => (cur && doomedIds.has(cur) ? target._id : cur));
+    persistSavedFeaturesRef.current?.();
+    bumpFeaturesVersion();
+  };
+
   const commitPendingDelete = () => {
     const pending = pendingDeleteRef.current;
     if (!pending) return;
@@ -6760,6 +6766,7 @@ export default function Map() {
     pendingDeleteRef.current = null;
     delete pending.target._pendingDelete;
     if (pending.type === "collection") performDeleteCollection(pending);
+    else if (pending.type === "contents") performDeleteContents(pending);
     else if (pending.type === "path") performDeletePath(pending.target);
     // "sights" acts on the path's sights, never on the path: the members are
     // the victims. performDeleteMarker also strips each from path.sights.
@@ -6776,8 +6783,18 @@ export default function Map() {
     if (pending.timerId) clearTimeout(pending.timerId);
     pendingDeleteRef.current = null;
     delete pending.target._pendingDelete;
+    // Putting one back says the opposite of wanting them all gone, so the run
+    // that would raise the "clear this folder out" offer starts over.
+    deleteRunRef.current = { id: null, count: 0 };
     if (pending.type === "sights") {
       pending.members.forEach((m) => { delete m._pendingDelete; });
+    }
+    if (pending.type === "contents") {
+      pending.members.forEach((f) => { delete f._pendingDelete; });
+      (pending.folders || []).forEach((c) => { delete c._pendingDelete; });
+      // The pending state reads as deleted to persistSavedFeatures, so an
+      // unrelated save during the window has already written the folder empty.
+      persistSavedFeaturesRef.current?.();
     }
     if (pending.type === "collection") {
       (pending.folders || [pending.target]).forEach((c) => { delete c._pendingDelete; });
@@ -6825,6 +6842,16 @@ export default function Map() {
       members = (target.sights || []).filter((m) => !m._pendingDelete);
       members.forEach((m) => { m._pendingDelete = true; });
     }
+    if (type === "contents") {
+      // Everything the folder holds — features and sub-folders — but not the
+      // folder: it stays, empty, so the view being stood in survives.
+      delete target._pendingDelete;
+      folders = collectionSubtree(target._id).filter((c) => c !== target);
+      const found = subtreeFeatures(target._id);
+      members = [...found.markers, ...found.paths].filter((f) => !f._pendingDelete);
+      members.forEach((f) => { f._pendingDelete = true; });
+      folders.forEach((c) => { c._pendingDelete = true; });
+    }
     if (type === "collection") {
       if (opts.cascade) {
         // The whole subtree: hiding and deleting both mean "everything beneath
@@ -6869,6 +6896,7 @@ export default function Map() {
       : type === "sight" ? "Sight"
       : type === "sights" ? `${members.length} sight${members.length === 1 ? "" : "s"}`
       : type === "collection" ? "Collection"
+      : type === "contents" ? "Collection contents"
       : "Marker";
     // ms = 0: the pending-delete timer above owns this toast's lifetime, but it
     // still has to cancel any auto-clear left over from an earlier message.
@@ -6877,6 +6905,30 @@ export default function Map() {
       action: { label: "Undo", onClick: undoPendingDelete },
       __undo: token,
     }, 0);
+
+    // Three features in a row out of one folder reads as clearing it out, so
+    // offer to finish the job. Counted here rather than in the list so the
+    // detail panel's delete is part of the same run. Only a real folder can be
+    // cleared — at the root "everything in here" is every feature there is,
+    // which is a different question and has its own dialog.
+    if (type === "marker" || type === "sight" || type === "path") {
+      const run = deleteRunRef.current;
+      const home = (target._sightPath ?? target)._collectionId ?? null;
+      run.count = run.id === home ? run.count + 1 : 1;
+      run.id = home;
+      const collection = home ? collectionsRef.current.find((c) => c._id === home) : null;
+      if (run.count >= 3 && collection) {
+        const { markers, paths } = subtreeFeatures(home);
+        const left = [...markers, ...paths].filter((f) => !f._pendingDelete).length;
+        const subFolders = collectionSubtree(home)
+          .filter((c) => c !== collection && !c._pendingDelete).length;
+        // Worth asking only while something is actually left to delete.
+        if (left > 0 || subFolders > 0) {
+          deleteRunRef.current = { id: null, count: 0 };
+          setDeleteContentsAlert({ collection, count: left, folders: subFolders });
+        }
+      }
+    }
   };
 
   const pendingImportRef = useRef(null);
@@ -7737,6 +7789,14 @@ export default function Map() {
     const target = deleteCollectionAlert?.collection;
     setDeleteCollectionAlert(null);
     if (target) queueDelete(target, "collection", { cascade });
+  };
+
+  const confirmDeleteContents = () => {
+    const target = deleteContentsAlert?.collection;
+    setDeleteContentsAlert(null);
+    // queueDelete commits whichever delete is still pending first, so the third
+    // feature is gone for good before this one's own undo window opens.
+    if (target) queueDelete(target, "contents");
   };
 
   // === Saved-feature persistence (localStorage) ===
@@ -11941,6 +12001,23 @@ export default function Map() {
         ]}
       />
       <IonAlert
+        isOpen={!!deleteContentsAlert}
+        cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
+        onDidDismiss={() => setDeleteContentsAlert(null)}
+        header="Delete collection contents"
+        message={(() => {
+          const { collection, count = 0, folders = 0 } = deleteContentsAlert || {};
+          const parts = [];
+          if (folders) parts.push(`${folders} ${folders === 1 ? "collection" : "collections"}`);
+          if (count) parts.push(`${count} ${count === 1 ? "feature" : "features"}`);
+          return `Delete the remaining ${parts.join(" and ")} in "${collection?.name || "Collection"}"? The collection itself stays.`;
+        })()}
+        buttons={[
+          { text: "Cancel", role: "cancel" },
+          { text: "Delete", handler: confirmDeleteContents },
+        ]}
+      />
+      <IonAlert
         isOpen={cancelPathAlert}
         cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
         onDidDismiss={() => setCancelPathAlert(false)}
@@ -12351,9 +12428,21 @@ export default function Map() {
               <ActionIconButton label="Offline map" onClick={handleOpenOfflineMaps}>
                 <IonIcon icon={globeOutline} />
               </ActionIconButton>
-              <ActionIconButton label="Close" onClick={closeFeaturePanel}>
-                <IonIcon icon={closeOutline} />
-              </ActionIconButton>
+              {/* Inside a folder this slot is the way out of it: one level up,
+                  the same back arrow the detail panel returns with. The list is
+                  closed from the root, where there is nothing left to leave. */}
+              {openCollection ? (
+                <ActionIconButton
+                  label="Up one collection"
+                  onClick={() => openCollectionAt(openCollection._parentId ?? null)}
+                >
+                  <IonIcon icon={arrowBackOutline} />
+                </ActionIconButton>
+              ) : (
+                <ActionIconButton label="Close" onClick={closeFeaturePanel}>
+                  <IonIcon icon={closeOutline} />
+                </ActionIconButton>
+              )}
             </div>
             <div className="panel-list-items" ref={listScrollRef}>
               <CollectionCrumb
