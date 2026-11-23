@@ -217,6 +217,35 @@ UI DESIGN & INTERACTIONS
 - two fingers twisting => map rotation
 - two fingers tilt => map tilt
 
+DIALOGS
+- every dialog answers the same way: its options are full-width ROWS, one per line, CENTRED, in
+  the order they are offered, with the way out QUIET AND LAST - set apart above a hairline and
+  grey. Written first for the choosers (Add, Share, Export format), it is now how every dialog
+  in the app looks
+    - the row group is a COLUMN, said explicitly: Ionic's md button group is a wrap-reverse ROW
+      until a dialog has more than two buttons, and full-width rows in a wrap-reverse row stack
+      BOTTOM-UP - which put Close on top in every two-option dialog while the longer ones looked
+      right
+- the way out is called CLOSE everywhere, whatever it used to say - "Cancel" in thirteen dialogs,
+  "OK" in About, "Continue editing" when cancelling path editing, "Continue" when cancelling
+  tracing or navigation. One name in one place, so leaving a dialog is never a reading exercise.
+  ("Continue editing" said more than "Close" does; the dialog's own message still says what is
+  at stake)
+- destructive answers are RED (#f44336, the app's red): Delete, Delete all, Delete contents,
+  Discard changes. The row style has no destructive colour of its own, so the role drives it and
+  the warning Ionic used to give is kept. NOT red: Stop (stopping a recording saves the path),
+  Cancel tracing / Cancel navigation (nothing recorded is deleted), Keep contents (it keeps them)
+- the ONE exception is a question with two answers: "Circular path" (Close this path into a
+  circuit?) and "Attach to path" (Attach this marker as a sight?) keep Ionic's own plain
+  two-button look, No then Yes - that is a question, not a menu with a way out
+- the cancel role still dismisses on Escape and on a backdrop press wherever it sits in the
+  button list, so moving it last is presentation only
+- the modals of our own - Marker/Path/Collection name, Tracing record name, Description, Rename
+  offline map, Filter - follow the same two rules: the button row is CENTRED in the card, and
+  CLOSE IS LAST, after the thing you came to do (Clear / OK, or Apply in the filter). OK is the
+  confirm label in all four text modals - the offline rename said "Save" until the rest were
+  looked at side by side
+
 SIDE MENU
 - options
     - Add marker
@@ -567,7 +596,11 @@ OFFLINE MAPS PANEL
     - Show/Hide Base Map (toggle on/off for filtering) - ion-icon name="globe-outline"
     - Show/Hide Regions (toggle on/off for filtering) - ion-icon name="map-outline"
     - Add region - ion-icon "add-outline"
-    - Close - ion-icon name="close-outline"
+    - Back to features - ion-icon name="arrow-back-outline" - there is no Close: this panel took
+      the features list's place to open (the two render independently and would otherwise stack),
+      so leaving it returns to that list, at the folder it was left standing in, rather than onto
+      a bare map. The same return the feature detail panel offers, and the same from every route
+      in - the list's offline icon, a feature's offline action, or the side menu
 - showing base map if is it downloaded with number of tiles and size with
 - list of offline regions with number of tiles, size and date of download/update
 - side action for base map showing on mouseover / tap

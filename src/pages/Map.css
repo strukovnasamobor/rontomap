@@ -835,7 +835,7 @@ textarea.rename-modal-input {
 
 .rename-modal-buttons {
   display: flex;
-  justify-content: flex-end;
+  justify-content: center;
   gap: 4px;
   margin-top: 12px;
 }
@@ -1730,15 +1730,6 @@ textarea.rename-modal-input {
     max-height: unset !important;
 }
 
-.name-alert .alert-button-group {
-  flex-direction: row !important;
-}
-
-.alert-about .alert-button-group {
-  flex-direction: row !important;
-  flex-wrap: nowrap !important;
-}
-
 /* The app's own icon beside the About heading. Done as a ::before rather than
    markup because IonAlert's header is a plain string - Ionic strips HTML from
    alert strings unless innerHTMLTemplatesEnabled is turned on globally, which
@@ -1756,20 +1747,6 @@ textarea.rename-modal-input {
   flex: none;
   border-radius: 6px;
   background: url("/icons/icon-192.png") center / cover no-repeat;
-}
-
-.name-alert-dark .alert-wrapper {
-  background: #1a1a1a !important;
-}
-
-.name-alert-dark .alert-title,
-.name-alert-dark .alert-sub-title {
-  color: white !important;
-}
-
-.name-alert-dark .alert-input {
-  background: #2a2a2a !important;
-  color: white !important;
 }
 
 .alert-dark .alert-wrapper {
@@ -1790,11 +1767,19 @@ textarea.rename-modal-input {
   color: white !important;
 }
 
-/* The choosers (Share, and Export format) are menus of actions, so choices are dressed as
-   full-width rows rather than Ionic's shouted text buttons. Scoped to
-   .choice-alert so no other alert in the app changes. */
+/* Every dialog answers the same way: its options are full-width rows rather than
+   Ionic's shouted text buttons, with the way out quiet and last. Written for the
+   choosers, it now dresses every alert in the app except the two Yes/No
+   questions (Circular path, Attach to path) - a question with two answers is not
+   a menu with a way out, so those keep the default look and pass no class. */
 .choice-alert .alert-button-group {
   padding: 6px !important;
+  /* Ionic's md group is a wrap-reverse ROW until a dialog has more than two
+     buttons, and only then a column. With full-width rows that stacks a
+     two-button dialog bottom-up, which put Close on TOP in half the app. Said
+     explicitly here so DOM order is layout order whatever the count. */
+  flex-direction: column !important;
+  flex-wrap: nowrap !important;
 }
 
 /* The filter is one icon standing in for what used to be four toggles, each of
@@ -1813,21 +1798,25 @@ textarea.rename-modal-input {
   font-weight: 500 !important;
 }
 
-/* Ionic centres the label in an inner span, so alignment is set there. */
+/* Ionic centres the label in an inner span, so alignment is set there. Every
+   option is centred, the way out included - so nothing in the column is reading
+   off a different edge. */
 .choice-alert .alert-button-inner {
-  justify-content: flex-start !important;
+  justify-content: center !important;
 }
 
-/* Cancel is not one of the choices: set apart, centred and quiet. */
+/* Deleting, or discarding work, keeps the warning Ionic's own destructive
+   styling gave before the rows took over. */
+.choice-alert .alert-button.alert-button-role-destructive {
+  color: #f44336 !important;
+}
+
+/* Close is not one of the choices: set apart, centred and quiet. */
 .choice-alert .alert-button.alert-button-role-cancel {
   margin-top: 8px !important;
   border-top: 1px solid rgba(0, 0, 0, 0.12) !important;
   border-radius: 0 !important;
   color: #8c8c8c !important;
-}
-
-.choice-alert .alert-button.alert-button-role-cancel .alert-button-inner {
-  justify-content: center !important;
 }
 
 .choice-alert.alert-dark .alert-button.alert-button-role-cancel {
@@ -1842,11 +1831,17 @@ textarea.rename-modal-input {
   .choice-alert .alert-button.alert-button-role-cancel:hover {
     background: rgba(0, 0, 0, 0.03) !important;
   }
+  .choice-alert .alert-button.alert-button-role-destructive:hover {
+    background: rgba(244, 67, 54, 0.08) !important;
+  }
   .choice-alert.alert-dark .alert-button:hover {
     background: rgba(255, 255, 255, 0.08) !important;
   }
   .choice-alert.alert-dark .alert-button.alert-button-role-cancel:hover {
     background: rgba(255, 255, 255, 0.04) !important;
+  }
+  .choice-alert.alert-dark .alert-button.alert-button-role-destructive:hover {
+    background: rgba(244, 67, 54, 0.16) !important;
   }
 }
 

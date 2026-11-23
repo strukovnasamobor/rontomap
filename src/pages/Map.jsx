@@ -384,7 +384,7 @@ const deserializeSnappedSegments = (segments) =>
 // IonAlert's focus-trap was reliably stealing focus from the input on
 // Chrome and Android; a plain React-controlled modal with a ref'd <input>
 // gives us guaranteed focus + text-selection + soft-keyboard behavior.
-function RenameModal({ isOpen, title, initialValue, onCancel, onClear, onSave, saveLabel, isDark, placeholder, multiline, maxLength }) {
+function RenameModal({ isOpen, title, initialValue, onCancel, onClear, onSave, isDark, placeholder, multiline, maxLength }) {
   const inputRef = useRef(null);
   const [charCount, setCharCount] = useState(0);
   const [centerY, setCenterY] = useState(null);
@@ -515,10 +515,8 @@ function RenameModal({ isOpen, title, initialValue, onCancel, onClear, onSave, s
         {maxLength && (
           <div className="rename-modal-counter">{charCount}/{maxLength}</div>
         )}
+        {/* Close last, as in every dialog in the app. */}
         <div className="rename-modal-buttons">
-          <button type="button" className="rename-modal-button" onClick={onCancel}>
-            Cancel
-          </button>
           {onClear && (
             <button type="button" className="rename-modal-button" onClick={onClear}>
               Clear
@@ -529,7 +527,10 @@ function RenameModal({ isOpen, title, initialValue, onCancel, onClear, onSave, s
             className="rename-modal-button rename-modal-save"
             onClick={() => onSave(getValue())}
           >
-            {saveLabel || "OK"}
+            OK
+          </button>
+          <button type="button" className="rename-modal-button" onClick={onCancel}>
+            Close
           </button>
         </div>
       </div>
@@ -645,9 +646,6 @@ function FilterModal({ isOpen, isDark, value, onCancel, onApply }) {
           onToggle={() => setDraft((d) => ({ ...d, hidden: !d.hidden }))}
         />
         <div className="filter-modal-buttons">
-          <button type="button" className="filter-modal-button" onClick={onCancel}>
-            Cancel
-          </button>
           <button
             type="button"
             className="filter-modal-button filter-modal-apply"
@@ -656,6 +654,9 @@ function FilterModal({ isOpen, isDark, value, onCancel, onApply }) {
             onClick={() => onApply({ ...draft, paths: onCount > 0 })}
           >
             Apply
+          </button>
+          <button type="button" className="filter-modal-button" onClick={onCancel}>
+            Close
           </button>
         </div>
       </div>
@@ -11784,11 +11785,19 @@ export default function Map() {
     if (shownRegionId === "__downloading__") clearOfflineRegionHighlight();
   };
 
+  // Every dialog but the two Yes/No questions wears the chooser row style, so
+  // the class list is built here once rather than spelled out fourteen times.
+  const alertClass = (extra) =>
+    `${extra ? `${extra} ` : ""}choice-alert${idMapStyle === "rontomap_streets_dark" ? " alert-dark" : ""}`;
+  // A question with two answers is not a menu with a way out: Circular path and
+  // Attach to path keep Ionic's own plain two-button look.
+  const plainAlertClass = idMapStyle === "rontomap_streets_dark" ? "alert-dark" : "";
+
   return (
     <PageFixedLayout name="map">
       <IonAlert
         isOpen={showAbout}
-        cssClass={`alert-about${idMapStyle === "rontomap_streets_dark" ? " alert-dark" : ""}`}
+        cssClass={alertClass("alert-about")}
         onDidDismiss={() => setShowAbout(false)}
         header="RontoMap"
         message={
@@ -11825,7 +11834,7 @@ export default function Map() {
             },
           },
           {
-            text: "OK",
+            text: "Close",
             role: "cancel",
           },
         ]}
@@ -11918,18 +11927,18 @@ export default function Map() {
       />
       <IonAlert
         isOpen={stopRecordingAlert}
-        cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
+        cssClass={alertClass()}
         onDidDismiss={() => setStopRecordingAlert(false)}
         header="Stop recording"
         message="Are you sure you want to stop recording?"
         buttons={[
-          { text: "Cancel", role: "cancel" },
           { text: "Stop", handler: confirmStopTrackRecording },
+          { text: "Close", role: "cancel" },
         ]}
       />
       <IonAlert
         isOpen={!!deleteSightsAlert}
-        cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
+        cssClass={alertClass()}
         onDidDismiss={() => setDeleteSightsAlert(null)}
         header="Delete all sights"
         message={(() => {
@@ -11937,7 +11946,6 @@ export default function Map() {
           return `Are you sure you want to delete all ${n} sight${n === 1 ? "" : "s"} of this path?`;
         })()}
         buttons={[
-          { text: "Cancel", role: "cancel" },
           {
             text: "Delete",
             role: "destructive",
@@ -11947,11 +11955,12 @@ export default function Map() {
               if (path) queueDelete(path, "sights");
             },
           },
+          { text: "Close", role: "cancel" },
         ]}
       />
       <IonAlert
         isOpen={!!deleteTracesAlert}
-        cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
+        cssClass={alertClass()}
         onDidDismiss={() => setDeleteTracesAlert(null)}
         header="Delete all tracing data"
         message={(() => {
@@ -11959,24 +11968,24 @@ export default function Map() {
           return `Are you sure you want to delete all ${n} tracing record${n === 1 ? "" : "s"} of this path?`;
         })()}
         buttons={[
-          { text: "Cancel", role: "cancel" },
           { text: "Delete", role: "destructive", handler: confirmDeleteAllTraces },
+          { text: "Close", role: "cancel" },
         ]}
       />
       <IonAlert
         isOpen={deleteAllAlert}
-        cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
+        cssClass={alertClass()}
         onDidDismiss={() => setDeleteAllAlert(false)}
         header="Delete all features"
         message="Are you sure you want to delete all markers and paths?"
         buttons={[
-          { text: "Cancel", role: "cancel" },
-          { text: "Delete", handler: confirmDeleteAllFeatures },
+          { text: "Delete", role: "destructive", handler: confirmDeleteAllFeatures },
+          { text: "Close", role: "cancel" },
         ]}
       />
       <IonAlert
         isOpen={!!deleteCollectionAlert}
-        cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
+        cssClass={alertClass()}
         onDidDismiss={() => setDeleteCollectionAlert(null)}
         header="Delete collection"
         message={(() => {
@@ -11987,7 +11996,6 @@ export default function Map() {
           return `"${collection?.name || "Collection"}" contains ${parts.join(" and ")}.`;
         })()}
         buttons={[
-          { text: "Cancel", role: "cancel" },
           // "features" would under-describe the choice once sub-folders are
           // moving with them — either answer acts on everything inside.
           {
@@ -11996,13 +12004,15 @@ export default function Map() {
           },
           {
             text: deleteCollectionAlert?.folders ? "Delete contents" : "Delete features",
+            role: "destructive",
             handler: () => confirmDeleteCollection(true),
           },
+          { text: "Close", role: "cancel" },
         ]}
       />
       <IonAlert
         isOpen={!!deleteContentsAlert}
-        cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
+        cssClass={alertClass()}
         onDidDismiss={() => setDeleteContentsAlert(null)}
         header="Delete collection contents"
         message={(() => {
@@ -12013,24 +12023,24 @@ export default function Map() {
           return `Delete the remaining ${parts.join(" and ")} in "${collection?.name || "Collection"}"? The collection itself stays.`;
         })()}
         buttons={[
-          { text: "Cancel", role: "cancel" },
-          { text: "Delete", handler: confirmDeleteContents },
+          { text: "Delete", role: "destructive", handler: confirmDeleteContents },
+          { text: "Close", role: "cancel" },
         ]}
       />
       <IonAlert
         isOpen={cancelPathAlert}
-        cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
+        cssClass={alertClass()}
         onDidDismiss={() => setCancelPathAlert(false)}
         header="Cancel path editing"
         message="Are you sure you want to cancel? All changes will be lost."
         buttons={[
-          { text: "Continue editing", role: "cancel" },
-          { text: "Discard changes", handler: confirmCancelPath },
+          { text: "Discard changes", role: "destructive", handler: confirmCancelPath },
+          { text: "Close", role: "cancel" },
         ]}
       />
       <IonAlert
         isOpen={circuitAlert}
-        cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
+        cssClass={plainAlertClass}
         onDidDismiss={() => { setCircuitAlert(false); pendingCircuitPathRef.current = null; }}
         header="Circular path"
         message="Close this path into a circuit?"
@@ -12041,18 +12051,18 @@ export default function Map() {
       />
       <IonAlert
         isOpen={trackBearingAlert}
-        cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
+        cssClass={alertClass()}
         onDidDismiss={() => setTrackBearingAlert(false)}
         header="Start bearing tracking"
         message="The current path will be saved before starting bearing tracking."
         buttons={[
-          { text: "Cancel", role: "cancel" },
           { text: "OK", handler: confirmTrackBearing },
+          { text: "Close", role: "cancel" },
         ]}
       />
       <IonAlert
         isOpen={attachSightAlert}
-        cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
+        cssClass={plainAlertClass}
         onDidDismiss={() => { setAttachSightAlert(false); pendingAttachSightRef.current = null; }}
         header="Attach to path"
         message="Attach this marker to the path as a sight?"
@@ -12063,13 +12073,13 @@ export default function Map() {
       />
       <IonAlert
         isOpen={cancelNavigationAlert}
-        cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
+        cssClass={alertClass()}
         onDidDismiss={() => setCancelNavigationAlert(false)}
         header={isTracingPathRef.current ? "Cancel tracing" : "Cancel navigation"}
         message={isTracingPathRef.current ? "Are you sure you want to cancel tracing?" : "Are you sure you want to cancel navigation?"}
         buttons={[
-          { text: "Continue", role: "cancel" },
           { text: isTracingPathRef.current ? "Cancel tracing" : "Cancel navigation", handler: confirmCancelNavigation },
+          { text: "Close", role: "cancel" },
         ]}
       />
       <FilterModal
@@ -12083,7 +12093,7 @@ export default function Map() {
         isOpen={!!chooser}
         // choice-alert is what the chooser styling hooks onto; alert-dark stays so
         // the shared dark-wrapper rules keep applying.
-        cssClass={`choice-alert${idMapStyle === "rontomap_streets_dark" ? " alert-dark" : ""}`}
+        cssClass={alertClass()}
         // The choice is remembered and run from HERE, not from the button
         // handler: a choice that opens another overlay would otherwise start it
         // while this one is still dismissing, putting two on screen.
@@ -12099,12 +12109,12 @@ export default function Map() {
             text: o.text,
             handler: () => { pendingChoiceRef.current = o.run; },
           })),
-          { text: "Cancel", role: "cancel" },
+          { text: "Close", role: "cancel" },
         ]}
       />
       <IonAlert
         isOpen={!!exportAlert}
-        cssClass={`choice-alert${idMapStyle === "rontomap_streets_dark" ? " alert-dark" : ""}`}
+        cssClass={alertClass()}
         onDidDismiss={() => setExportAlert(null)}
         header="Export format"
         buttons={[
@@ -12115,7 +12125,7 @@ export default function Map() {
           ...(exportAlert?.scope?.type === "path"
             ? [{ text: "FIT", handler: () => confirmExport("fit") }]
             : []),
-          { text: "Cancel", role: "cancel" },
+          { text: "Close", role: "cancel" },
         ]}
       />
       {isSideMenuOpen && (
@@ -12756,8 +12766,15 @@ export default function Map() {
               <ActionIconButton label="Add region" onClick={handleStartOfflineDownload}>
                 <IonIcon icon={addOutline} />
               </ActionIconButton>
-              <ActionIconButton label="Close" onClick={() => setShowOfflineMapsPanel(false)}>
-                <IonIcon icon={closeOutline} />
+              {/* This panel took the features list's place to open, so leaving
+                  it means going back there rather than onto a bare map - the
+                  same return the detail panel offers, at the folder the list
+                  was left standing in. */}
+              <ActionIconButton
+                label="Back to features"
+                onClick={() => { setShowOfflineMapsPanel(false); openListAt(openCollectionId); }}
+              >
+                <IonIcon icon={arrowBackOutline} />
               </ActionIconButton>
             </div>
             <div className="panel-list-items">
@@ -13056,27 +13073,26 @@ export default function Map() {
       })()}
       <IonAlert
         isOpen={!!offlineDeleteAlert}
-        cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
+        cssClass={alertClass()}
         onDidDismiss={() => setOfflineDeleteAlert(null)}
         header="Delete offline map?"
         message="This removes all cached tiles for this region. Offline routing data (Android) will also be removed."
         buttons={[
-          { text: "Cancel", role: "cancel" },
           {
             text: "Delete",
             role: "destructive",
             handler: () => confirmDeleteOfflineRegion(offlineDeleteAlert),
           },
+          { text: "Close", role: "cancel" },
         ]}
       />
       <IonAlert
         isOpen={offlineBaseDeleteAlert}
-        cssClass={idMapStyle === "rontomap_streets_dark" ? "alert-dark" : ""}
+        cssClass={alertClass()}
         onDidDismiss={() => setOfflineBaseDeleteAlert(false)}
         header="Delete base map?"
         message={`Deleting the base map will also delete all ${offlineRegions.length} offline region${offlineRegions.length === 1 ? "" : "s"}. This removes every cached tile. Continue?`}
         buttons={[
-          { text: "Cancel", role: "cancel" },
           {
             text: "Delete all",
             role: "destructive",
@@ -13094,6 +13110,7 @@ export default function Map() {
               setTimeout(() => refreshOfflineRegions(), 500);
             },
           },
+          { text: "Close", role: "cancel" },
         ]}
       />
       <RenameModal
@@ -13101,7 +13118,6 @@ export default function Map() {
         isDark={idMapStyle === "rontomap_streets_dark"}
         title="Rename offline map"
         initialValue={renameRegionTarget?.name || ""}
-        saveLabel="Save"
         onCancel={() => setRenameRegionTarget(null)}
         onSave={async (name) => {
           const target = renameRegionTarget;
