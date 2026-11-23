@@ -241,10 +241,11 @@ DIALOGS
 - the cancel role still dismisses on Escape and on a backdrop press wherever it sits in the
   button list, so moving it last is presentation only
 - the modals of our own - Marker/Path/Collection name, Tracing record name, Description, Rename
-  offline map, Filter - follow the same two rules: the button row is CENTRED in the card, and
-  CLOSE IS LAST, after the thing you came to do (Clear / OK, or Apply in the filter). OK is the
-  confirm label in all four text modals - the offline rename said "Save" until the rest were
-  looked at side by side
+  offline map, Filter - have a HORIZONTAL button row, centred in the card, and there Close sits
+  on the LEFT with the thing you came to do on the right: Close / Clear / OK, and Close / Apply.
+  Same idea as the stacked dialogs, read across instead of down - the way out leads, the
+  commitment is furthest from it. OK is the confirm label in all four text modals (the offline
+  rename said "Save" until the rest were looked at side by side)
 
 SIDE MENU
 - options
@@ -397,10 +398,18 @@ FEATURE DETAIL PANEL
       uses). Too far shows "You need to be near the marker/sight to record a visit.", with no
       location fix at all "Enable location to record a visit.", and a success shows
       "<name> recorded." with an undo option
-    - a marker or sight carrying a record CANNOT BE MOVED, the same rule that freezes a recorded
-      path's geometry: the record says the user was at that spot. Deleting the records unlocks it.
-      The cue is the cursor (alias rather than grab), not a toast - dragging is direct
-      manipulation, and a press on a frozen marker just opens its panel, where the records are
+    - a marker or sight carrying a record is HELD IN PLACE - the record says the user was at that
+      spot - and trying to drag it ASKS first: "Move recorded marker | sight / This marker has 2
+      visits recorded at this spot. Moving it deletes them." Continue (red) deletes them and frees
+      the feature; Close leaves it held. There is nothing to revert a drag to, so Continue is
+      final here - unlike the path edit, which hands the records back if the edit is cancelled
+      - the question comes on a drag ATTEMPT, not on a press: pointerdown plus 4 px of movement
+        (mapbox draws the same line at 3 px for click-versus-drag). A tap still just opens the
+        panel, where the records are, and raises nothing
+      - the resting cue is still the cursor, alias rather than grab, and it flips to grab the
+        moment the records go
+      - the gesture that asked the question is over by the time it is answered, so the user
+        presses again to actually drag. That is the cost of asking at all
     - a duplicate never inherits records: the interchange format carries none, so a copy arrives
       unrecorded and movable
 - show name of ther feature
@@ -492,8 +501,18 @@ FEATURE DETAIL PANEL
     - Set name to tracing record - ion-icon name="pencil-outline"
     - Delete tracing record - ion-icon name="trash-outline" - deletes at once and
       shows toast msg "Tracing record deleted" with undo option
-- a path with tracing records can not be edited: Edit path shows toast msg
-  "Delete tracing data before editing this path."
+- editing a path that carries records ASKS first, from every route in (list row action, detail
+  panel, map context menu): "Edit traced path / This path has 2 tracing records and 1 sight visit.
+  Editing deletes them." Continue and deletes revord data (red) then Close
+  - the count includes the visits its SIGHTS carry, not just the path's own records. The old lock
+    looked only at the path, which is how a path full of recorded sights could be edited with
+    every one of them held still while the geometry moved under them
+  - the records come off as editing STARTS, which is what unfreezes a recorded sight so it can be
+    dragged with its path. They ride in the pre-edit snapshot the Cancel already uses, so
+    Discard changes brings the geometry and the records back together, and each restored sight is
+    re-held in place. A sight deleted during the edit stays deleted and gets nothing back
+  - Done keeps them deleted. There is no undo: putting records back onto a geometry that has since
+    moved is the state the whole rule exists to prevent, so the dialog is the confirmation
 
 FEATURES LIST PANEL
 - opening on menu option "Features list"

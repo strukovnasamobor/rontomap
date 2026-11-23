@@ -515,8 +515,13 @@ function RenameModal({ isOpen, title, initialValue, onCancel, onClear, onSave, i
         {maxLength && (
           <div className="rename-modal-counter">{charCount}/{maxLength}</div>
         )}
-        {/* Close last, as in every dialog in the app. */}
+        {/* A horizontal row, so the way out is on the LEFT and the thing you
+            came to do is on the right. (In the stacked dialogs it is last
+            instead - same idea, read down the column rather than across.) */}
         <div className="rename-modal-buttons">
+          <button type="button" className="rename-modal-button" onClick={onCancel}>
+            Close
+          </button>
           {onClear && (
             <button type="button" className="rename-modal-button" onClick={onClear}>
               Clear
@@ -528,9 +533,6 @@ function RenameModal({ isOpen, title, initialValue, onCancel, onClear, onSave, i
             onClick={() => onSave(getValue())}
           >
             OK
-          </button>
-          <button type="button" className="rename-modal-button" onClick={onCancel}>
-            Close
           </button>
         </div>
       </div>
@@ -646,6 +648,9 @@ function FilterModal({ isOpen, isDark, value, onCancel, onApply }) {
           onToggle={() => setDraft((d) => ({ ...d, hidden: !d.hidden }))}
         />
         <div className="filter-modal-buttons">
+          <button type="button" className="filter-modal-button" onClick={onCancel}>
+            Close
+          </button>
           <button
             type="button"
             className="filter-modal-button filter-modal-apply"
@@ -654,9 +659,6 @@ function FilterModal({ isOpen, isDark, value, onCancel, onApply }) {
             onClick={() => onApply({ ...draft, paths: onCount > 0 })}
           >
             Apply
-          </button>
-          <button type="button" className="filter-modal-button" onClick={onCancel}>
-            Close
           </button>
         </div>
       </div>
@@ -1034,6 +1036,9 @@ export default function Map() {
   // { collection, count, folders } — the "you seem to be clearing this folder
   // out" offer, raised by the run counter below rather than by any one button.
   const [deleteContentsAlert, setDeleteContentsAlert] = useState(null);
+  // Moving something that carries records asks first:
+  // { kind: "edit", path, pathCount, sightCount } | { kind: "drag", target, count }
+  const [discardRecordsAlert, setDiscardRecordsAlert] = useState(null);
   // How many features have gone in a row from one folder, { id, count }.
   const deleteRunRef = useRef({ id: null, count: 0 });
   const [cancelPathAlert, setCancelPathAlert] = useState(false);
@@ -1772,6 +1777,35 @@ export default function Map() {
         setCursor("grab");
         mapRef.current.getContainer().classList.remove("marker-dragging");
       });
+
+      // A press is not a drag. A tap on a recorded marker must keep doing what
+      // it always did - open its panel, where the records are - so the question
+      // is asked only once the pointer has actually MOVED. Mapbox draws the same
+      // line at 3 px for click-versus-drag.
+      const DRAG_ATTEMPT_PX = 4;
+      let dragAttempt = null;
+      const onDragAttemptMove = (e) => {
+        if (!dragAttempt) return;
+        if (Math.abs(e.clientX - dragAttempt.x) <= DRAG_ATTEMPT_PX
+          && Math.abs(e.clientY - dragAttempt.y) <= DRAG_ATTEMPT_PX) return;
+        dragAttempt = null;
+        window.removeEventListener("pointermove", onDragAttemptMove, true);
+        const count = marker._traces?.length ?? 0;
+        if (count) setDiscardRecordsAlert({ kind: "drag", target: marker, count });
+      };
+      const endDragAttempt = () => {
+        if (!dragAttempt) return;
+        dragAttempt = null;
+        window.removeEventListener("pointermove", onDragAttemptMove, true);
+      };
+      el.addEventListener("pointerdown", (e) => {
+        // Only where a drag was wanted and the records are what stopped it.
+        if (!marker._dragWanted || !marker._traces?.length) return;
+        dragAttempt = { x: e.clientX, y: e.clientY };
+        window.addEventListener("pointermove", onDragAttemptMove, true);
+      });
+      el.addEventListener("pointerup", endDragAttempt);
+      el.addEventListener("pointercancel", endDragAttempt);
       marker.on("dragstart", () => {
         wasDragged = true;
       });
@@ -1841,12 +1875,16 @@ export default function Map() {
       // Sync cursor with draggable state
       const origSetDraggable = marker.setDraggable.bind(marker);
       marker.setDraggable = (v) => {
-        // A record says the user was AT this spot, so the position is frozen
-        // while any record exists - the same rule that freezes a recorded
-        // path's geometry, and deleting the records unlocks it again. Enforced
-        // here rather than at the call sites because every caller then gets it
-        // right for free, and because sights are created through this same
-        // function, so they are covered too.
+        // A record says the user was AT this spot, so the position is held while
+        // any record exists - the same rule that holds a recorded path's
+        // geometry. A drag attempt asks to delete them (see below); deleting
+        // them any other way unlocks it too. Enforced here rather than at the
+        // call sites because every caller then gets it right for free, and
+        // because sights are created through this same function, so they are
+        // covered too.
+        // _dragWanted remembers what was ASKED for, which is what tells a drag
+        // the records are blocking from one nobody wanted in the first place.
+        marker._dragWanted = !!v;
         const allowed = v && !marker._traces?.length;
         origSetDraggable(allowed);
         if (!isEmbeddedRef.current) setCursor(allowed ? "grab" : "alias");
@@ -9896,16 +9934,34 @@ export default function Map() {
     setCanRedo(pathRedoStackRef.current.length > 0);
   };
 
+  // What editing this path would cost: its own tracing records, and the visits
+  // its sights carry. The old lock counted only the first, which is how a path
+  // full of recorded sights could be edited with every one of them held still
+  // while the geometry moved under them.
+  const pathRecordCounts = (p) => ({
+    pathCount: p?._traces?.length ?? 0,
+    sightCount: (p?.sights || []).reduce((n, s) => n + (s._traces?.length ?? 0), 0),
+  });
+
   const handleEditPath = (pathArg) => {
     const path = pathArg || mapClickMenu?.path;
     if (!pathArg) setMapClickMenu(null);
     if (!path) return;
-    // A record describes a walk of this exact geometry, so the geometry is frozen
-    // while any record exists. Deleting the records unlocks editing again.
-    if (path._traces?.length) {
-      showToast("Delete tracing data before editing this path.", 3000);
+    // A record describes a walk of this exact geometry, so editing has to take
+    // the records with it - but it asks first, and a cancelled edit hands them
+    // back along with the geometry.
+    const counts = pathRecordCounts(path);
+    if (counts.pathCount || counts.sightCount) {
+      setDiscardRecordsAlert({ kind: "edit", path, ...counts });
       return;
     }
+    startPathEdit(path);
+  };
+
+  // stashed: the records confirmDiscardRecords has just taken off, so the
+  // snapshot can carry them. They cannot be read off the path here - by this
+  // point they are already gone.
+  const startPathEdit = (path, stashed) => {
     setSelectedFeature(null);
     setOpenFeaturesList(false);
     // The camera stays where it is: editing starts from whatever the user is
@@ -9943,6 +9999,13 @@ export default function Map() {
       roadSnap: path.roadSnap || null,
       snappedSegments: path.snappedSegments ? JSON.parse(JSON.stringify(path.snappedSegments)) : null,
       isCircuit: path.isCircuit || false,
+      // The records were stripped to get here; this is where they wait. Cancel
+      // restores the geometry they describe, so it restores them too. Marker
+      // objects survive an edit - updateSights repositions, it never recreates -
+      // so the sight itself is the key.
+      traces: stashed?.traces ?? path._traces ?? null,
+      sightTraces: stashed?.sightTraces
+        ?? (path.sights || []).map((s) => ({ sight: s, traces: s._traces || null })),
     };
 
     pathHelpersRef.current.showAllVertices(path);
@@ -9979,6 +10042,44 @@ export default function Map() {
       setNavRouteDuration(null);
     }
     showToast("Click on map to add path points.", 2000);
+  };
+
+  // Continue, from either gate. The edit case strips the records and starts
+  // editing - the snapshot holds them, so cancelling puts them back. A drag has
+  // nothing to revert to, so there its Continue is final; that asymmetry is
+  // what the two messages differ about.
+  const confirmDiscardRecords = () => {
+    const req = discardRecordsAlert;
+    setDiscardRecordsAlert(null);
+    if (!req) return;
+    if (req.kind === "edit") {
+      const path = req.path;
+      if (!path) return;
+      // Captured BEFORE the delete and handed to startPathEdit, which puts it in
+      // the pre-edit snapshot: by the time that snapshot is built there is
+      // nothing left on the path to read.
+      const stashed = {
+        traces: path._traces || null,
+        sightTraces: (path.sights || []).map((s) => ({ sight: s, traces: s._traces || null })),
+      };
+      delete path._traces;
+      (path.sights || []).forEach((sight) => { delete sight._traces; });
+      // Not saved here on purpose: startPathEdit is about to mark the path
+      // unfinished, which persistSavedFeatures skips - a save at this moment
+      // would drop the path from storage rather than write the deletion. Done
+      // and Cancel each save afterwards, as they already do.
+      bumpFeaturesVersion();
+      startPathEdit(path, stashed);
+      return;
+    }
+    const target = req.target;
+    if (!target) return;
+    delete target._traces;
+    // Re-runs setDraggable(true), which the override now allows - and with it
+    // the cursor goes from alias back to grab.
+    reapplyDragFreeze(target);
+    persistSavedFeatures();
+    bumpFeaturesVersion();
   };
 
   const handleDeletePath = (pathArg) => {
@@ -10747,6 +10848,17 @@ export default function Map() {
       h.hideIntermediateVertices(path);
       h.updateVertexStyles(path);
       if (path.sights) h.updateSights(path);
+
+      // The records came off when the edit started. A sight deleted during the
+      // edit stays deleted - as the sights themselves do in this branch - so
+      // only ones still on the path get theirs back, and each is run through
+      // setDraggable again, which is what re-holds it in place.
+      if (snapshot.traces) path._traces = snapshot.traces;
+      (snapshot.sightTraces || []).forEach(({ sight, traces }) => {
+        if (!traces || !(path.sights || []).includes(sight)) return;
+        sight._traces = traces;
+        sight.setDraggable(!!sight._dragWanted);
+      });
 
       if (path._wasLocked) {
         delete path._wasLocked;
@@ -12024,6 +12136,40 @@ export default function Map() {
         })()}
         buttons={[
           { text: "Delete", role: "destructive", handler: confirmDeleteContents },
+          { text: "Close", role: "cancel" },
+        ]}
+      />
+      <IonAlert
+        isOpen={!!discardRecordsAlert}
+        cssClass={alertClass()}
+        onDidDismiss={() => setDiscardRecordsAlert(null)}
+        header={(() => {
+          const r = discardRecordsAlert;
+          if (!r) return "";
+          if (r.kind === "edit") return "Edit traced path";
+          return r.target?._sightPath ? "Move recorded sight" : "Move recorded marker";
+        })()}
+        message={(() => {
+          const r = discardRecordsAlert;
+          if (!r) return "";
+          if (r.kind === "edit") {
+            const parts = [];
+            if (r.pathCount) {
+              parts.push(`${r.pathCount} tracing record${r.pathCount === 1 ? "" : "s"}`);
+            }
+            if (r.sightCount) {
+              parts.push(`${r.sightCount} sight visit${r.sightCount === 1 ? "" : "s"}`);
+            }
+            const one = r.pathCount + r.sightCount === 1;
+            return `This path has ${parts.join(" and ")}. Editing deletes ${one ? "it" : "them"}.`;
+          }
+          const noun = r.target?._sightPath ? "sight" : "marker";
+          const one = r.count === 1;
+          return `This ${noun} has ${r.count} visit${one ? "" : "s"} recorded at this spot.`
+            + ` Moving it deletes ${one ? "that record" : "them"}.`;
+        })()}
+        buttons={[
+          { text: "Continue and delete records data", role: "destructive", handler: confirmDiscardRecords },
           { text: "Close", role: "cancel" },
         ]}
       />
