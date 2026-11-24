@@ -1244,7 +1244,7 @@ textarea.rename-modal-input {
 }
 
 .panel-dark .panel-description-text.empty {
-  color: #888;
+  color: #9a9a9a;
 }
 
 .panel-meta {
@@ -1587,7 +1587,7 @@ textarea.rename-modal-input {
 }
 
 .panel-dark .panel-list-info {
-  color: #666;
+  color: #a8a8a8;
 }
 
 .panel-list-meta {
@@ -1671,7 +1671,7 @@ textarea.rename-modal-input {
 
 .panel-dark .panel-list-crumb {
   background: #1a1a1a;
-  color: #666;
+  color: #a8a8a8;
   border-bottom-color: rgba(255, 255, 255, 0.06);
 }
 
@@ -1713,11 +1713,11 @@ textarea.rename-modal-input {
 }
 
 .panel-dark .panel-list-meta {
-  color: #666;
+  color: #a8a8a8;
 }
 
 .panel-dark .panel-list-empty {
-  color: #666;
+  color: #a8a8a8;
 }
 
 .map-style-dark .marker-label,
