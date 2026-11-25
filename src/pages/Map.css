@@ -1543,7 +1543,9 @@ textarea.rename-modal-input {
   to { transform: rotate(270deg); }
 }
 
-.panel-actions .action-icon-btn.panel-filter-off { opacity: 0.35; }
+/* Only the icon fades: opacity on the button itself would make it a stacking
+   context, trapping its tooltip underneath the buttons that follow it. */
+.panel-actions .action-icon-btn.panel-filter-off > ion-icon { opacity: 0.35; }
 
 .panel-list-icon {
   font-size: 16px;

@@ -33,6 +33,7 @@ import {
   refreshOutline,
   trashOutline,
   globeOutline,
+  earthOutline,
   shareSocialOutline,
   filterOutline,
   timeOutline,
@@ -1207,11 +1208,25 @@ export default function Map() {
   const [offlineBaseMap, setOfflineBaseMap] = useState(null);
   const [offlineBaseDeleteAlert, setOfflineBaseDeleteAlert] = useState(false);
   const [offlineSort, setOfflineSort] = useState("dist-asc");
-  // Panel-level visibility toggles. Routing is always visible; only base map
-  // and regions can be hidden via the filter icons in the panel header.
-  const [offlineShowBase, setOfflineShowBase] = useState(true);
-  const [offlineShowRegions, setOfflineShowRegions] = useState(true);
+  // The selected offline row: a region id, "__base__" or "__downloading__".
+  // Selected means a blue row with its side actions and a blue rectangle.
   const [shownRegionId, setShownRegionId] = useState(null);
+  // The region row under the mouse, which lights its rectangle grey and does
+  // nothing else.
+  const [hoveredRegionId, setHoveredRegionId] = useState(null);
+  // Regions kept off the map. Display only — the tiles stay cached and in use —
+  // so it lives in this browser's storage, not with the region itself.
+  const [hiddenRegionIds, setHiddenRegionIds] = useState(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem("rontomap_offline_hidden_regions") || "[]");
+      return new Set(Array.isArray(stored) ? stored : []);
+    } catch {
+      return new Set();
+    }
+  });
+  const [offlineDeleteAllAlert, setOfflineDeleteAllAlert] = useState(false);
+  // Bridge for the map click handler, which is set up once.
+  const selectOfflineRegionRef = useRef(null);
   const [selectedRoutingSubId, setSelectedRoutingSubId] = useState(null);
   const [selectedFeatureListRef, setSelectedFeatureListRef] = useState(null);
   // The list row under the mouse, which lights its feature without selecting it.
@@ -1227,7 +1242,6 @@ export default function Map() {
   useEffect(() => { routingProgressRef.current = routingProgress; }, [routingProgress]);
   const [routingExpanded, setRoutingExpanded] = useState(false);
 
-  const offlineRegionHighlightCleanupRef = useRef(null);
   const offlineDownloadModeRef = useRef(false);
   const offlineFlowActiveRef = useRef(false);
   const offlineRectBoundsRef = useRef(null);
@@ -4335,6 +4349,16 @@ export default function Map() {
             return;
           }
           if (showOfflineMapsPanelRef.current) {
+            // A click inside a drawn region selects it — the innermost one
+            // where rectangles overlap. Anywhere else closes the panel.
+            const hits = mapRef.current.getLayer("offline-regions-fill")
+              ? mapRef.current.queryRenderedFeatures(e.point, { layers: ["offline-regions-fill"] })
+              : [];
+            if (hits.length) {
+              const inner = hits.reduce((a, b) => (b.properties.area < a.properties.area ? b : a));
+              selectOfflineRegionRef.current?.(inner.properties.id);
+              return;
+            }
             setShowOfflineMapsPanel(false);
             return;
           }
@@ -11038,10 +11062,10 @@ export default function Map() {
   }, [refreshOfflineRegions]);
 
   useEffect(() => {
-    if (!showOfflineMapsPanel && shownRegionId != null) {
-      clearOfflineRegionHighlight();
+    if (!showOfflineMapsPanel) {
+      setShownRegionId(null);
+      setHoveredRegionId(null);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showOfflineMapsPanel]);
 
   useEffect(() => {
@@ -11727,77 +11751,173 @@ export default function Map() {
     }
   };
 
-  const clearOfflineRegionHighlight = () => {
-    const map = mapRef.current;
-    if (offlineRegionHighlightCleanupRef.current) {
-      offlineRegionHighlightCleanupRef.current();
-      offlineRegionHighlightCleanupRef.current = null;
-    } else if (map) {
-      if (map.getLayer("offline-region-highlight-line")) map.removeLayer("offline-region-highlight-line");
-      if (map.getSource("offline-region-highlight")) map.removeSource("offline-region-highlight");
-    }
-    setShownRegionId(null);
-  };
-
-  const handleOfflineRegionClick = (region) => {
-    const map = mapRef.current;
-    if (!map) return;
+  // A click on a region row or its rectangle selects it, zooming out — only
+  // ever out — until it is clear of the panel. Clicking the selected one again
+  // lets it go. The base map covers the world, so it selects without moving.
+  const selectOfflineRegion = (region) => {
     setSelectedRoutingSubId(null);
     setRoutingExpanded(false);
     if (shownRegionId === region.id) {
-      clearOfflineRegionHighlight();
+      setShownRegionId(null);
       return;
     }
-    const pp = getPanelPaddingForFitBounds();
-    skipNextMoveBumpRef.current = true;
-    const cam = map.cameraForBounds(
-      [
-        [region.west, region.south],
-        [region.east, region.north],
-      ],
-      {
-        padding: { top: 60, bottom: (pp.bottom || 0) + 60, left: (pp.left || 0) + 60, right: 60 },
-        bearing: map.getBearing(),
-        pitch: map.getPitch(),
-      },
-    );
-    if (cam) {
-      map.flyTo({
-        center: cam.center,
-        zoom: cam.zoom,
-        bearing: cam.bearing,
-        pitch: cam.pitch,
-        offset: getPanelOffset(),
-        duration: 1500,
-      });
-    }
-    const data = boundsToPolygon({
-      north: region.north,
-      south: region.south,
-      east: region.east,
-      west: region.west,
-    });
-    const afterLoad = () => {
-      if (!map.getSource("offline-region-highlight")) {
-        map.addSource("offline-region-highlight", { type: "geojson", data });
-        map.addLayer({
-          id: "offline-region-highlight-line",
-          type: "line",
-          source: "offline-region-highlight",
-          paint: { "line-color": "#ff6f00", "line-emissive-strength": 1, "line-width": 3, "line-opacity": 0.9 },
-        });
-      } else {
-        map.getSource("offline-region-highlight").setData(data);
-      }
-      offlineRegionHighlightCleanupRef.current = () => {
-        if (map.getLayer("offline-region-highlight-line")) map.removeLayer("offline-region-highlight-line");
-        if (map.getSource("offline-region-highlight")) map.removeSource("offline-region-highlight");
-      };
-    };
-    if (map.isStyleLoaded()) afterLoad();
-    else map.once("idle", afterLoad);
     setShownRegionId(region.id);
+    if (region.id === "__base__" || region.north == null) return;
+    zoomOutToFitCoords([
+      [region.west, region.north],
+      [region.east, region.north],
+      [region.east, region.south],
+      [region.west, region.south],
+    ]);
   };
+  selectOfflineRegionRef.current = (id) => {
+    const region = id === "__downloading__"
+      ? (downloadingRegion && { ...downloadingRegion, id })
+      : offlineRegions.find((r) => r.id === id);
+    if (region) selectOfflineRegion(region);
+  };
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("rontomap_offline_hidden_regions", JSON.stringify([...hiddenRegionIds]));
+    } catch {
+      /* storage unavailable — hiding just won't survive a reload */
+    }
+  }, [hiddenRegionIds]);
+
+  const toggleRegionHidden = (id) => {
+    setHiddenRegionIds((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  // Hides every region while any is still showing; shows them all once none is.
+  const anyRegionShown = offlineRegions.some((r) => !hiddenRegionIds.has(r.id));
+  const toggleAllRegionsHidden = () => {
+    setHiddenRegionIds(anyRegionShown ? new Set(offlineRegions.map((r) => r.id)) : new Set());
+  };
+
+  // Every region that is not hidden is drawn while the panel is open, and so is
+  // the one still downloading, as an orange rectangle that glows grey under the
+  // pointer and blue while selected — the colours of the features list's glow.
+  // The fill is nearly clear; it is there so a click inside a rectangle can
+  // find it, and so the pointer can say a click there selects.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !showOfflineMapsPanel) return;
+    const SRC = "offline-regions";
+    const LAYERS = ["offline-regions-fill", "offline-regions-glow", "offline-regions-line"];
+    const regions = offlineRegions.filter((r) => !hiddenRegionIds.has(r.id));
+    if (downloadingRegion) regions.push({ ...downloadingRegion, id: "__downloading__" });
+    const data = {
+      type: "FeatureCollection",
+      features: regions.map((r) => ({
+        type: "Feature",
+        geometry: boundsToPolygon({ north: r.north, south: r.south, east: r.east, west: r.west }).features[0].geometry,
+        properties: {
+          id: r.id,
+          state: shownRegionId === r.id ? "selected" : hoveredRegionId === r.id ? "hover" : "idle",
+          // Smaller first, so where rectangles overlap a click takes the inner.
+          area: Math.abs((r.north - r.south) * (r.east - r.west)),
+        },
+      })),
+    };
+    // The rectangle itself stays orange; only the glow around it says grey
+    // (under the pointer) or blue (selected).
+    const glowColor = ["match", ["get", "state"], "selected", "#0091ff", "#828282"];
+    const draw = () => {
+      if (map.getSource(SRC)) {
+        map.getSource(SRC).setData(data);
+        return;
+      }
+      map.addSource(SRC, { type: "geojson", data });
+      map.addLayer({
+        id: "offline-regions-fill",
+        type: "fill",
+        source: SRC,
+        paint: { "fill-color": "#ff6f00", "fill-opacity": 0.04, "fill-emissive-strength": 1 },
+      });
+      map.addLayer({
+        id: "offline-regions-glow",
+        type: "line",
+        source: SRC,
+        filter: ["!=", ["get", "state"], "idle"],
+        paint: {
+          "line-color": glowColor,
+          "line-width": 10,
+          "line-blur": 5,
+          "line-opacity": 0.8,
+          "line-emissive-strength": 1,
+        },
+      });
+      map.addLayer({
+        id: "offline-regions-line",
+        type: "line",
+        source: SRC,
+        paint: { "line-color": "#ff6f00", "line-width": 2, "line-emissive-strength": 1 },
+      });
+    };
+    if (map.isStyleLoaded()) draw();
+    else map.once("idle", draw);
+    // A style change drops every custom layer; put these back on top of it.
+    map.on("style.load", draw);
+    return () => {
+      map.off("style.load", draw);
+      map.off("idle", draw);
+    };
+  }, [showOfflineMapsPanel, offlineRegions, downloadingRegion, hiddenRegionIds, shownRegionId, hoveredRegionId]);
+
+  // Inside a rectangle the pointer turns to the alias cursor: a click there
+  // selects that region rather than closing the panel.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !showOfflineMapsPanel) return;
+    const canvas = map.getCanvas();
+    const onEnter = () => { canvas.style.cursor = "alias"; };
+    const onLeave = () => { canvas.style.cursor = ""; };
+    map.on("mouseenter", "offline-regions-fill", onEnter);
+    map.on("mouseleave", "offline-regions-fill", onLeave);
+    return () => {
+      map.off("mouseenter", "offline-regions-fill", onEnter);
+      map.off("mouseleave", "offline-regions-fill", onLeave);
+      if (canvas.style.cursor === "alias") canvas.style.cursor = "";
+    };
+  }, [showOfflineMapsPanel]);
+
+  // A press elsewhere in the panel lets the selected region go, the way it lets
+  // a features list row go. A press on the map is the map click's to handle.
+  useEffect(() => {
+    if (!shownRegionId) return;
+    const onDocDown = (e) => {
+      const t = e.target;
+      if (t.closest?.(".panel") && !t.closest(".panel-list-item")) setShownRegionId(null);
+    };
+    document.addEventListener("mousedown", onDocDown);
+    document.addEventListener("touchstart", onDocDown);
+    return () => {
+      document.removeEventListener("mousedown", onDocDown);
+      document.removeEventListener("touchstart", onDocDown);
+    };
+  }, [shownRegionId]);
+
+  // Opening a feature — a marker or a path clicked on the map — closes the
+  // offline panel rather than leaving it waiting behind the details.
+  useEffect(() => {
+    if (selectedFeature) setShowOfflineMapsPanel(false);
+  }, [selectedFeature]);
+
+  // Off the map again once the panel closes.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || showOfflineMapsPanel) return;
+    ["offline-regions-line", "offline-regions-glow", "offline-regions-fill"].forEach((id) => {
+      if (map.getLayer(id)) map.removeLayer(id);
+    });
+    if (map.getSource("offline-regions")) map.removeSource("offline-regions");
+  }, [showOfflineMapsPanel]);
 
   const handleUpdateOfflineRegion = async (region) => {
     const b = {
@@ -11860,11 +11980,8 @@ export default function Map() {
     setOfflineDeleteAlert(region);
   };
 
-  const confirmDeleteOfflineRegion = async (region) => {
-    if (!region) {
-      setOfflineDeleteAlert(null);
-      return;
-    }
+  // Removes one region's tiles and routing data; the caller refreshes the list.
+  const deleteOfflineRegionData = async (region) => {
     if (isNativeAndroid()) {
       try { await TileDownload.deleteRegion({ regionId: region.id }); } catch {}
       try { await OfflineRouting.deleteRoutingData({ regionId: region.id }); } catch {}
@@ -11872,9 +11989,42 @@ export default function Map() {
       const sw = await getActiveServiceWorker();
       if (sw) sw.postMessage({ type: "DELETE_REGION", regionId: region.id });
     }
-    if (shownRegionId === region.id) clearOfflineRegionHighlight();
+    setHiddenRegionIds((cur) => {
+      if (!cur.has(region.id)) return cur;
+      const next = new Set(cur);
+      next.delete(region.id);
+      return next;
+    });
+  };
+
+  const confirmDeleteOfflineRegion = async (region) => {
+    if (!region) {
+      setOfflineDeleteAlert(null);
+      return;
+    }
+    await deleteOfflineRegionData(region);
+    if (shownRegionId === region.id) setShownRegionId(null);
     setOfflineDeleteAlert(null);
     setTimeout(() => refreshOfflineRegions(), 300);
+  };
+
+  // Every region goes; the base map stays, as each new region needs it anyway.
+  const confirmDeleteAllOfflineRegions = async () => {
+    setOfflineDeleteAllAlert(false);
+    for (const r of offlineRegions) await deleteOfflineRegionData(r);
+    setShownRegionId((cur) => (cur === "__base__" || cur === "__downloading__" ? cur : null));
+    setTimeout(() => refreshOfflineRegions(), 300);
+  };
+
+  // Saved through the same channel whether a new name or a cleared one.
+  const saveRegionName = async (target, name) => {
+    if (isNativeAndroid()) {
+      try { await TileDownload.renameRegion({ regionId: target.id, name }); } catch {}
+      refreshOfflineRegions();
+    } else {
+      const sw = await getActiveServiceWorker();
+      if (sw) sw.postMessage({ type: "RENAME_REGION", regionId: target.id, name });
+    }
   };
 
   const handleCancelDownload = async () => {
@@ -11894,7 +12044,7 @@ export default function Map() {
     setDownloadProgress(null);
     setCurrentDownloadRegionId(null);
     setDownloadingRegion(null);
-    if (shownRegionId === "__downloading__") clearOfflineRegionHighlight();
+    if (shownRegionId === "__downloading__") setShownRegionId(null);
   };
 
   // Every dialog but the two Yes/No questions wears the chooser row style, so
@@ -12788,7 +12938,7 @@ export default function Map() {
         };
         const dir = offSortDir === "asc" ? 1 : -1;
         const baseSortItem =
-          offlineShowBase && offlineBaseMap
+          offlineBaseMap
             ? {
                 __isBase: true,
                 name: "Base map",
@@ -12796,9 +12946,11 @@ export default function Map() {
                 createdAt: offlineBaseMap.createdAt,
               }
             : null;
-        const regionItems = offlineShowRegions
-          ? [...offlineRegions].filter((r) => r.id !== downloadingRegion?.id)
-          : [];
+        // A hidden region is off the list as well as off the map; Show all
+        // brings it back.
+        const regionItems = offlineRegions.filter(
+          (r) => r.id !== downloadingRegion?.id && !hiddenRegionIds.has(r.id),
+        );
         let sortedRegions;
         if (offSortField === "dist") {
           // Distance is undefined for the global base map — pin it below regions, regardless of asc/desc.
@@ -12831,18 +12983,21 @@ export default function Map() {
           if (offSortField === "dist") return dir * (distToBbox(a.bbox) - distToBbox(b.bbox));
           return dir * ((a.name || a.id || "").localeCompare(b.name || b.id || ""));
         });
+        // Region and base rows follow the features list: the mouse over a row
+        // lights its rectangle grey, a click or tap selects it.
+        const regionRowProps = (r) => ({
+          onPointerEnter: (e) => { if (e.pointerType === "mouse") setHoveredRegionId(r.id); },
+          onPointerLeave: (e) => { if (e.pointerType === "mouse") setHoveredRegionId((cur) => (cur === r.id ? null : cur)); },
+          onContextMenu: (e) => e.preventDefault(),
+          onClick: () => selectOfflineRegion(r),
+        });
         const baseMapBlock = offlineBaseMap && (
           <div
             key="base"
-            className={`panel-list-item panel-list-item-base${shownRegionId === "__base__" ? " panel-list-item-active" : ""}`}
-            {...offlineRowRevealProps("__base__")}
-            onClick={offlineRowClick("__base__", () => {
-              setSelectedRoutingSubId(null);
-              setRoutingExpanded(false);
-              setShownRegionId((id) => (id === "__base__" ? null : "__base__"));
-            })}
+            className={`panel-list-item panel-list-item-base${shownRegionId === "__base__" ? " panel-list-item-selected" : ""}`}
+            {...regionRowProps({ id: "__base__" })}
           >
-            <IonIcon icon={globeOutline} className="panel-list-icon" />
+            <IonIcon icon={earthOutline} className="panel-list-icon" />
             <div className="panel-list-text">
               <span className="panel-list-name">Base map</span>
               <span className="panel-list-info">
@@ -12850,7 +13005,7 @@ export default function Map() {
                 {formatRegionDate(offlineBaseMap) && <> {"\u00b7 "}{formatRegionDate(offlineBaseMap)}</>}
               </span>
             </div>
-            {hoveredOfflineRowId === "__base__" && (
+            {shownRegionId === "__base__" && (
               <>
                 <ActionIconButton
                   label="Update"
@@ -12883,6 +13038,9 @@ export default function Map() {
               <div className="panel-handle-bar" />
             </div>
             <div className="panel-actions">
+              <ActionIconButton label="Add region" onClick={handleStartOfflineDownload}>
+                <IonIcon icon={addOutline} />
+              </ActionIconButton>
               <ActionIconButton label={`Sort by distance${offSortField === "dist" ? (offSortDir === "asc" ? " (nearest)" : " (farthest)") : ""}`} onClick={() => toggleOfflineSort("dist")}>
                 <IonIcon icon={radioOutline} />
                 {offSortField === "dist" && <IonIcon icon={offSortDir === "asc" ? chevronUpOutline : chevronDownOutline} className="sort-dir-icon" />}
@@ -12895,22 +13053,21 @@ export default function Map() {
                 <IonIcon icon={timeOutline} />
                 {offSortField === "date" && <IonIcon icon={offSortDir === "asc" ? chevronUpOutline : chevronDownOutline} className="sort-dir-icon" />}
               </ActionIconButton>
+              {/* The regions icon, faded while every region is hidden — the
+                  way the panel's filter buttons say "off". */}
               <ActionIconButton
-                label={offlineShowBase ? "Hide base map" : "Show base map"}
-                onClick={() => setOfflineShowBase((v) => !v)}
-                className={`action-icon-btn${offlineShowBase ? "" : " panel-filter-off"}`}
-              >
-                <IonIcon icon={globeOutline} />
-              </ActionIconButton>
-              <ActionIconButton
-                label={offlineShowRegions ? "Hide regions" : "Show regions"}
-                onClick={() => setOfflineShowRegions((v) => !v)}
-                className={`action-icon-btn${offlineShowRegions ? "" : " panel-filter-off"}`}
+                label={anyRegionShown ? "Hide all regions" : "Show all regions"}
+                onClick={toggleAllRegionsHidden}
+                className={`action-icon-btn${anyRegionShown ? "" : " panel-filter-off"}`}
               >
                 <IonIcon icon={mapOutline} />
               </ActionIconButton>
-              <ActionIconButton label="Add region" onClick={handleStartOfflineDownload}>
-                <IonIcon icon={addOutline} />
+              <ActionIconButton
+                label="Delete all regions"
+                onClick={() => { if (offlineRegions.length) setOfflineDeleteAllAlert(true); }}
+                className={`action-icon-btn${offlineRegions.length ? "" : " panel-filter-off"}`}
+              >
+                <IonIcon icon={trashOutline} />
               </ActionIconButton>
               {/* This panel took the features list's place to open, so leaving
                   it means going back there rather than onto a bare map - the
@@ -12927,8 +13084,8 @@ export default function Map() {
               {/* Sort state interleaves the base map with regions; routing section stays pinned last. */}
               {downloadingRegion && (
                 <div
-                  className={`panel-list-item panel-list-item-downloading${shownRegionId === "__downloading__" ? " panel-list-item-active" : ""}`}
-                  onClick={() => handleOfflineRegionClick({ ...downloadingRegion, id: "__downloading__" })}
+                  className={`panel-list-item panel-list-item-downloading${shownRegionId === "__downloading__" ? " panel-list-item-selected" : ""}`}
+                  {...regionRowProps({ ...downloadingRegion, id: "__downloading__" })}
                 >
                   <IonIcon icon={mapOutline} className="panel-list-icon" />
                   <div className="panel-list-text">
@@ -12969,19 +13126,21 @@ export default function Map() {
                   ) : (
                     <div
                       key={r.id}
-                      className={`panel-list-item${shownRegionId === r.id ? " panel-list-item-active" : ""}`}
-                      {...offlineRowRevealProps(r.id)}
-                      onClick={offlineRowClick(r.id, () => handleOfflineRegionClick(r))}
+                      className={`panel-list-item${shownRegionId === r.id ? " panel-list-item-selected" : ""}${hiddenRegionIds.has(r.id) ? " panel-list-item-hidden" : ""}`}
+                      {...regionRowProps(r)}
                     >
                       <IonIcon icon={mapOutline} className="panel-list-icon" />
                       <div className="panel-list-text">
-                        <span className="panel-list-name">{r.name}</span>
+                        <span className="panel-list-name">{r.name || "Offline map"}</span>
                         <span className="panel-list-info">
                           {`${(r.tileCount ?? 0).toLocaleString()} tiles \u00b7 ${formatBytes(r.sizeBytes)}`}
                           {formatRegionDate(r) && <> {"\u00b7 "}{formatRegionDate(r)}</>}
                         </span>
                       </div>
-                      {hoveredOfflineRowId === r.id && (
+                      {hiddenRegionIds.has(r.id) && shownRegionId !== r.id && (
+                        <IonIcon icon={eyeOffOutline} className="panel-hidden-indicator" />
+                      )}
+                      {shownRegionId === r.id && (
                         <>
                           <ActionIconButton
                             label="Rename"
@@ -13001,6 +13160,12 @@ export default function Map() {
                           >
                             <IonIcon icon={trashOutline} />
                           </ActionIconButton>
+                          <ActionIconButton
+                            label={hiddenRegionIds.has(r.id) ? "Show region" : "Hide region"}
+                            onClick={(e) => { e.stopPropagation(); toggleRegionHidden(r.id); }}
+                          >
+                            <IonIcon icon={hiddenRegionIds.has(r.id) ? eyeOffOutline : eyeOutline} />
+                          </ActionIconButton>
                         </>
                       )}
                     </div>
@@ -13012,7 +13177,7 @@ export default function Map() {
                   <div
                     className={`panel-list-item${routingExpanded ? " panel-list-item-active" : ""}`}
                     onClick={() => {
-                      if (shownRegionId) clearOfflineRegionHighlight();
+                      setShownRegionId(null);
                       setRoutingSuggestions([]);
                       setRoutingExpanded((cur) => !cur);
                     }}
@@ -13053,7 +13218,7 @@ export default function Map() {
                           className={`panel-list-item${expanded ? " panel-list-item-active" : ""}`}
                           style={{ paddingLeft: 34 }}
                           onClick={() => {
-                            if (shownRegionId) clearOfflineRegionHighlight();
+                            setShownRegionId(null);
                             setSelectedRoutingSubId((cur) => (cur === subKey ? null : subKey));
                           }}
                         >
@@ -13114,7 +13279,7 @@ export default function Map() {
                         style={{ paddingLeft: 34 }}
                         {...offlineRowRevealProps(subKey)}
                         onClick={offlineRowClick(subKey, () => {
-                          if (shownRegionId) clearOfflineRegionHighlight();
+                          setShownRegionId(null);
                           setSelectedRoutingSubId((cur) => (cur === subKey ? null : subKey));
                         })}
                       >
@@ -13233,6 +13398,17 @@ export default function Map() {
         ]}
       />
       <IonAlert
+        isOpen={offlineDeleteAllAlert}
+        cssClass={alertClass()}
+        onDidDismiss={() => setOfflineDeleteAllAlert(false)}
+        header="Delete all regions?"
+        message={`This removes the cached tiles of all ${offlineRegions.length} offline region${offlineRegions.length === 1 ? "" : "s"}, and their offline routing data (Android). The base map is kept.`}
+        buttons={[
+          { text: "Delete", role: "destructive", handler: confirmDeleteAllOfflineRegions },
+          { text: "Close", role: "cancel" },
+        ]}
+      />
+      <IonAlert
         isOpen={offlineBaseDeleteAlert}
         cssClass={alertClass()}
         onDidDismiss={() => setOfflineBaseDeleteAlert(false)}
@@ -13265,20 +13441,16 @@ export default function Map() {
         title="Rename offline map"
         initialValue={renameRegionTarget?.name || ""}
         onCancel={() => setRenameRegionTarget(null)}
+        onClear={async () => {
+          const target = renameRegionTarget;
+          setRenameRegionTarget(null);
+          if (target && target.name) await saveRegionName(target, "");
+        }}
         onSave={async (name) => {
           const target = renameRegionTarget;
-          if (!target || !name || name === target.name) {
-            setRenameRegionTarget(null);
-            return;
-          }
-          if (isNativeAndroid()) {
-            try { await TileDownload.renameRegion({ regionId: target.id, name }); } catch {}
-            refreshOfflineRegions();
-          } else {
-            const sw = await getActiveServiceWorker();
-            if (sw) sw.postMessage({ type: "RENAME_REGION", regionId: target.id, name });
-          }
           setRenameRegionTarget(null);
+          if (!target || !name || name === target.name) return;
+          await saveRegionName(target, name);
         }}
       />
       {selectedFeature && (() => {
